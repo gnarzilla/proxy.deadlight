@@ -1,0 +1,20 @@
+[core]
+port = 8080
+bind_address = 0.0.0.0
+max_connections = 500
+log_level = info
+worker_threads = 4
+
+[ssl]
+enabled = true
+ca_cert_file = /etc/deadlight/ca.crt
+ca_key_file = /etc/deadlight/ca.key
+cert_cache_dir = /tmp/deadlight_certs
+
+[protocols]
+http_enabled = true
+https_enabled = true
+connect_enabled = true
+
+[plugins]
+enabled = false
