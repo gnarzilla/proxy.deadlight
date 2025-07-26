@@ -538,6 +538,7 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn,
 /**
  * Transfer data between client and upstream
  */
+
 gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error) {
     g_return_val_if_fail(conn != NULL, FALSE);
     g_return_val_if_fail(conn->client_connection != NULL, FALSE);
@@ -545,60 +546,80 @@ gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error
     
     conn->state = DEADLIGHT_STATE_TUNNELING;
     
-    // Get streams
-    GInputStream *client_input = g_io_stream_get_input_stream(G_IO_STREAM(conn->client_connection));
-    GOutputStream *client_output = g_io_stream_get_output_stream(G_IO_STREAM(conn->client_connection));
-    GInputStream *upstream_input = g_io_stream_get_input_stream(G_IO_STREAM(conn->upstream_connection));
-    GOutputStream *upstream_output = g_io_stream_get_output_stream(G_IO_STREAM(conn->upstream_connection));
+    // Get sockets
+    GSocket *client_socket = g_socket_connection_get_socket(conn->client_connection);
+    GSocket *upstream_socket = g_socket_connection_get_socket(conn->upstream_connection);
+    
+    // Set non-blocking mode
+    g_socket_set_blocking(client_socket, FALSE);
+    g_socket_set_blocking(upstream_socket, FALSE);
+    
+    // Create pollable sources
+    GSource *client_source = g_socket_create_source(client_socket, G_IO_IN, NULL);
+    GSource *upstream_source = g_socket_create_source(upstream_socket, G_IO_IN, NULL);
     
     // Buffer for data transfer
     guint8 buffer[8192];
     gssize bytes_read, bytes_written;
-    gboolean client_closed = FALSE;
-    gboolean upstream_closed = FALSE;
+    gboolean running = TRUE;
+    gint idle_cycles = 0;
+    const gint max_idle_cycles = 1000;  // About 10 seconds of idle time
     
-    g_debug("Connection %lu: Starting data tunnel", conn->id);
+    g_debug("Connection %lu: Starting bidirectional tunnel", conn->id);
     
-    while (!client_closed && !upstream_closed) {
-        // Client to upstream
-        bytes_read = g_input_stream_read(client_input, buffer, sizeof(buffer), NULL, error);
-        if (bytes_read > 0) {
-            bytes_written = g_output_stream_write(upstream_output, buffer, bytes_read, NULL, error);
-            if (bytes_written > 0) {
-                conn->bytes_client_to_upstream += bytes_written;
-            } else if (bytes_written < 0) {
-                upstream_closed = TRUE;
+    while (running && idle_cycles < max_idle_cycles) {
+        gboolean data_transferred = FALSE;
+        
+        // Check for data from client
+        if (g_socket_condition_check(client_socket, G_IO_IN)) {
+            bytes_read = g_socket_receive(client_socket, (gchar *)buffer, 
+                                         sizeof(buffer), NULL, NULL);
+            if (bytes_read > 0) {
+                bytes_written = g_socket_send(upstream_socket, (gchar *)buffer, 
+                                            bytes_read, NULL, NULL);
+                if (bytes_written > 0) {
+                    conn->bytes_client_to_upstream += bytes_written;
+                    data_transferred = TRUE;
+                }
+            } else if (bytes_read == 0) {
+                // Client closed connection
+                g_debug("Connection %lu: Client closed connection", conn->id);
+                running = FALSE;
             }
-        } else if (bytes_read == 0) {
-            client_closed = TRUE;
-        } else if (error && *error) {
-            if (!g_error_matches(*error, G_IO_ERROR, G_IO_ERROR_WOULD_BLOCK)) {
-                client_closed = TRUE;
-            }
-            g_clear_error(error);
         }
         
-        // Upstream to client
-        bytes_read = g_input_stream_read(upstream_input, buffer, sizeof(buffer), NULL, error);
-        if (bytes_read > 0) {
-            bytes_written = g_output_stream_write(client_output, buffer, bytes_read, NULL, error);
-            if (bytes_written > 0) {
-                conn->bytes_upstream_to_client += bytes_written;
-            } else if (bytes_written < 0) {
-                client_closed = TRUE;
+        // Check for data from upstream
+        if (g_socket_condition_check(upstream_socket, G_IO_IN)) {
+            bytes_read = g_socket_receive(upstream_socket, (gchar *)buffer, 
+                                         sizeof(buffer), NULL, NULL);
+            if (bytes_read > 0) {
+                bytes_written = g_socket_send(client_socket, (gchar *)buffer, 
+                                            bytes_read, NULL, NULL);
+                if (bytes_written > 0) {
+                    conn->bytes_upstream_to_client += bytes_written;
+                    data_transferred = TRUE;
+                }
+            } else if (bytes_read == 0) {
+                // Upstream closed connection
+                g_debug("Connection %lu: Upstream closed connection", conn->id);
+                running = FALSE;
             }
-        } else if (bytes_read == 0) {
-            upstream_closed = TRUE;
-        } else if (error && *error) {
-            if (!g_error_matches(*error, G_IO_ERROR, G_IO_ERROR_WOULD_BLOCK)) {
-                upstream_closed = TRUE;
-            }
-            g_clear_error(error);
         }
         
-        // Small delay to prevent CPU spinning
-        g_usleep(1000); // 1ms
+        // Update idle counter
+        if (data_transferred) {
+            idle_cycles = 0;
+        } else {
+            idle_cycles++;
+            g_usleep(10000);  // 10ms sleep when idle
+        }
     }
+    
+    // Clean up sources
+    g_source_destroy(client_source);
+    g_source_destroy(upstream_source);
+    g_source_unref(client_source);
+    g_source_unref(upstream_source);
     
     conn->state = DEADLIGHT_STATE_CLOSING;
     

@@ -225,8 +225,38 @@ static gboolean handle_http_request(DeadlightConnection *conn, GError **error) {
     
     conn->bytes_client_to_upstream += bytes_written;
     
-    // Now tunnel the connection
-    return deadlight_network_tunnel_data(conn, error);
+    // Now read the response from upstream and forward to client
+    GInputStream *upstream_input = g_io_stream_get_input_stream(
+        G_IO_STREAM(conn->upstream_connection));
+    GOutputStream *client_output = g_io_stream_get_output_stream(
+        G_IO_STREAM(conn->client_connection));
+    
+    // Read and forward response
+    guint8 buffer[8192];
+    gssize bytes_read;
+    
+    while ((bytes_read = g_input_stream_read(upstream_input, buffer, 
+                                            sizeof(buffer), NULL, error)) > 0) {
+        gssize sent = g_output_stream_write(client_output, buffer, 
+                                          bytes_read, NULL, error);
+        if (sent > 0) {
+            conn->bytes_upstream_to_client += sent;
+        } else if (sent < 0) {
+            return FALSE;
+        }
+    }
+    
+    // Check if we stopped due to error
+    if (bytes_read < 0) {
+        return FALSE;
+    }
+    
+    g_info("Connection %lu: HTTP request completed (sent: %s, received: %s)", 
+           conn->id,
+           deadlight_format_bytes(conn->bytes_client_to_upstream),
+           deadlight_format_bytes(conn->bytes_upstream_to_client));
+    
+    return TRUE;
 }
 
 /**
