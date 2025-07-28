@@ -62,7 +62,15 @@ gboolean deadlight_network_init(DeadlightContext *context, GError **error) {
         return FALSE;
     }
     
-    g_info("Network module initialized with %d worker threads", worker_threads);
+    // Initialize connection pool
+    gint max_per_host = deadlight_config_get_int(context, "network", 
+                                                "connection_pool_size", 10);
+    gint idle_timeout = deadlight_config_get_int(context, "network", 
+                                                "connection_pool_timeout", 300);
+    context->conn_pool = connection_pool_new(max_per_host, idle_timeout);
+    
+    g_info("Network module initialized with %d worker threads and connection pooling", 
+           worker_threads);
     return TRUE;
 }
 
@@ -412,12 +420,108 @@ cleanup:
 }
 
 /**
+ * Connect to upstream server
+ */
+gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, 
+                                          const gchar *host, 
+                                          guint16 port,
+                                          GError **error) {
+    g_return_val_if_fail(conn != NULL, FALSE);
+    g_return_val_if_fail(host != NULL, FALSE);
+    g_return_val_if_fail(port > 0, FALSE);
+    
+    DeadlightContext *context = conn->context;
+
+    // Try to get a pooled connection first
+    GSocketConnection *pooled = connection_pool_get(context->conn_pool, host, port, FALSE);
+    
+    if (pooled) {
+        conn->upstream_connection = pooled;
+        // Make sure to set target info for pooled connections too!
+        if (!conn->target_host) {
+            conn->target_host = g_strdup(host);
+        }
+        conn->target_port = port;
+        g_info("Connection %lu: Reused pooled connection to %s:%d", 
+               conn->id, host, port);
+        return TRUE;
+    }
+
+    g_info("Connection %lu: Connecting to upstream %s:%d", conn->id, host, port);
+    
+    // Create socket client
+    GSocketClient *client = g_socket_client_new();
+    
+    // Set timeout
+    gint timeout = deadlight_config_get_int(context, "network", "upstream_timeout", 30);
+    g_socket_client_set_timeout(client, timeout);
+    
+    // Set IPv6 support
+    gboolean ipv6_enabled = deadlight_config_get_bool(context, "network", "ipv6_enabled", TRUE);
+    g_socket_client_set_enable_proxy(client, FALSE);
+    
+    // Don't set family when IPv6 is enabled - let GLib choose
+    if (!ipv6_enabled) {
+        g_socket_client_set_family(client, G_SOCKET_FAMILY_IPV4);
+    }
+    
+    // Connect
+    conn->upstream_connection = g_socket_client_connect_to_host(client, host, port, NULL, error);
+    g_object_unref(client);
+    
+    if (!conn->upstream_connection) {
+        return FALSE;
+    }
+    
+    // Store target info - THIS IS CRITICAL FOR SSL INTERCEPTION
+    if (!conn->target_host) {  // Only set if not already set
+        conn->target_host = g_strdup(host);
+    }
+    conn->target_port = port;
+    
+    // Set socket options
+    GSocket *socket = g_socket_connection_get_socket(conn->upstream_connection);
+    g_socket_set_blocking(socket, FALSE);
+    
+    gint optval = 1;
+    g_socket_set_option(socket, SOL_SOCKET, SO_KEEPALIVE, optval, NULL);
+    
+    if (deadlight_config_get_bool(context, "network", "tcp_nodelay", TRUE)) {
+        g_socket_set_option(socket, IPPROTO_TCP, TCP_NODELAY, optval, NULL);
+    }
+    
+    g_info("Connection %lu: Connected to upstream %s:%d", conn->id, host, port);
+    return TRUE;
+}
+
+/**
  * Cleanup connection resources
  */
 static void cleanup_connection(DeadlightConnection *conn) {
     if (!conn) return;
     
     g_debug("Cleaning up connection %lu", conn->id);
+
+    // Return upstream connection to pool if possible
+    if (conn->upstream_connection && conn->target_host && conn->state == DEADLIGHT_STATE_CLOSING) {
+
+        // Check if connection is reusable (HTTP keep-alive, etc)
+        gboolean reusable = FALSE;
+        if (conn->current_request){
+            const gchar *connection_header = g_hash_table_lookup(
+                conn->current_request->headers, "Connection");
+            reusable = (connection_header &&
+                        g_ascii_strcasecmp(connection_header, "keep-alive") == 0);
+        }
+
+        if (reusable) {
+            connection_pool_release(conn->context->conn_pool,
+                                                conn->upstream_connection, 
+                                                conn->target_host, 
+                                                conn->target_port, FALSE);
+            conn->upstream_connection = NULL; // Don't close it
+            }
+    }
     
     // Close connections
     if (conn->client_connection) {
@@ -438,6 +542,20 @@ static void cleanup_connection(DeadlightConnection *conn) {
     if (conn->upstream_tls) {
         g_io_stream_close(G_IO_STREAM(conn->upstream_tls), NULL, NULL);
         g_object_unref(conn->upstream_tls);
+    }
+
+    if (conn->client_ssl) {
+        SSL_shutdown(conn->client_ssl);
+        SSL_free(conn->client_ssl);
+    }
+
+    if (conn->upstream_ssl) {
+        SSL_shutdown(conn->upstream_ssl);
+        SSL_free(conn->upstream_ssl);
+    }
+
+    if (conn->ssl_ctx) {
+        SSL_CTX_free(conn->ssl_ctx);
     }
     
     // Free buffers
@@ -482,64 +600,11 @@ static void cleanup_connection(DeadlightConnection *conn) {
 }
 
 /**
- * Connect to upstream server
- */
-gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, 
-                                          const gchar *host, 
-                                          guint16 port,
-                                          GError **error) {
-    g_return_val_if_fail(conn != NULL, FALSE);
-    g_return_val_if_fail(host != NULL, FALSE);
-    g_return_val_if_fail(port > 0, FALSE);
-    
-    DeadlightContext *context = conn->context;
-    
-    g_info("Connection %lu: Connecting to upstream %s:%d", conn->id, host, port);
-    
-    // Create socket client
-    GSocketClient *client = g_socket_client_new();
-    
-    // Set timeout
-    gint timeout = deadlight_config_get_int(context, "network", "upstream_timeout", 30);
-    g_socket_client_set_timeout(client, timeout);
-    
-    // Set IPv6 support
-    gboolean ipv6_enabled = deadlight_config_get_bool(context, "network", "ipv6_enabled", TRUE);
-    g_socket_client_set_enable_proxy(client, FALSE);
-    g_socket_client_set_family(client, ipv6_enabled ? G_SOCKET_FAMILY_IPV4 : G_SOCKET_FAMILY_IPV4);
-    
-    // Connect
-    conn->upstream_connection = g_socket_client_connect_to_host(client, host, port, NULL, error);
-    g_object_unref(client);
-    
-    if (!conn->upstream_connection) {
-        return FALSE;
-    }
-    
-    // Store target info
-    conn->target_host = g_strdup(host);
-    conn->target_port = port;
-    
-    // Set socket options
-    GSocket *socket = g_socket_connection_get_socket(conn->upstream_connection);
-    g_socket_set_blocking(socket, FALSE);
-    
-    gint optval = 1;
-    g_socket_set_option(socket, SOL_SOCKET, SO_KEEPALIVE, optval, NULL);
-    
-    if (deadlight_config_get_bool(context, "network", "tcp_nodelay", TRUE)) {
-        g_socket_set_option(socket, IPPROTO_TCP, TCP_NODELAY, optval, NULL);
-    }
-    
-    g_info("Connection %lu: Connected to upstream %s:%d", conn->id, host, port);
-    return TRUE;
-}
-
-/**
  * Transfer data between client and upstream
  */
 
 gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error) {
+    (void)error;  // Mark as unused for now
     g_return_val_if_fail(conn != NULL, FALSE);
     g_return_val_if_fail(conn->client_connection != NULL, FALSE);
     g_return_val_if_fail(conn->upstream_connection != NULL, FALSE);
@@ -624,6 +689,141 @@ gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error
     conn->state = DEADLIGHT_STATE_CLOSING;
     
     g_info("Connection %lu: Tunnel closed (client->upstream: %s, upstream->client: %s)",
+           conn->id,
+           deadlight_format_bytes(conn->bytes_client_to_upstream),
+           deadlight_format_bytes(conn->bytes_upstream_to_client));
+    
+    return TRUE;
+}
+
+// SSL tunnel data transfer
+gboolean deadlight_ssl_tunnel_data(DeadlightConnection *conn, GError **error) {
+    g_return_val_if_fail(conn != NULL, FALSE);
+    g_return_val_if_fail(conn->client_ssl != NULL, FALSE);
+    g_return_val_if_fail(conn->upstream_ssl != NULL, FALSE);
+    
+    (void)error;  // Unused for now
+    
+    conn->state = DEADLIGHT_STATE_TUNNELING;
+    
+    guint8 buffer[16384];  // Larger buffer for efficiency
+    gboolean running = TRUE;
+    gint idle_cycles = 0;
+    const gint max_idle_cycles = 1000;
+    
+    g_debug("Connection %lu: Starting SSL interception tunnel", conn->id);
+    
+    // Make sure we're in non-blocking mode
+    SSL_set_mode(conn->client_ssl, SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+    SSL_set_mode(conn->upstream_ssl, SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+    
+    while (running && idle_cycles < max_idle_cycles) {
+        gboolean data_transferred = FALSE;
+        int ssl_error;
+        
+        // Check for pending data from client
+        if (SSL_pending(conn->client_ssl) > 0 || SSL_has_pending(conn->client_ssl)) {
+            int bytes_read = SSL_read(conn->client_ssl, buffer, sizeof(buffer));
+            
+            if (bytes_read > 0) {
+                g_debug("Read %d bytes from client SSL", bytes_read);
+                
+                // Write to upstream
+                int total_written = 0;
+                while (total_written < bytes_read) {
+                    int bytes_written = SSL_write(conn->upstream_ssl, 
+                                                 buffer + total_written, 
+                                                 bytes_read - total_written);
+                    if (bytes_written > 0) {
+                        total_written += bytes_written;
+                        conn->bytes_client_to_upstream += bytes_written;
+                        data_transferred = TRUE;
+                    } else {
+                        ssl_error = SSL_get_error(conn->upstream_ssl, bytes_written);
+                        if (ssl_error != SSL_ERROR_WANT_READ && ssl_error != SSL_ERROR_WANT_WRITE) {
+                            g_debug("Upstream SSL write error: %d", ssl_error);
+                            running = FALSE;
+                            break;
+                        }
+                        g_usleep(1000); // 1ms wait
+                    }
+                }
+            } else {
+                ssl_error = SSL_get_error(conn->client_ssl, bytes_read);
+                if (ssl_error != SSL_ERROR_WANT_READ && ssl_error != SSL_ERROR_WANT_WRITE) {
+                    g_debug("Client SSL read error: %d", ssl_error);
+                    running = FALSE;
+                }
+            }
+        }
+        
+        // Check for pending data from upstream
+        if (SSL_pending(conn->upstream_ssl) > 0 || SSL_has_pending(conn->upstream_ssl)) {
+            int bytes_read = SSL_read(conn->upstream_ssl, buffer, sizeof(buffer));
+            
+            if (bytes_read > 0) {
+                g_debug("Read %d bytes from upstream SSL", bytes_read);
+                
+                // Write to client
+                int total_written = 0;
+                while (total_written < bytes_read) {
+                    int bytes_written = SSL_write(conn->client_ssl, 
+                                                 buffer + total_written, 
+                                                 bytes_read - total_written);
+                    if (bytes_written > 0) {
+                        total_written += bytes_written;
+                        conn->bytes_upstream_to_client += bytes_written;
+                        data_transferred = TRUE;
+                    } else {
+                        ssl_error = SSL_get_error(conn->client_ssl, bytes_written);
+                        if (ssl_error != SSL_ERROR_WANT_READ && ssl_error != SSL_ERROR_WANT_WRITE) {
+                            g_debug("Client SSL write error: %d", ssl_error);
+                            running = FALSE;
+                            break;
+                        }
+                        g_usleep(1000); // 1ms wait
+                    }
+                }
+            } else {
+                ssl_error = SSL_get_error(conn->upstream_ssl, bytes_read);
+                if (ssl_error != SSL_ERROR_WANT_READ && ssl_error != SSL_ERROR_WANT_WRITE) {
+                    g_debug("Upstream SSL read error: %d", ssl_error);
+                    running = FALSE;
+                }
+            }
+        }
+        
+        // Also check the underlying sockets for data
+        if (!data_transferred) {
+            // Check if there's data waiting on the sockets
+            GSocket *client_socket = g_socket_connection_get_socket(conn->client_connection);
+            GSocket *upstream_socket = g_socket_connection_get_socket(conn->upstream_connection);
+            
+            if (g_socket_condition_check(client_socket, G_IO_IN) & G_IO_IN) {
+                // Force a read attempt
+                SSL_read(conn->client_ssl, buffer, 0);
+                continue;
+            }
+            
+            if (g_socket_condition_check(upstream_socket, G_IO_IN) & G_IO_IN) {
+                // Force a read attempt  
+                SSL_read(conn->upstream_ssl, buffer, 0);
+                continue;
+            }
+        }
+        
+        // Update idle counter
+        if (data_transferred) {
+            idle_cycles = 0;
+        } else {
+            idle_cycles++;
+            g_usleep(10000);  // 10ms sleep when idle
+        }
+    }
+    
+    conn->state = DEADLIGHT_STATE_CLOSING;
+    
+    g_info("Connection %lu: SSL tunnel closed (client->upstream: %s, upstream->client: %s)",
            conn->id,
            deadlight_format_bytes(conn->bytes_client_to_upstream),
            deadlight_format_bytes(conn->bytes_upstream_to_client));

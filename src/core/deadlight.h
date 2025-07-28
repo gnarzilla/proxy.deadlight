@@ -49,6 +49,42 @@ typedef enum {
     DEADLIGHT_STATE_CLOSED
 } DeadlightConnectionState;
 
+// SOCKS5 constants
+#define SOCKS5_VERSION 0x05
+#define SOCKS5_AUTH_NONE 0x00
+#define SOCKS5_AUTH_GSSAPI 0x01
+#define SOCKS5_AUTH_PASSWORD 0x02
+#define SOCKS5_AUTH_NO_ACCEPTABLE 0xFF
+#define SOCKS5_CMD_CONNECT 0x01
+#define SOCKS5_CMD_BIND 0x02
+#define SOCKS5_CMD_UDP_ASSOCIATE 0x03
+#define SOCKS5_ATYP_IPV4 0x01
+#define SOCKS5_ATYP_DOMAIN 0x03
+#define SOCKS5_ATYP_IPV6 0x04
+
+// SOCKS5 reply codes
+#define SOCKS5_REP_SUCCESS 0x00
+#define SOCKS5_REP_GENERAL_FAILURE 0x01
+#define SOCKS5_REP_NOT_ALLOWED 0x02
+#define SOCKS5_REP_NETWORK_UNREACHABLE 0x03
+#define SOCKS5_REP_HOST_UNREACHABLE 0x04
+#define SOCKS5_REP_CONNECTION_REFUSED 0x05
+#define SOCKS5_REP_TTL_EXPIRED 0x06
+#define SOCKS5_REP_COMMAND_NOT_SUPPORTED 0x07
+#define SOCKS5_REP_ADDRESS_TYPE_NOT_SUPPORTED 0x08
+
+typedef enum {
+    SOCKS5_STATE_INIT,
+    SOCKS5_STATE_AUTH,
+    SOCKS5_STATE_REQUEST,
+    SOCKS5_STATE_CONNECTED
+} Socks5State;
+
+typedef struct {
+    Socks5State state;
+    guint8 auth_method;
+} Socks5Data;
+
 // Log levels
 typedef enum {
     DEADLIGHT_LOG_ERROR = 0,
@@ -67,6 +103,26 @@ typedef struct _DeadlightConfig DeadlightConfig;
 typedef struct _DeadlightNetworkManager DeadlightNetworkManager;
 typedef struct _DeadlightSSLManager DeadlightSSLManager;
 typedef struct _DeadlightPluginManager DeadlightPluginManager;
+typedef struct _ConnectionPool ConnectionPool;
+typedef struct _PooledConnection PooledConnection;
+
+// Connection Pool structures
+struct _PooledConnection {
+    GSocketConnection *connection;
+    gchar *host;
+    guint16 port;
+    gint64 last_used;
+    gboolean is_ssl;
+};
+
+struct _ConnectionPool {
+    GQueue *idle_connections;      // Queue of idle connections
+    GHashTable *active_connections; // Currently in use
+    GMutex mutex;
+    gint max_per_host;
+    gint idle_timeout;
+    guint cleanup_source_id;
+};
 
 // Main context structure
 struct _DeadlightContext {
@@ -91,10 +147,16 @@ struct _DeadlightContext {
     // Configuration cache (for performance)
     gint listen_port;
     gchar *listen_address;
-    gint max_connections;
+    guint max_connections;
     DeadlightLogLevel log_level;
     gboolean ssl_intercept_enabled;
     
+    ConnectionPool *conn_pool; // Connection pool for upstream connections
+
+    // Authentication
+    gchar *auth_endpoint;
+    gchar *auth_secret;
+
     // Shutdown flag
     gboolean shutdown_requested;
 };
@@ -122,6 +184,11 @@ struct _DeadlightConnection {
     gchar *client_address;
     gchar *target_host;
     gint target_port;
+
+    // Authentication
+    gchar *username;
+    gchar *session_token;
+    gboolean authenticated; 
     
     // Protocol information
     DeadlightProtocol protocol;
@@ -131,6 +198,11 @@ struct _DeadlightConnection {
     GTlsConnection *client_tls;
     GTlsConnection *upstream_tls;
     gboolean ssl_established;
+    
+    // OpenSSL interception:
+    SSL *client_ssl;
+    SSL *upstream_ssl;
+    SSL_CTX *ssl_ctx;
     
     // Buffering
     GByteArray *client_buffer;
@@ -266,6 +338,7 @@ gboolean deadlight_ssl_init(DeadlightContext *context, GError **error);
 void deadlight_ssl_cleanup(DeadlightContext *context);
 gboolean deadlight_ssl_intercept_connection(DeadlightConnection *connection, GError **error);
 gboolean deadlight_ssl_create_ca_certificate(const gchar *cert_file, const gchar *key_file, GError **error);
+gboolean deadlight_ssl_tunnel_data(DeadlightConnection *conn, GError **error);
 
 // Plugin API
 gboolean deadlight_plugins_init(DeadlightContext *context, GError **error);
@@ -287,6 +360,14 @@ void deadlight_response_free(DeadlightResponse *response);
 gboolean deadlight_response_parse_headers(DeadlightResponse *response, const gchar *data, gsize length);
 gchar *deadlight_response_get_header(DeadlightResponse *response, const gchar *name);
 void deadlight_response_set_header(DeadlightResponse *response, const gchar *name, const gchar *value);
+
+// Connection Pool API
+ConnectionPool* connection_pool_new(gint max_per_host, gint idle_timeout);
+void connection_pool_free(ConnectionPool *pool);
+GSocketConnection* connection_pool_get(ConnectionPool *pool, const gchar *host, 
+                                       guint16 port, gboolean is_ssl);
+void connection_pool_release(ConnectionPool *pool, GSocketConnection *connection,
+                            const gchar *host, guint16 port, gboolean is_ssl);
 
 // Testing API
 gboolean deadlight_test_module(const gchar *module_name);

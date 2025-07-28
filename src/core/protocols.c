@@ -301,9 +301,14 @@ static gboolean handle_connect_request(DeadlightConnection *conn, GError **error
         return FALSE;
     }
     g_strfreev(parts);
-    
+
     g_info("Connection %lu: CONNECT request to %s:%d", conn->id, host, port);
-    
+
+    // Set target host BEFORE connecting (important for SSL interception)
+    conn->target_host = g_strdup(host); 
+    conn->target_port = port;
+
+
     // Connect to upstream
     if (!deadlight_network_connect_upstream(conn, host, port, error)) {
         g_free(host);
@@ -320,14 +325,21 @@ static gboolean handle_connect_request(DeadlightConnection *conn, GError **error
                              NULL, error) < 0) {
         return FALSE;
     }
-    
     // Check if SSL interception is enabled
     if (conn->context->ssl_intercept_enabled) {
-        // TODO: Implement SSL interception
-        g_debug("SSL interception would happen here");
+        // Intercept the SSL connection
+        if (!deadlight_ssl_intercept_connection(conn, error)) {
+            g_warning("Failed to intercept SSL for %s: %s", 
+                     conn->target_host,  // Use conn->target_host instead of host
+                     error && *error ? (*error)->message : "Unknown error");
+            // Fall back to tunneling
+            return deadlight_network_tunnel_data(conn, error);
+        }
+        
+        // Now we can inspect/modify SSL traffic
+        return deadlight_ssl_tunnel_data(conn, error);
     }
-    
-    // Tunnel the connection
+    // Regular tunneling without interception
     return deadlight_network_tunnel_data(conn, error);
 }
 
@@ -395,39 +407,307 @@ static gboolean handle_socks4_request(DeadlightConnection *conn, GError **error)
  * Handle SOCKS5 request
  */
 static gboolean handle_socks5_request(DeadlightConnection *conn, GError **error) {
-    // This is a simplified SOCKS5 implementation
-    // Full implementation would include authentication methods
-    
-    if (conn->client_buffer->len < 3) {
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_PARTIAL_INPUT,
-                   "Incomplete SOCKS5 handshake");
-        return FALSE;
-    }
-    
-    guint8 *data = conn->client_buffer->data;
-    
-    // Check version
-    if (data[0] != 0x05) {
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-                   "Invalid SOCKS5 version");
-        return FALSE;
-    }
-    
-    // For simplicity, we'll just send "no authentication required"
-    guint8 auth_response[2] = {0x05, 0x00};
+    GSocket *socket = g_socket_connection_get_socket(conn->client_connection);
     GOutputStream *output = g_io_stream_get_output_stream(
         G_IO_STREAM(conn->client_connection));
     
-    if (g_output_stream_write(output, auth_response, 2, NULL, error) < 0) {
-        return FALSE;
+    // Get or create SOCKS5 state data
+    Socks5Data *socks_data = g_hash_table_lookup(conn->plugin_data, "socks5");
+    if (!socks_data) {
+        socks_data = g_new0(Socks5Data, 1);
+        socks_data->state = SOCKS5_STATE_INIT;
+        g_hash_table_insert(conn->plugin_data, g_strdup("socks5"), socks_data);
     }
     
-    // TODO: Implement full SOCKS5 protocol
-    g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-               "SOCKS5 not fully implemented yet");
-    return FALSE;
+    guint8 buffer[512];
+    gssize bytes_read;
+    
+    // State machine for SOCKS5 protocol
+    while (socks_data->state != SOCKS5_STATE_CONNECTED) {
+        switch (socks_data->state) {
+            case SOCKS5_STATE_INIT: {
+                // Phase 1: Client greeting
+                // We should have initial data in conn->client_buffer
+                if (conn->client_buffer->len < 3) {
+                    g_set_error(error, G_IO_ERROR, G_IO_ERROR_PARTIAL_INPUT,
+                               "Incomplete SOCKS5 greeting");
+                    return FALSE;
+                }
+                
+                guint8 *data = conn->client_buffer->data;
+                if (data[0] != SOCKS5_VERSION) {
+                    g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                               "Invalid SOCKS5 version: %02x", data[0]);
+                    return FALSE;
+                }
+                
+                guint8 nmethods = data[1];
+                if (conn->client_buffer->len < 2 + nmethods) {
+                    g_set_error(error, G_IO_ERROR, G_IO_ERROR_PARTIAL_INPUT,
+                               "Incomplete method list");
+                    return FALSE;
+                }
+                
+                // Check supported auth methods
+                gboolean has_no_auth = FALSE;
+                gboolean has_password = FALSE;
+                
+                for (int i = 0; i < nmethods; i++) {
+                    if (data[2 + i] == SOCKS5_AUTH_NONE) has_no_auth = TRUE;
+                    if (data[2 + i] == SOCKS5_AUTH_PASSWORD) has_password = TRUE;
+                }
+                
+                // Select authentication method
+                guint8 selected_method = SOCKS5_AUTH_NO_ACCEPTABLE;
+                
+                if (conn->context->auth_endpoint && has_password) {
+                    selected_method = SOCKS5_AUTH_PASSWORD;
+                    socks_data->auth_method = SOCKS5_AUTH_PASSWORD;
+                    socks_data->state = SOCKS5_STATE_AUTH;
+                } else if (has_no_auth) {
+                    selected_method = SOCKS5_AUTH_NONE;
+                    socks_data->auth_method = SOCKS5_AUTH_NONE;
+                    socks_data->state = SOCKS5_STATE_REQUEST;
+                }
+                
+                // Send method selection response
+                guint8 response[2] = {SOCKS5_VERSION, selected_method};
+                if (g_output_stream_write(output, response, 2, NULL, error) < 0) {
+                    return FALSE;
+                }
+                
+                if (selected_method == SOCKS5_AUTH_NO_ACCEPTABLE) {
+                    g_set_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                               "No acceptable authentication methods");
+                    return FALSE;
+                }
+                
+                // Clear processed data from buffer
+                g_byte_array_remove_range(conn->client_buffer, 0, 2 + nmethods);
+                
+                // If no auth required, continue to request phase
+                if (socks_data->state == SOCKS5_STATE_REQUEST) {
+                    continue;
+                }
+                break;
+            }
+            
+            case SOCKS5_STATE_AUTH: {
+                // Phase 2: Username/password authentication
+                bytes_read = g_socket_receive(socket, (gchar *)buffer, 
+                                            sizeof(buffer), NULL, error);
+                if (bytes_read <= 0) {
+                    return FALSE;
+                }
+                
+                // Auth request format: [version=1][ulen][username][plen][password]
+                if (buffer[0] != 0x01) {
+                    g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                               "Invalid auth version");
+                    return FALSE;
+                }
+                
+                if (bytes_read < 2) {
+                    g_set_error(error, G_IO_ERROR, G_IO_ERROR_PARTIAL_INPUT,
+                               "Incomplete auth header");
+                    return FALSE;
+                }
+                
+                guint8 ulen = buffer[1];
+                if (bytes_read < 2 + ulen + 1) {
+                    g_set_error(error, G_IO_ERROR, G_IO_ERROR_PARTIAL_INPUT,
+                               "Incomplete username");
+                    return FALSE;
+                }
+                
+                gchar *username = g_strndup((gchar *)&buffer[2], ulen);
+                guint8 plen = buffer[2 + ulen];
+                
+                if (bytes_read < 2 + ulen + 1 + plen) {
+                    g_free(username);
+                    g_set_error(error, G_IO_ERROR, G_IO_ERROR_PARTIAL_INPUT,
+                               "Incomplete password");
+                    return FALSE;
+                }
+                
+                gchar *password = g_strndup((gchar *)&buffer[3 + ulen], plen);
+                
+                // Perform authentication
+                gboolean authenticated = FALSE;
+                if (conn->context->auth_endpoint) {
+                    // TODO: Call your auth endpoint
+                    // authenticated = deadlight_auth_check(conn->context, username, password);
+                    authenticated = TRUE; // Placeholder
+                }
+                
+                // Send auth response: [version=1][status]
+                guint8 auth_response[2] = {0x01, authenticated ? 0x00 : 0xFF};
+                if (g_output_stream_write(output, auth_response, 2, NULL, error) < 0) {
+                    g_free(username);
+                    g_free(password);
+                    return FALSE;
+                }
+                
+                if (!authenticated) {
+                    g_free(username);
+                    g_free(password);
+                    g_set_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                               "Authentication failed");
+                    return FALSE;
+                }
+                
+                conn->username = username; // Store authenticated user
+                g_free(password);
+                
+                socks_data->state = SOCKS5_STATE_REQUEST;
+                break;
+            }
+            
+            case SOCKS5_STATE_REQUEST: {
+                // Phase 3: Connection request
+                // Check if we have buffered data first
+                if (conn->client_buffer->len > 0) {
+                    bytes_read = MIN(conn->client_buffer->len, sizeof(buffer));
+                    memcpy(buffer, conn->client_buffer->data, bytes_read);
+                    g_byte_array_remove_range(conn->client_buffer, 0, bytes_read);
+                } else {
+                    bytes_read = g_socket_receive(socket, (gchar *)buffer, 
+                                                sizeof(buffer), NULL, error);
+                    if (bytes_read <= 0) {
+                        return FALSE;
+                    }
+                }
+                
+                // Request format: [ver][cmd][rsv][atyp][addr][port]
+                if (bytes_read < 10) {
+                    g_set_error(error, G_IO_ERROR, G_IO_ERROR_PARTIAL_INPUT,
+                               "Incomplete SOCKS5 request");
+                    return FALSE;
+                }
+                
+                if (buffer[0] != SOCKS5_VERSION) {
+                    g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                               "Invalid request version");
+                    return FALSE;
+                }
+                
+                guint8 cmd = buffer[1];
+                if (cmd != SOCKS5_CMD_CONNECT) {
+                    // Send error reply
+                    guint8 reply[10] = {SOCKS5_VERSION, SOCKS5_REP_COMMAND_NOT_SUPPORTED,
+                                       0x00, SOCKS5_ATYP_IPV4, 0, 0, 0, 0, 0, 0};
+                    g_output_stream_write(output, reply, 10, NULL, NULL);
+                    g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                               "Command %d not supported", cmd);
+                    return FALSE;
+                }
+                
+                // Parse destination address
+                gchar *target_host = NULL;
+                guint16 target_port = 0;
+                guint8 atyp = buffer[3];
+                gint addr_offset = 4;
+                gint port_offset;
+                
+                switch (atyp) {
+                    case SOCKS5_ATYP_IPV4:
+                        if (bytes_read < 10) {
+                            g_set_error(error, G_IO_ERROR, G_IO_ERROR_PARTIAL_INPUT,
+                                       "Incomplete IPv4 address");
+                            return FALSE;
+                        }
+                        target_host = g_strdup_printf("%d.%d.%d.%d",
+                                                     buffer[4], buffer[5], 
+                                                     buffer[6], buffer[7]);
+                        port_offset = 8;
+                        break;
+                        
+                    case SOCKS5_ATYP_DOMAIN: {
+                        guint8 domain_len = buffer[4];
+                        if (bytes_read < 7 + domain_len) {
+                            g_set_error(error, G_IO_ERROR, G_IO_ERROR_PARTIAL_INPUT,
+                                       "Incomplete domain name");
+                            return FALSE;
+                        }
+                        target_host = g_strndup((gchar *)&buffer[5], domain_len);
+                        port_offset = 5 + domain_len;
+                        break;
+                    }
+                    
+                    case SOCKS5_ATYP_IPV6:
+                        if (bytes_read < 22) {
+                            g_set_error(error, G_IO_ERROR, G_IO_ERROR_PARTIAL_INPUT,
+                                       "Incomplete IPv6 address");
+                            return FALSE;
+                        }
+                        target_host = g_strdup_printf(
+                            "[%02x%02x:%02x%02x:%02x%02x:%02x%02x:"
+                            "%02x%02x:%02x%02x:%02x%02x:%02x%02x]",
+                            buffer[4], buffer[5], buffer[6], buffer[7],
+                            buffer[8], buffer[9], buffer[10], buffer[11],
+                            buffer[12], buffer[13], buffer[14], buffer[15],
+                            buffer[16], buffer[17], buffer[18], buffer[19]);
+                        port_offset = 20;
+                        break;
+                        
+                    default:
+                        // Send error reply
+                        guint8 reply[10] = {SOCKS5_VERSION, SOCKS5_REP_ADDRESS_TYPE_NOT_SUPPORTED,
+                                           0x00, SOCKS5_ATYP_IPV4, 0, 0, 0, 0, 0, 0};
+                        g_output_stream_write(output, reply, 10, NULL, NULL);
+                        g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                                   "Address type %d not supported", atyp);
+                        return FALSE;
+                }
+                
+                // Get port
+                target_port = (buffer[port_offset] << 8) | buffer[port_offset + 1];
+                
+                g_info("Connection %lu: SOCKS5 CONNECT to %s:%d", 
+                       conn->id, target_host, target_port);
+                
+                // Try to connect to target
+                if (!deadlight_network_connect_upstream(conn, target_host, 
+                                                       target_port, error)) {
+                    // Send error reply
+                    guint8 reply[10] = {SOCKS5_VERSION, SOCKS5_REP_HOST_UNREACHABLE,
+                                       0x00, SOCKS5_ATYP_IPV4, 0, 0, 0, 0, 0, 0};
+                    g_output_stream_write(output, reply, 10, NULL, NULL);
+                    g_free(target_host);
+                    return FALSE;
+                }
+                
+                // Build success reply (echo back the address info)
+                gint reply_len = port_offset + 2;
+                guint8 *reply = g_malloc(reply_len);
+                memcpy(reply, buffer, reply_len);
+                reply[0] = SOCKS5_VERSION;
+                reply[1] = SOCKS5_REP_SUCCESS;
+                reply[2] = 0x00; // Reserved
+                
+                if (g_output_stream_write(output, reply, reply_len, NULL, error) < 0) {
+                    g_free(reply);
+                    g_free(target_host);
+                    return FALSE;
+                }
+                
+                g_free(reply);
+                g_free(target_host);
+                
+                socks_data->state = SOCKS5_STATE_CONNECTED;
+                break;
+            }
+            
+            default:
+                g_assert_not_reached();
+        }
+    }
+    
+    // Start tunneling data
+    return deadlight_network_tunnel_data(conn, error);
 }
-
+    
+    //
 /**
  * Parse HTTP request line
  */

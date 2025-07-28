@@ -42,7 +42,8 @@ CORE_SOURCES = $(SRCDIR)/main.c \
                $(SRCDIR)/protocols.c \
                $(SRCDIR)/plugins.c \
                $(SRCDIR)/request.c \
-               $(SRCDIR)/utils.c
+               $(SRCDIR)/utils.c \
+               $(SRCDIR)/connection_pool.c
 
 # Object files
 CORE_OBJECTS = $(patsubst $(SRCDIR)/%.c,$(OBJDIR)/%.o,$(CORE_SOURCES))
