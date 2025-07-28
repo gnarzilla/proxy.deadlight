@@ -1,5 +1,5 @@
 # Deadlight Proxy v4.0
-support is greatly appreciated!- Buy me a coffee
+[Support is greatly appreciated!- Buy me a coffee](coff.ee/gnarzillah)
 
 A lightweight, modular HTTP/HTTPS proxy server written in C using the GLib ecosystem.
 
