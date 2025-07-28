@@ -81,6 +81,9 @@ ssl:
 ./deadlight-proxy -c config.yaml
 ```
 
+<img width="949" height="878" alt="image" src="https://github.com/user-attachments/assets/7f3febdf-5621-4b7d-b834-c2f912a3fa3b" />
+
+
 ### Command Line Options
 
 - `-c, --config`: Path to configuration file (default: ./config.yaml)
@@ -161,3 +164,4 @@ This project is under active development. Key areas for contribution include:
 ## Acknowledgments
 
 Built using the excellent GLib framework and OpenSSL library. Special thanks to the open-source community for providing robust, well-documented libraries that make projects like this possible.
+___
