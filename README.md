@@ -33,9 +33,6 @@ The proxy is built with a modular design consisting of:
 
 ## Building
 
-<img width="1117" height="491" alt="image" src="https://github.com/user-attachments/assets/70236698-1779-410a-b61d-b16b395a676b" />
-
-
 ### Prerequisites
 
 - GCC or Clang compiler
