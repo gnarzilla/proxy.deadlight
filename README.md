@@ -1,44 +1,50 @@
 # Deadlight Proxy v4.0
 
-A lightweight, modular HTTP/HTTPS proxy server written in C using the GLib ecosystem.
+A modular, high-performance, and extensible proxy server written in C using the GLib ecosystem. Designed for protocol-agnostic handling and deep inspection capabilities.
 
 ## Overview
 
-Deadlight Proxy is a high-performance proxy server designed with modularity and extensibility in mind. Built using modern C programming practices and the GLib framework, it provides a solid foundation for HTTP/HTTPS proxying with clean separation of concerns across different modules.
+Deadlight Proxy is a feature-rich proxy server built with a modern C plugin architecture. It provides a robust foundation for tunneling, modifying, and inspecting network traffic. While its initial focus is on HTTP/HTTPS with SSL interception, its core design allows for the integration of additional protocols like IMAP, SOCKS, and WebSockets through a clean plugin and protocol handler system.
 
 ## Features
 
-### Current Implementation (v4.0)
-
-- **HTTP/HTTPS Support**: Full support for HTTP and HTTPS traffic proxying
-- **CONNECT Method**: Handles HTTPS tunneling through CONNECT requests
-- **Protocol Detection**: Automatic detection of HTTP vs HTTPS traffic
-- **Non-blocking I/O**: Efficient handling of multiple concurrent connections
-- **Modular Architecture**: Clean separation between networking, protocol handling, and configuration
-- **Configuration Management**: YAML-based configuration with runtime file monitoring
-- **Comprehensive Logging**: Multi-level logging system for debugging and monitoring
-- **SSL/TLS Support**: OpenSSL integration for secure connections
-- **Bidirectional Tunneling**: Efficient data forwarding between clients and upstream servers
+- **Multi-Protocol Support**: Core engine designed to handle different protocols.
+    - ✅ **HTTP/1.1**: Full support for proxying HTTP traffic.
+    - ✅ **HTTPS (CONNECT Tunneling)**: Standard handling for HTTPS connections.
+    - ✅ **HTTPS (SSL Interception)**: Man-in-the-Middle (MITM) capability for inspecting and modifying TLS traffic.
+- **Extensible Plugin Architecture**: Add new features or modify traffic on the fly with custom plugins. Hooks are available for connection lifecycle, headers, and body content.
+- **High Performance**:
+    - Non-blocking I/O using GLib's event loop (`GMainLoop`).
+    - Upstream connection pooling to reduce latency.
+    - Worker thread pool for offloading intensive tasks.
+- **Robust Operation**:
+    - **Daemon Mode**: Run as a background service.
+    - **Configuration**: INI-style configuration file (`deadlight.conf`) with hot-reloading.
+    - **Logging**: Comprehensive and configurable logging subsystem.
+    - **Graceful Shutdown**: Signal handling for clean exit and resource cleanup.
+- **Developer Focused**:
+    - **Built-in Test Framework**: Easily run unit tests for individual modules (`-t all`).
+    - **Clean, Modular Codebase**: Logic is clearly separated into managers for network, SSL, plugins, etc.
 
 ## Architecture
 
-The proxy is built with a modular design consisting of:
+The proxy is built on a modular design managed by a central `DeadlightContext`:
 
-- **Core Engine**: Main event loop and connection management
-- **Network Module**: Socket handling and non-blocking I/O operations
-- **Protocol Module**: HTTP/HTTPS protocol parsing and handling
-- **Configuration Module**: YAML configuration parsing and hot-reload support
-- **Logging Module**: Structured logging with multiple verbosity levels
-- **SSL Module**: TLS/SSL connection handling and certificate management
+- **Main Context**: Holds the state of the application and pointers to all subsystems.
+- **Network Manager**: Handles non-blocking I/O, listener sockets, and connection management using GIO.
+- **SSL Manager**: Manages the OpenSSL context, CA certificates, and performs SSL interception.
+- **Plugin Manager**: Loads, registers, and invokes plugins at various hooks in the connection lifecycle.
+- **Protocol System**: Detects the protocol of an incoming connection and dispatches to the appropriate handler.
+- **Configuration Manager**: Parses INI-style configuration files and monitors them for changes.
+- **Connection Pool**: Manages and reuses upstream server connections for improved performance.
 
 ## Building
 
 ### Prerequisites
 
 - GCC or Clang compiler
-- GLib 2.0+ development libraries
-- OpenSSL development libraries
-- libyaml development libraries
+- GLib 2.0+ & GIO development libraries (`libglib2.0-dev`)
+- OpenSSL development libraries (`libssl-dev`)
 - pkg-config
 - Make
 
@@ -53,32 +59,41 @@ The build process will create the `deadlight-proxy` executable in the project ro
 
 ## Configuration
 
-The proxy uses a YAML configuration file (`config.yaml`) with the following structure:
+The proxy uses an INI-style configuration file (e.g. `deadlight.conf`)
 
-```yaml
-proxy:
-  host: "0.0.0.0"
-  port: 8888
-  max_connections: 1000
-  timeout: 30
+[core]
+# Address to bind to. 0.0.0.0 for all interfaces.
+address = 0.0.0.0
+port = 8080
+max_connections = 500
+# Log level: error, warning, info, debug
+log_level = info
+pid_file = /var/run/deadlight.pid
 
-logging:
-  level: "info"  # debug, info, warning, error
-  file: "/var/log/deadlight-proxy.log"
-  max_size: 10485760  # 10MB
-  max_files: 5
+[ssl]
+# Enable SSL interception (MITM)
+intercept_enabled = true
+# Directory for CA certificate and generated certs
+ca_cert_path = ./certs/deadlight-ca.crt
+ca_key_path = ./certs/deadlight-ca.key
 
-ssl:
-  cert_dir: "./certs"
-  verify_upstream: true
-```
+[plugins]
+# List of plugins to load
+enabled = adblocker, logger, stats
 
 ## Usage
 
 ### Starting the Proxy
 
 ```bash
-./deadlight-proxy -c config.yaml
+# Run in foreground on port 8080
+./deadlight -p 8080
+
+# Run using a config file
+./deadlight -c deadlight.conf
+
+# Run as a daemon
+sudo ./deadlight -d -c /etc/deadlight/deadlight.conf
 ```
 
 <img width="949" height="878" alt="image" src="https://github.com/user-attachments/assets/7f3febdf-5621-4b7d-b834-c2f912a3fa3b" />
@@ -86,10 +101,13 @@ ssl:
 
 ### Command Line Options
 
-- `-c, --config`: Path to configuration file (default: ./config.yaml)
-- `-d, --debug`: Enable debug logging
-- `-h, --help`: Show help message
-- `-v, --version`: Show version information
+-c, --config FILE: Path to configuration file.
+-p, --port PORT: Port to listen on (overrides config).
+-d, --daemon: Run as a background daemon.
+-v, --verbose: Enable verbose (debug) logging.
+--pid-file FILE: Path to write PID file in daemon mode.
+-t, --test MODULE: Run tests for a specific module (all, network, ssl, etc.).
+-h, --help: Show help message.
 
 ### Testing the Proxy
 
@@ -108,17 +126,23 @@ curl -x http://localhost:8888 https://example.com
 ```
 deadlight-proxy/
 ├── src/
-│   ├── main.c              # Entry point and main loop
-│   ├── network.c           # Network I/O operations
-│   ├── protocol.c          # HTTP/HTTPS protocol handling
-│   ├── config.c            # Configuration management
-│   ├── logging.c           # Logging subsystem
-│   └── ssl.c               # SSL/TLS handling
-├── include/
-│   └── deadlight-proxy.h   # Main header file
-├── config.yaml             # Default configuration
-├── Makefile               # Build configuration
-└── README.md              # This file
+│   ├── core/               # Core modules (main, context, config, logging, etc.)
+│   │   ├── main.c
+│   │   ├── context.c
+│   │   ├── config.c
+│   │   ├── network.c
+│   │   ├── ssl.c
+│   │   └── plugins.c
+│   ├── plugins/            # Built-in plugin implementations
+│   │   ├── adblocker.c
+│   │   └── ...
+│   ├── protocols/          # Protocol handler implementations
+│   │   └── http.c
+│   └── deadlight.h         # Main header with all public structures and APIs
+├── certs/                  # Directory for SSL certificates
+├── deadlight.conf.example  # Example configuration file
+├── Makefile                # Build configuration
+└── README.md               # This file
 ```
 
 ## Development Status
