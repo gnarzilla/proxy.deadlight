@@ -9,6 +9,7 @@
 #include "protocols/http.h"
 #include "protocols/imap.h" 
 #include "protocols/imaps.h"
+#include "protocols/socks.h"
 // #include "protocols/socks.h" // In the future, you'd add this
 
 static GList *protocol_handlers = NULL;
@@ -30,6 +31,8 @@ void deadlight_protocols_init(DeadlightContext *context) {
     deadlight_register_http_handler();
     // deadlight_register_imap_handler();
     deadlight_register_imaps_handler();
+
+    deadlight_register_socks_handler();
 
     g_info("%d protocol handlers registered.", g_list_length(protocol_handlers));
 }

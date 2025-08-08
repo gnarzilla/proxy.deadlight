@@ -29,26 +29,22 @@
 
 ### Overview
 
-Deadlight Proxy is a feature-rich proxy server built with a modern C architecture. It provides a robust foundation for tunneling, modifying, and inspecting network traffic. While its initial focus is on HTTP/HTTPS with SSL interception, its core design allows for the seamless integration of additional protocols like IMAP, SOCKS, and WebSockets through a clean protocol handler system.
+`proxy.deadlight` is a high-performance, protocol-agnostic network proxy written in C. It serves as the essential Protocol Bridge for the Deadlight Ecosystem, connecting the modern, HTTP-only world of serverless platforms like Cloudflare Workers to the foundational TCP protocols of the internet like SMTP, IMAP, and SOCKS.
 
-### Features
+Its purpose is to be a lightweight, secure, and highly portable service that can run on minimal hardware (from a small VPS to a Raspberry Pi), enabling true self-sovereignty for services like email and private communications.
 
--   **Multi-Protocol Support**: Core engine designed to handle different protocols.
-    -   ✅ **HTTP/1.1**: Full support for proxying HTTP traffic.
-    -   ✅ **HTTPS (CONNECT Tunneling)**: Standard handling for HTTPS connections.
-    -   ✅ **HTTPS (SSL Interception)**: Man-in-the-Middle (MITM) capability for inspecting and modifying TLS traffic via on-the-fly certificate generation.
--   **High Performance**:
-    -   **Multi-Threaded Worker Pool**: Handles concurrent connections efficiently across multiple CPU cores.
-    -   **Asynchronous I/O**: Uses GLib's event loop for scalable, non-blocking operations on long-lived connections (like SSL tunnels).
-    -   **Upstream Connection Pooling**: Reuses upstream connections to reduce latency and resource usage.
--   **Robust Operation**:
-    -   **Daemon Mode**: Run as a background service.
-    -   **Configuration**: INI-style configuration file (`deadlight.conf`) with hot-reloading support.
-    -   **Comprehensive Logging**: Configurable logging subsystem with multiple levels and color-coded output.
-    -   **Graceful Shutdown**: Signal handling for clean exit and resource cleanup.
--   **Extensible Architecture**:
-    -   Add new features or modify traffic on the fly with custom plugins (hooks for connection lifecycle, headers, etc.).
-    -   Easily add new protocol handlers to the core engine.
+### Features (Current Status)
+
+After a comprehensive refactoring and development cycle, `proxy.deadlight` has evolved from a simple proxy into a robust, extensible framework.
+
+- 📦 **Modular, Protocol-Agnostic Architecture:** Built around a `DeadlightProtocolHandler` interface that allows new protocols to be added easily as self-contained modules.
+- 🚀 **High-Performance C Foundation:** Utilizes the robust and efficient GNU/GLib ecosystem for high-throughput, low-latency network I/O and multi-threaded connection handling.
+- 🔒 **Secure Tunneling & Interception:**
+   - **HTTP/HTTPS Proxy:** Functions as a standard forward proxy for web traffic.
+   - **SSL (TLS) Interception:** Capable of generating certificates on-the-fly for traffic inspection (MitM), a powerful tool for development and security analysis.
+   - **IMAPS Tunneling:** Securely tunnels IMAP traffic over TLS, with robust certificate validation against the system's trust store.
+🌐 **SOCKS4 Proxy Support:** Provides basic IP masking and privacy by serving as a SOCKS4 proxy for compatible applications.
+🔧 **File-Based Configuration:** All core settings, listeners, and protocol behaviors are controlled via a simple .ini-style configuration file.
 
 ### Architecture
 
@@ -79,8 +75,12 @@ This is all managed by a set of distinct managers:
 On Debian/Ubuntu, install all prerequisites with:
 ```bash
 sudo apt-get update
-sudo apt-get install build-essential pkg-config libglib2.0-dev libssl-dev
+sudo apt-get install build-essential pkg-config libglib2.0-dev libssl-dev glib-networking
 ```
+- `build-essential`: Provides gcc, make, etc.
+- `libglib2.0-dev`: The GLib core libraries and development headers.
+- `libopenssl-dev`: For all cryptographic and TLS functions.
+- `glib-networking`: The essential backend for GIO's TLS functionality.
 
 #### Building
 
@@ -98,20 +98,37 @@ The proxy uses an INI-style configuration file. A sample is provided at `deadlig
 
 ```ini
 [core]
-# Address to bind to. 0.0.0.0 for all interfaces.
-address = 0.0.0.0
 port = 8080
-worker_threads = 4
+bind_address = 0.0.0.0
 max_connections = 500
-# Log level: error, warning, info, debug
 log_level = info
+worker_threads = 4
 
 [ssl]
-# Enable SSL interception (MITM)
-intercept_enabled = true
-# Path to your CA certificate and key. They will be generated if they don't exist.
-ca_cert = ./ssl/ca.crt
-ca_key = ./ssl/ca.key
+enabled = true
+ca_cert_file = /home/thatch/.deadlight/ca.crt
+ca_key_file = /home/thatch/.deadlight/ca.key
+cert_cache_dir = /tmp/deadlight_certs
+
+[protocols]
+http_enabled = true
+https_enabled = true
+connect_enabled = true
+
+[plugins]
+enabled = false
+
+[imap]
+# The upstream IMAP server to proxy connections to.
+upstream_host = imap.gmail.com
+upstream_port = 143
+
+[imaps]
+# The upstream IMAPS server to proxy connections to.
+# This uses SSL/TLS on port 993.
+upstream_host = imap.gmail.com
+upstream_port = 993
+
 ```
 
 #### Running
@@ -120,6 +137,38 @@ ca_key = ./ssl/ca.key
 ```
 
 ### Usage
+
+#### Example 1: HTTP/HTTPS Web Proxy
+
+Configure your browser or system to use `http:/localhost:8080` as its proxy. Or, use `curl`:
+
+```bash
+# Proxy a standard HTTP request
+curl -x http://localhost:8080 http://example.com
+
+# Proxy an HTTPS request (using the CONNECT method)
+curl -x http://localhost:8080 https://example.com
+```
+#### Example 2: SOCKS4 Privacy Proxy
+
+Use `curl` to route a request through the SOCKS4 handler:
+```bash
+curl --socks4 localhost:8080 http://example.com
+```
+
+#### Example 3: IMAPS Secure Tunnel
+
+Test the secure IMAP tunnel using `telnet` (this proves the TLS handshake and tunneling):
+```bash
+telnet localhost 8080
+```
+Once connected, type the following and press Enter:
+```text
+a001 NOOP
+```
+The proxy will establish a secure TLS connection to the upstream IMAP server and tunnel the data.
+
+
 
 #### Command Line Options
 
@@ -172,14 +221,13 @@ deadlight/
 ```
 
 ### Development Status
+The current framework is stable and ready for the next phase of development.
 
-The proxy core is stable and the protocol-handling framework is complete.
-
-**Known Limitations / Next Steps:**
--   Plain TCP tunnels (non-intercepted `CONNECT`) currently use a blocking loop. This should be refactored to use the asynchronous `GIOChannel` model.
--   HTTP/2 support is not yet implemented.
--   No proxy authentication mechanisms are implemented.
--   The plugin system is foundational and can be expanded with more hooks.
+- ✅ SOCKS4 Proxy: Implemented and working.
+- ➡️ SOCKS5 Proxy: The next immediate goal is to implement the full SOCKS5 handshake, including support for username/password authentication.
+- 🚀 Protocol Translation Layer: The ultimate goal. This involves evolving the protocol handlers (IMAP, SMTP) from simple tunnels into intelligent translators that communicate with the comm.deadlight Cloudflare Worker via a secure HTTP API. This will require integrating an HTTP client library like libcurl.
+- 🕵️ Personal VPN-like Service: While a full VPN is out of scope, enhancing the SOCKS5 proxy provides a powerful, easy-to-use privacy feature for users, achieving the core goal of IP masking.
+Contributing
 
 ### License
 
