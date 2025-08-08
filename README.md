@@ -65,6 +65,8 @@ After a comprehensive refactoring and development cycle, `proxy.deadlight` has e
 - `POST /api/email/send` - Send emails through proxy SMTP bridge
 - `POST /api/federation/send` - Federated blog post distribution via email
 
+[Web Integration from CLI](https://github.com/gnarzilla/proxy.deadlight/blob/main/src/assets/Proxy%20%26%20Blog%20Terminal%20Side-by-Side.png)
+
 ### Architecture
 
 #### System Architecture
