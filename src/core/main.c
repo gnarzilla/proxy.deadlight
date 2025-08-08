@@ -256,6 +256,8 @@ static int run_interactive_mode(void) {
     if (!opt_daemon) {
         print_banner();
     }
+
+        deadlight_protocols_init(g_context);
     
     // Initialize core systems
     g_info("Initializing Deadlight systems...");

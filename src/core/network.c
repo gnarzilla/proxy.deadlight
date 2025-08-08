@@ -285,134 +285,98 @@ void deadlight_connection_free(DeadlightConnection *conn) {
 /**
  * Worker thread function
  */
+// In src/core/network.c
+
 static void connection_thread_func(gpointer data, gpointer user_data) {
     DeadlightConnection *conn = (DeadlightConnection *)data;
     DeadlightContext *context = (DeadlightContext *)user_data;
-    
+    GError *error = NULL;
+
     g_debug("Worker thread processing connection %lu", conn->id);
-    
-    // Set connection state
+
     conn->state = DEADLIGHT_STATE_DETECTING;
-    
-    // Set socket to non-blocking
+
+    // --- Your existing socket setup and initial read logic is perfect and stays here ---
     GSocket *socket = g_socket_connection_get_socket(conn->client_connection);
     g_socket_set_blocking(socket, FALSE);
-    
-    // Set socket options
-    gint optval = 1;
-    g_socket_set_option(socket, SOL_SOCKET, SO_KEEPALIVE, optval, NULL);
-    
-    if (deadlight_config_get_bool(context, "network", "tcp_nodelay", TRUE)) {
-        g_socket_set_option(socket, IPPROTO_TCP, TCP_NODELAY, optval, NULL);
-    }
-    
-    // Initial read to detect protocol
-    guint8 peek_buffer[1024];
-    gssize bytes_peeked;
-    GError *error = NULL;
-    
-    // Wait for data with timeout
-    gint timeout = deadlight_config_get_int(context, "protocols", 
-                                          "protocol_detection_timeout", 5);
+    // ... keep your SO_KEEPALIVE and TCP_NODELAY options here ...
+    guint8 peek_buffer[2048];
+    gssize bytes_peeked = 0;
+    gint timeout = deadlight_config_get_int(context, "protocols", "protocol_detection_timeout", 5);
     gint64 end_time = g_get_monotonic_time() + (timeout * G_TIME_SPAN_SECOND);
-    
+
     while (TRUE) {
-        bytes_peeked = g_socket_receive(socket, (gchar *)peek_buffer, 
-                                       sizeof(peek_buffer), NULL, &error);
-        
+        bytes_peeked = g_socket_receive(socket, (gchar *)peek_buffer, sizeof(peek_buffer), NULL, &error);
         if (bytes_peeked > 0) {
-            // Detect protocol
-            conn->protocol = deadlight_protocol_detect(peek_buffer, bytes_peeked);
-            g_info("Connection %lu: Detected protocol %s", conn->id,
-                   deadlight_protocol_to_string(conn->protocol));
-            
-            // Store peeked data
             g_byte_array_append(conn->client_buffer, peek_buffer, bytes_peeked);
             break;
         }
-        
-        if (error) {
-            if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_WOULD_BLOCK)) {
-                g_clear_error(&error);
-                
-                // Check timeout
-                if (g_get_monotonic_time() > end_time) {
-                    g_warning("Connection %lu: Protocol detection timeout", conn->id);
-                    goto cleanup;
-                }
-                
-                // Wait a bit before retry
-                g_usleep(10000); // 10ms
-                continue;
-            } else {
-                g_warning("Connection %lu: Read error: %s", conn->id, error->message);
-                g_error_free(error);
-                goto cleanup;
-            }
+        if (bytes_peeked == 0 || (error && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_WOULD_BLOCK)) || g_get_monotonic_time() > end_time) {
+            if(bytes_peeked == 0) g_info("Connection %lu: Client closed before sending data.", conn->id);
+            else if(error) g_warning("Connection %lu: Read error: %s", conn->id, error->message);
+            else g_warning("Connection %lu: Protocol detection timeout.", conn->id);
+            g_clear_error(&error);
+            goto cleanup; // Use goto for initial read failures
         }
-        
-        // Connection closed
-        if (bytes_peeked == 0) {
-            g_info("Connection %lu: Client closed connection", conn->id);
-            goto cleanup;
-        }
+        g_clear_error(&error);
+        g_usleep(10000); // 10ms
     }
-    
-    // Check if protocol is supported
-    if (conn->protocol == DEADLIGHT_PROTOCOL_UNKNOWN) {
-        g_warning("Connection %lu: Unknown protocol", conn->id);
+
+    const DeadlightProtocolHandler *handler = deadlight_protocol_detect_and_assign(conn, conn->client_buffer->data, conn->client_buffer->len);
+
+    if (!handler) {
+        g_warning("Connection %lu: Could not detect a known protocol.", conn->id);
         goto cleanup;
     }
-    
-    // Check if protocol is enabled
-    gboolean protocol_enabled = FALSE;
-    switch (conn->protocol) {
-        case DEADLIGHT_PROTOCOL_HTTP:
-            protocol_enabled = deadlight_config_get_bool(context, "protocols", "http_enabled", TRUE);
-            break;
-        case DEADLIGHT_PROTOCOL_HTTPS:
-        case DEADLIGHT_PROTOCOL_CONNECT:
-            protocol_enabled = deadlight_config_get_bool(context, "protocols", "https_enabled", TRUE);
-            break;
-        case DEADLIGHT_PROTOCOL_SOCKS4:
-            protocol_enabled = deadlight_config_get_bool(context, "protocols", "socks4_enabled", TRUE);
-            break;
-        case DEADLIGHT_PROTOCOL_SOCKS5:
-            protocol_enabled = deadlight_config_get_bool(context, "protocols", "socks5_enabled", TRUE);
-            break;
-        case DEADLIGHT_PROTOCOL_WEBSOCKET:
-            protocol_enabled = deadlight_config_get_bool(context, "protocols", "websocket_enabled", TRUE);
-            break;
-        default:
-            break;
-    }
-    
-    if (!protocol_enabled) {
-        g_warning("Connection %lu: Protocol %s is disabled", conn->id,
-                 deadlight_protocol_to_string(conn->protocol));
-        goto cleanup;
-    }
-    
-    // Call plugin hooks
-    if (context->plugins) {
-        // TODO: Call on_connection_accept and on_protocol_detect hooks
-    }
-    
-    // Handle the protocol
+
+    g_info("Connection %lu: Detected protocol '%s'", conn->id, handler->name);
     conn->state = DEADLIGHT_STATE_CONNECTING;
-    
-    if (!deadlight_protocol_handle_request(conn, &error)) {
-        g_warning("Connection %lu: Failed to handle request: %s", 
-                 conn->id, error ? error->message : "Unknown error");
-        if (error) g_error_free(error);
+
+    gchar *config_key = g_strdup_printf("%s_enabled", g_ascii_strdown(handler->name, -1));
+    gboolean enabled = deadlight_config_get_bool(context, "protocols", config_key, TRUE);
+    g_free(config_key);
+
+    if (!enabled) {
+        g_warning("Connection %lu: Protocol '%s' is disabled in configuration.", conn->id, handler->name);
         goto cleanup;
     }
-    
-    // Connection handling complete
-    g_info("Connection %lu: Completed successfully", conn->id);
-    
+
+    // ==========================================================
+    // ===== THE NEW, SIMPLIFIED PROTOCOL HANDLING LOGIC ========
+    // ==========================================================
+
+
+    DeadlightHandlerResult handler_result = handler->handle(conn, &error);
+
+    switch (handler_result) {
+        case HANDLER_ERROR:
+            // The handler failed. Log the error and proceed to cleanup.
+            g_warning("Connection %lu: Handler for '%s' failed: %s",
+                     conn->id, handler->name, error ? error->message : "Unknown error");
+            g_clear_error(&error);
+            goto cleanup; // The cleanup block will handle freeing the connection.
+        
+        case HANDLER_SUCCESS_CLEANUP_NOW:
+            // The handler finished its synchronous task (like the old blocking tunnel).
+            // We are responsible for cleaning up the connection.
+            g_info("Connection %lu: Synchronous handler for '%s' completed. Cleaning up.", conn->id, handler->name);
+            goto cleanup; // The cleanup block will handle freeing the connection.
+
+        case HANDLER_SUCCESS_ASYNC:
+            // The handler successfully launched an asynchronous operation.
+            // DO NOT CLEAN UP. The connection's lifecycle is now managed by async callbacks.
+            // This thread's job for this connection is finished.
+            g_info("Connection %lu: Asynchronous handler for '%s' started. Releasing connection to event loop.", conn->id, handler->name);
+            // We simply return, we do NOT go to the cleanup block.
+            return;
+    }
+
 cleanup:
-    // Remove from active connections
+    // This block is now ONLY reached by synchronous handlers or errors.
+    if (conn->handler && conn->handler->cleanup) {
+        conn->handler->cleanup(conn);
+    }
+    
     g_mutex_lock(&context->network->connection_mutex);
     g_hash_table_remove(context->connections, &conn->id);
     context->active_connections--;

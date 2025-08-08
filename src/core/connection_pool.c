@@ -7,7 +7,34 @@
 #include <string.h>
 #include "deadlight.h"
 
+//==============================================================
+// STRUCT DEFINITIONS MUST COME FIRST
+//==============================================================
+struct _PooledConnection {
+    GSocketConnection *connection;
+    gchar *host;
+    guint16 port;
+    gint64 last_used;
+    gboolean is_ssl;
+};
+
+struct _ConnectionPool {
+    GQueue *idle_connections;
+    GHashTable *active_connections;
+    GMutex mutex;
+    gint max_per_host;
+    gint idle_timeout;
+    guint cleanup_source_id;
+};
+
+
+// Forward declaration of the timer function so other functions know it exists.
 static gboolean cleanup_idle_connections(gpointer user_data);
+typedef struct _PooledConnection PooledConnection;
+
+//==============================================================
+// NOW THE FUNCTIONS CAN USE THE STRUCTS
+//==============================================================
 
 ConnectionPool* connection_pool_new(gint max_per_host, gint idle_timeout) {
     ConnectionPool *pool = g_new0(ConnectionPool, 1);

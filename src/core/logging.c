@@ -3,7 +3,7 @@
  * 
  * Centralized logging with file output and level control
  */
-
+#include "core/logging.h"
 #include <glib.h>
 #include <stdio.h>
 #include <stdlib.h>
