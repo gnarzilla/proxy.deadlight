@@ -22,6 +22,12 @@ enabled = false
 [imap]
 # The upstream IMAP server to proxy connections to.
 upstream_host = imap.gmail.com
-upstream_port = 993
+upstream_port = 143
 # Note: The current imap.c doesn't handle SSL upstream yet,
 # so this would be for plaintext STARTTLS servers on port 143 initially.
+
+[imaps]
+# The upstream IMAPS server to proxy connections to.
+# This uses SSL/TLS on port 993.
+upstream_host = imap.gmail.com
+upstream_port = 993

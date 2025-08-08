@@ -27,7 +27,8 @@ extern "C" {
 typedef enum {
     DEADLIGHT_PROTOCOL_UNKNOWN = 0, DEADLIGHT_PROTOCOL_HTTP, DEADLIGHT_PROTOCOL_HTTPS,
     DEADLIGHT_PROTOCOL_SOCKS4, DEADLIGHT_PROTOCOL_SOCKS5, DEADLIGHT_PROTOCOL_CONNECT,
-    DEADLIGHT_PROTOCOL_WEBSOCKET, DEADLIGHT_PROTOCOL_IMAP
+    DEADLIGHT_PROTOCOL_WEBSOCKET, DEADLIGHT_PROTOCOL_IMAP,
+    DEADLIGHT_PROTOCOL_IMAPS
 } DeadlightProtocol;
 
 typedef enum {
@@ -226,6 +227,10 @@ gboolean deadlight_ssl_init(DeadlightContext *context, GError **error);
 void deadlight_ssl_cleanup(DeadlightContext *context);
 gboolean deadlight_ssl_intercept_connection(DeadlightConnection *connection, GError **error);
 gboolean deadlight_ssl_tunnel_data(DeadlightConnection *conn, GError **error);
+gboolean deadlight_network_establish_upstream_ssl(DeadlightConnection *conn, GError **error);
+gboolean deadlight_ssl_create_ca_certificate(const gchar *cert_file, const gchar *key_file, GError **error);
+gboolean deadlight_ssl_load_ca_certificate(DeadlightSSLManager *ssl_mgr, GError **error);
+gboolean deadlight_ssl_generate_host_certificate(DeadlightSSLManager *ssl_mgr, const gchar *hostname, X509 **out_cert, EVP_PKEY **out_key, GError **error);
 
 // Plugin API
 gboolean deadlight_plugins_init(DeadlightContext *context, GError **error);

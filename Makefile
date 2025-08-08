@@ -48,7 +48,8 @@ CORE_SOURCES = $(SRCDIR)/main.c \
 
 # Protocol sources
 PROTOCOL_SOURCES = src/protocols/http.c \
-                   src/protocols/imap.c
+                   src/protocols/imap.c \
+				   src/protocols/imaps.c
 
 # Object files
 CORE_OBJECTS = $(patsubst $(SRCDIR)/%.c,$(OBJDIR)/%.o,$(CORE_SOURCES))

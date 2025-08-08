@@ -1,3 +1,5 @@
+// in src/core/ssl.c
+
 /**
  * Deadlight Proxy v4.0 - SSL/TLS Module
  *
@@ -15,19 +17,16 @@
 
 // SSL Manager structure
 struct _DeadlightSSLManager {
-    SSL_CTX *server_ctx;        // Context for server-side connections
-    SSL_CTX *client_ctx;        // Context for client-side connections
-    
-    X509 *ca_cert;              // CA certificate for signing
-    EVP_PKEY *ca_key;           // CA private key
-    
-    gchar *ca_cert_file;        // CA certificate file path
-    gchar *ca_key_file;         // CA key file path
-    gchar *cert_cache_dir;      // Generated certificates cache
-    
-    GMutex cert_mutex;          // Mutex for certificate generation
-    GHashTable *cert_cache;     // Cache of generated certificates
-    
+    SSL_CTX *server_ctx;
+    SSL_CTX *client_ctx;
+    X509 *ca_cert;
+    EVP_PKEY *ca_key;
+    gchar *ca_cert_file;
+    gchar *ca_key_file;
+    gchar *cert_cache_dir;
+    GMutex cert_mutex;
+    GHashTable *cert_cache;
+    GTlsDatabase *system_trust_db; // System trust database for certificate validation
     gboolean initialized;
 };
 
@@ -44,34 +43,37 @@ gboolean deadlight_ssl_init(DeadlightContext *context, GError **error) {
     
     g_info("Initializing SSL module...");
     
-    // Initialize OpenSSL
     SSL_library_init();
     SSL_load_error_strings();
     OpenSSL_add_all_algorithms();
     
-    // Create SSL manager
     context->ssl = g_new0(DeadlightSSLManager, 1);
     g_mutex_init(&context->ssl->cert_mutex);
     
-    // Get configuration
-    context->ssl->ca_cert_file = deadlight_config_get_string(context, "ssl", 
-                                                           "ca_cert_file", 
-                                                           "/etc/deadlight/ca.crt");
-    context->ssl->ca_key_file = deadlight_config_get_string(context, "ssl", 
-                                                          "ca_key_file", 
-                                                          "/etc/deadlight/ca.key");
-    context->ssl->cert_cache_dir = deadlight_config_get_string(context, "ssl", 
-                                                             "cert_cache_dir", 
-                                                             "/tmp/deadlight_certs");
+    // --- FIXED: Load system trust store ---
+    g_info("Loading system CA certificates for upstream validation...");
+    const gchar *ca_bundle_file = "/etc/ssl/certs/ca-certificates.crt";
+    context->ssl->system_trust_db = g_tls_file_database_new(ca_bundle_file, error);
+
+    if (context->ssl->system_trust_db == NULL) {
+        g_warning("FATAL: Failed to load system CA trust store from %s: %s", ca_bundle_file, (*error)->message);
+        g_free(context->ssl);
+        context->ssl = NULL;
+        return FALSE; 
+    }
+    g_info("System CA trust store loaded successfully.");
     
-    // Create certificate cache
-    context->ssl->cert_cache = g_hash_table_new_full(g_str_hash, g_str_equal, 
-                                                    g_free, NULL);
+    // --- FIXED: Removed duplicated block ---
+    // Get configuration for our own CA (used for interception)
+    context->ssl->ca_cert_file = deadlight_config_get_string(context, "ssl", "ca_cert_file", "/etc/deadlight/ca.crt");
+    context->ssl->ca_key_file = deadlight_config_get_string(context, "ssl", "ca_key_file", "/etc/deadlight/ca.key");
+    context->ssl->cert_cache_dir = deadlight_config_get_string(context, "ssl", "cert_cache_dir", "/tmp/deadlight_certs");
     
-    // Create SSL contexts
+    context->ssl->cert_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    
     context->ssl->server_ctx = create_ssl_context(TRUE, error);
     if (!context->ssl->server_ctx) {
-        return FALSE;
+        return FALSE; // Cleanup will be handled by caller
     }
     
     context->ssl->client_ctx = create_ssl_context(FALSE, error);
@@ -80,7 +82,6 @@ gboolean deadlight_ssl_init(DeadlightContext *context, GError **error) {
         return FALSE;
     }
     
-    // Load CA certificate if SSL interception is enabled
     if (context->ssl_intercept_enabled) {
         if (!load_ca_certificate(context->ssl, error)) {
             SSL_CTX_free(context->ssl->server_ctx);
@@ -88,11 +89,8 @@ gboolean deadlight_ssl_init(DeadlightContext *context, GError **error) {
             return FALSE;
         }
         
-        // Create cert cache directory
         if (g_mkdir_with_parents(context->ssl->cert_cache_dir, 0700) != 0) {
-            g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                       "Failed to create certificate cache directory: %s",
-                       context->ssl->cert_cache_dir);
+            g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to create certificate cache directory: %s", context->ssl->cert_cache_dir);
             return FALSE;
         }
     }
@@ -112,6 +110,12 @@ void deadlight_ssl_cleanup(DeadlightContext *context) {
     g_info("Cleaning up SSL module...");
     
     if (context->ssl) {
+        // --- FIXED: Added cleanup for trust store ---
+        if (context->ssl->system_trust_db) {
+            g_object_unref(context->ssl->system_trust_db);
+        }
+
+        // --- FIXED: Removed duplicated if statement ---
         if (context->ssl->server_ctx) {
             SSL_CTX_free(context->ssl->server_ctx);
         }
@@ -141,10 +145,13 @@ void deadlight_ssl_cleanup(DeadlightContext *context) {
         context->ssl = NULL;
     }
     
-    // Cleanup OpenSSL
     EVP_cleanup();
     ERR_free_strings();
+    // --- FIXED: Missing closing brace ---
 }
+
+// ... (create_ssl_context, load_ca_certificate, generate_host_certificate, get_host_certificate functions remain unchanged) ...
+// The compiler warnings about them being unused are OK for now. They are used by the interception logic we haven't tested yet.
 
 /**
  * Create SSL context
@@ -160,19 +167,14 @@ static SSL_CTX *create_ssl_context(gboolean is_server, GError **error) {
         return NULL;
     }
     
-    // Set more permissive options for better compatibility
     SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
-    
-    // Set minimum and maximum TLS versions
     SSL_CTX_set_min_proto_version(ctx, TLS1_VERSION);
     SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
     
-    // For client contexts, set verification mode
     if (!is_server) {
         SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
     }
     
-    // Set cipher list for compatibility
     SSL_CTX_set_cipher_list(ctx, "DEFAULT:!aNULL:!eNULL:!EXPORT:!DES:!MD5:!PSK:!RC4");
     
     return ctx;
@@ -184,7 +186,6 @@ static SSL_CTX *create_ssl_context(gboolean is_server, GError **error) {
 static gboolean load_ca_certificate(DeadlightSSLManager *ssl_mgr, GError **error) {
     FILE *fp;
     
-    // Load CA certificate
     fp = fopen(ssl_mgr->ca_cert_file, "r");
     if (!fp) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
@@ -192,10 +193,8 @@ static gboolean load_ca_certificate(DeadlightSSLManager *ssl_mgr, GError **error
                    ssl_mgr->ca_cert_file);
         return FALSE;
     }
-    
     ssl_mgr->ca_cert = PEM_read_X509(fp, NULL, NULL, NULL);
     fclose(fp);
-    
     if (!ssl_mgr->ca_cert) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
                    "Failed to load CA certificate: %s",
@@ -203,7 +202,6 @@ static gboolean load_ca_certificate(DeadlightSSLManager *ssl_mgr, GError **error
         return FALSE;
     }
     
-    // Load CA private key
     fp = fopen(ssl_mgr->ca_key_file, "r");
     if (!fp) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
@@ -211,10 +209,8 @@ static gboolean load_ca_certificate(DeadlightSSLManager *ssl_mgr, GError **error
                    ssl_mgr->ca_key_file);
         return FALSE;
     }
-    
     ssl_mgr->ca_key = PEM_read_PrivateKey(fp, NULL, NULL, NULL);
     fclose(fp);
-    
     if (!ssl_mgr->ca_key) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
                    "Failed to load CA private key: %s",
@@ -226,9 +222,57 @@ static gboolean load_ca_certificate(DeadlightSSLManager *ssl_mgr, GError **error
     return TRUE;
 }
 
+
+// --- THIS FUNCTION IS THE IMPORTANT ONE TO GET RIGHT ---
 /**
- * Intercept SSL connection 
+ * Establish an SSL/TLS connection to an upstream server.
+ * This is used by handlers like IMAPS that need to encrypt their upstream connection.
  */
+gboolean deadlight_network_establish_upstream_ssl(DeadlightConnection *conn, GError **error) {
+    if (!conn->upstream_connection) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Upstream connection is not established; cannot perform TLS handshake.");
+        return FALSE;
+    }
+
+    // --- THIS IS THE FINAL, CORRECT IMPLEMENTATION ---
+
+    // Step 1: Create a GSocketConnectable object representing the server we're connecting to.
+    // This tells the TLS layer the hostname it must validate on the server's certificate.
+    // This provides the critical Server Name Indication (SNI).
+    GSocketConnectable *server_identity = g_network_address_new(conn->target_host, conn->target_port);
+
+    // Step 2: Create the client connection object, passing this explicit server identity.
+    conn->upstream_tls = g_tls_client_connection_new(
+        G_IO_STREAM(conn->upstream_connection),
+        server_identity, // <-- Provide the explicit server name and port
+        error
+    );
+    
+    // The server_identity object has been used, we can now release our reference to it.
+    g_object_unref(server_identity);
+    
+    if (!conn->upstream_tls) {
+        // g_tls_client_connection_new will have set the error if it failed.
+        return FALSE;
+    }
+
+    // Step 3: Explicitly set the trust database. This ensures we use the system CAs we loaded.
+    g_object_set(G_OBJECT(conn->upstream_tls),
+                 "database", conn->context->ssl->system_trust_db,
+                 NULL);
+
+    // Step 4: Now, with all information provided (who to trust AND what name to check), perform the handshake.
+    if (!g_tls_connection_handshake(conn->upstream_tls, NULL, error)) {
+        g_warning("Upstream TLS handshake failed for conn %lu to host %s: %s", conn->id, conn->target_host, (*error)->message);
+        g_object_unref(conn->upstream_tls);
+        conn->upstream_tls = NULL;
+        return FALSE;
+    }
+    
+    g_info("Upstream TLS connection established for conn %lu to host %s", conn->id, conn->target_host);
+    conn->ssl_established = TRUE;
+    return TRUE;
+}
 
 /**
  * Generate a certificate for the given hostname, signed by our CA
@@ -415,9 +459,6 @@ static gboolean get_host_certificate(DeadlightSSLManager *ssl_mgr,
     return TRUE;
 }
 
-/**
- * Intercept SSL connection - Complete implementation
- */
 /**
  * Intercept SSL connection - Complete implementation
  */
