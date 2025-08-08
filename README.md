@@ -1,4 +1,4 @@
-# Deadlight Proxy v4.0
+# Deadlight Proxy v5.0
 
 ![Deadlight Proxy](https://github.com/user-attachments/assets/7f3febdf-5621-4b7d-b834-c2f912a3fa3b)
 
@@ -24,14 +24,15 @@
 7.  [Project Structure](#project-structure)
 8.  [Development Status](#development-status)
 9.  [License](#license)
+10. [Support](#support)
 
 ---
 
 ### Overview
 
-`proxy.deadlight` is a high-performance, protocol-agnostic network proxy written in C. It serves as the essential Protocol Bridge for the Deadlight Ecosystem, connecting the modern, HTTP-only world of serverless platforms like Cloudflare Workers to the foundational TCP protocols of the internet like SMTP, IMAP, and SOCKS.
+`proxy.deadlight` is a high-performance, protocol-agnostic network proxy written in C that serves as the **Protocol Bridge** for the Deadlight Ecosystem. It seamlessly connects modern HTTP-only serverless platforms (like Cloudflare Workers) to foundational TCP protocols (SMTP, IMAP, SOCKS), enabling **true self-sovereign infrastructure**.
 
-Its purpose is to be a lightweight, secure, and highly portable service that can run on minimal hardware (from a small VPS to a Raspberry Pi), enabling true self-sovereignty for services like email and private communications.
+**NEW in v5.0:** Complete integration with `deadlight.boo` via REST API endpoints, enabling real-time proxy management through a beautiful web interface deployable anywhere.
 
 ### Features (Current Status)
 
@@ -43,10 +44,73 @@ After a comprehensive refactoring and development cycle, `proxy.deadlight` has e
    - **HTTP/HTTPS Proxy:** Functions as a standard forward proxy for web traffic.
    - **SSL (TLS) Interception:** Capable of generating certificates on-the-fly for traffic inspection (MitM), a powerful tool for development and security analysis.
    - **IMAPS Tunneling:** Securely tunnels IMAP traffic over TLS, with robust certificate validation against the system's trust store.
-🌐 **SOCKS4 Proxy Support:** Provides basic IP masking and privacy by serving as a SOCKS4 proxy for compatible applications.
-🔧 **File-Based Configuration:** All core settings, listeners, and protocol behaviors are controlled via a simple .ini-style configuration file.
+- 🌐 **SOCKS4 Proxy Support:** Provides basic IP masking and privacy by serving as a SOCKS4 proxy for compatible applications.
+- 🎛️ **REST API Server:** Complete HTTP API for external integration and management
+- 🛜 **Multi-Protocol Support**: HTTP/HTTPS/SOCKS/SMTP/IMAP/IMAPS/API protocols
+- 📱 **Web Dashboard Integration:** Real-time proxy control via modern web interface
+- 📧 **Email-based Federation:** Revolutionary approach to decentralized social media using proven email protocols
+- 🔧 **File-Based Configuration:** All core settings, listeners, and protocol behaviors are controlled via a simple .ini-style configuration file.
+
+### Integration Features (NEW in v5.0)
+
+- 🌐 **REST API Interface:** Complete HTTP API for integration with web applications
+- 📊 **Real-time Status Monitoring:** Live connection tracking and system health reporting  
+- 📧 **Email Federation Bridge:** SMTP protocol translation for decentralized social media
+- 🎛️ **Web-based Management:** Full proxy control via `blog.deadlight` admin dashboard
+- ⚡ **Instant Deployment:** One command deployment to global CDN with local proxy backend
+
+**API Endpoints:**
+- `GET /api/blog/status` - Blog service health and version info
+- `GET /api/email/status` - Email queue status and processing metrics
+- `POST /api/email/send` - Send emails through proxy SMTP bridge
+- `POST /api/federation/send` - Federated blog post distribution via email
 
 ### Architecture
+
+#### System Architecture
+
+                    🌐 DEADLIGHT ECOSYSTEM ARCHITECTURE 🌐
+
+    ┌─────────────────────────────────────────────────────────────────────────────┐
+    │                            GLOBAL WEB LAYER                                │
+    ├─────────────────────────────────────────────────────────────────────────────┤
+    │  📱 Any Browser/Device → 🌐 Cloudflare CDN → ⚡ blog.deadlight Worker      │
+    │                                               (REST API Client)            │
+    └─────────────────────────┬───────────────────────────────────────────────────┘
+                              │
+                              │ HTTP/JSON API Calls
+                              ▼
+    ┌─────────────────────────────────────────────────────────────────────────────┐
+    │                         LOCAL PROTOCOL BRIDGE                              │
+    ├─────────────────────────────────────────────────────────────────────────────┤
+    │                    📡 proxy.deadlight v5.0                                │
+    │                                                                             │
+    │  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐        │
+    │  │   🌐 API        │    │   📧 SMTP       │    │   🔒 SOCKS5     │        │
+    │  │   Handler       │    │   Bridge        │    │   Proxy         │        │
+    │  └─────────────────┘    └─────────────────┘    └─────────────────┘        │
+    │                                                                             │
+    │  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐        │
+    │  │   🌍 HTTP/S     │    │   📬 IMAP       │    │   🔧 Protocol   │        │
+    │  │   Proxy         │    │   Tunnel        │    │   Detection     │        │
+    │  └─────────────────┘    └─────────────────┘    └─────────────────┘        │
+    └─────────────────────────┬───────────────────────────────────────────────────┘
+                              │
+                              │ Native TCP/SSL Protocols
+                              ▼
+    ┌─────────────────────────────────────────────────────────────────────────────┐
+    │                          INTERNET SERVICES                                 │
+    ├─────────────────────────────────────────────────────────────────────────────┤
+    │  📧 SMTP Servers  │  📬 IMAP Servers  │  🌐 Web Sites  │  🏠 Other Proxies │
+    └─────────────────────────────────────────────────────────────────────────────┘
+
+    🎯 DEPLOYMENT MODEL:
+    ┌────────────────────┐                    ┌────────────────────┐
+    │   🌐 GLOBAL        │                    │   🏠 LOCAL         │
+    │   deadlight.boo    │ ←─── API BRIDGE ──→│   proxy.deadlight  │
+    │   Cloudflare       │                    │   VPS/Pi/Desktop   │
+    │   Workers/Pages    │                    │   localhost:8080   │
+    └────────────────────┘                    └────────────────────┘
 
 Deadlight is built on a modular design managed by a central `DeadlightContext`. A connection flows through the system as follows:
 1.  The **Main Thread** runs a `GSocketService`, accepting new connections.
@@ -168,7 +232,25 @@ a001 NOOP
 ```
 The proxy will establish a secure TLS connection to the upstream IMAP server and tunnel the data.
 
+#### Example 4. Web Dashboard Management
 
+Deploy the integrated blog.deadlight dashboard
+```bash
+# Terminal 1: Start the proxy server
+./bin/deadlight -c deadlight.conf.example
+
+# Terminal 2: Start the blog with proxy integration
+cd ../deadlight
+wrangler dev
+
+# Or to deploy to your live site
+wrangler dev
+```
+Access `http://localhost:8787/admin/proxy` for real-time proxy management including:
+- Live connection monitoring
+- API endpoint testing
+- Federation testing
+- Email system management
 
 #### Command Line Options
 
@@ -221,14 +303,23 @@ deadlight/
 ```
 
 ### Development Status
-The current framework is stable and ready for the next phase of development.
 
-- ✅ SOCKS4 Proxy: Implemented and working.
-- ➡️ SOCKS5 Proxy: The next immediate goal is to implement the full SOCKS5 handshake, including support for username/password authentication.
-- 🚀 Protocol Translation Layer: The ultimate goal. This involves evolving the protocol handlers (IMAP, SMTP) from simple tunnels into intelligent translators that communicate with the comm.deadlight Cloudflare Worker via a secure HTTP API. This will require integrating an HTTP client library like libcurl.
-- 🕵️ Personal VPN-like Service: While a full VPN is out of scope, enhancing the SOCKS5 proxy provides a powerful, easy-to-use privacy feature for users, achieving the core goal of IP masking.
-Contributing
+### 6. Update Development Status:
+
+**v5.0 BREAKTHROUGH:** Complete integration achieved with blog.deadlight!
+
+- ✅ **REST API Server**: Full HTTP API implementation for external integration
+- ✅ **Real-time Dashboard**: Minimalist web interface for proxy management  
+- ✅ **Email Federation**: Working email-based social media federation
+- ✅ **Multi-Protocol Support**: HTTP/HTTPS/SOCKS/SMTP/IMAP/IMAPS/API protocols
+- ➡️ **SOCKS5 Enhancement**: Full authentication support (next milestone)
+- 🚀 **Production Deployment**: VPS deployment with global CDN integration
 
 ### License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+
+### Support
+
+☕  [Support is greatly appreciated! Buy me a coffee](coff.ee/gnarzillah)

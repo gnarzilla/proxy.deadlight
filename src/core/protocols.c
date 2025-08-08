@@ -10,7 +10,8 @@
 #include "protocols/imap.h" 
 #include "protocols/imaps.h"
 #include "protocols/socks.h"
-// #include "protocols/socks.h" // In the future, you'd add this
+#include "protocols/smtp.h"
+#include "protocols/api.h"
 
 static GList *protocol_handlers = NULL;
 
@@ -28,11 +29,15 @@ void deadlight_protocols_init(DeadlightContext *context) {
     g_info("Initializing protocol handlers...");
 
     // Register your handlers here
+    deadlight_register_api_handler();
+
     deadlight_register_http_handler();
     // deadlight_register_imap_handler();
     deadlight_register_imaps_handler();
 
     deadlight_register_socks_handler();
+
+    deadlight_register_smtp_handler();
 
     g_info("%d protocol handlers registered.", g_list_length(protocol_handlers));
 }
@@ -55,17 +60,20 @@ const DeadlightProtocolHandler* deadlight_protocol_detect_and_assign(DeadlightCo
 
 
 /**
- * Convert protocol enum to string (your existing useful function)
+ * Convert protocol enum to string
  */
 const gchar *deadlight_protocol_to_string(DeadlightProtocol protocol) {
     switch (protocol) {
+        case DEADLIGHT_PROTOCOL_API: return "API"; 
         case DEADLIGHT_PROTOCOL_HTTP: return "HTTP";
         case DEADLIGHT_PROTOCOL_HTTPS: return "HTTPS";
         case DEADLIGHT_PROTOCOL_SOCKS4: return "SOCKS4";
         case DEADLIGHT_PROTOCOL_SOCKS5: return "SOCKS5";
         case DEADLIGHT_PROTOCOL_CONNECT: return "CONNECT";
         case DEADLIGHT_PROTOCOL_WEBSOCKET: return "WebSocket";
-        case DEADLIGHT_PROTOCOL_IMAP: return "IMAP"; // Add new protocol
+        case DEADLIGHT_PROTOCOL_IMAP: return "IMAP";
+        case DEADLIGHT_PROTOCOL_IMAPS: return "IMAPS";
+        case DEADLIGHT_PROTOCOL_SMTP: return "SMTP"; 
         default: return "Unknown";
     }
 }

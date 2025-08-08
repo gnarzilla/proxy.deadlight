@@ -3,7 +3,15 @@
 
 #include "../core/deadlight.h"
 
-// Public function to register the SOCKS handler with the core system.
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// Register the SOCKS protocol handler with the core system
 void deadlight_register_socks_handler(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // DEADLIGHT_SOCKS_H
