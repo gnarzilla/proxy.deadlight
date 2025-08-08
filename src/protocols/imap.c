@@ -3,17 +3,17 @@
 #include "imap.h"
 #include <ctype.h>
 
-// Forward declarations
+// Forward declarations - Updated signatures
 static gsize imap_detect(const guint8 *data, gsize len);
-static gboolean imap_handle(DeadlightConnection *conn, GError **error);
+static DeadlightHandlerResult imap_handle(DeadlightConnection *conn, GError **error);
 static void imap_cleanup(DeadlightConnection *conn);
 
-// The handler object
+// The handler object - This will now compile without warnings
 static const DeadlightProtocolHandler imap_protocol_handler = {
     .name = "IMAP",
     .protocol_id = DEADLIGHT_PROTOCOL_IMAP,
     .detect = imap_detect,
-    .handle = imap_handle,
+    .handle = imap_handle, // Correctly matches the new function pointer type
     .cleanup = imap_cleanup
 };
 
@@ -30,7 +30,8 @@ static gsize imap_detect(const guint8 *data, gsize len) {
     return 0;
 }
 
-static gboolean imap_handle(DeadlightConnection *conn, GError **error) {
+// Updated the function to return DeadlightHandlerResult
+static DeadlightHandlerResult imap_handle(DeadlightConnection *conn, GError **error) {
     DeadlightContext *ctx = conn->context;
     g_info("Handling IMAP connection %lu", conn->id);
 
@@ -38,16 +39,20 @@ static gboolean imap_handle(DeadlightConnection *conn, GError **error) {
     gint upstream_port = deadlight_config_get_int(ctx, "imap", "upstream_port", 143);
 
     if (!deadlight_network_connect_upstream(conn, upstream_host, upstream_port, error)) {
-
         g_warning("IMAP handler failed to connect upstream for conn %lu", conn->id);
-        return FALSE;
+        return HANDLER_ERROR; // Return the correct error code
     }
 
-    // For now, just tunnel the data
-    return deadlight_network_tunnel_data(conn, error);
+    // deadlight_network_tunnel_data is a synchronous, blocking call.
+    if (deadlight_network_tunnel_data(conn, error)) {
+        // When it returns, the connection is finished. Tell the caller to clean up now.
+        return HANDLER_SUCCESS_CLEANUP_NOW;
+    } else {
+        // The tunnel itself failed.
+        return HANDLER_ERROR;
+    }
 }
+
 static void imap_cleanup(DeadlightConnection *conn) {
-    // This silences the unused parameter warning for now
-    (void)conn; 
-    // In the future, we'll free any IMAP-specific data stored in conn->protocol_data
+    (void)conn;
 }

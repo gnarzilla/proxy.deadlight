@@ -276,9 +276,18 @@ DeadlightConnection *deadlight_connection_new(DeadlightContext *context,
 /**
  * Free connection object
  */
+// In src/core/network.c
+
 void deadlight_connection_free(DeadlightConnection *conn) {
     if (!conn) return;
-    
+
+    // Remove from the master list first.
+    g_mutex_lock(&conn->context->network->connection_mutex);
+    g_hash_table_remove(conn->context->connections, &conn->id);
+    conn->context->active_connections--;
+    g_mutex_unlock(&conn->context->network->connection_mutex);
+
+    // Now call the main cleanup worker.
     cleanup_connection(conn);
 }
 
@@ -348,30 +357,27 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
 
     DeadlightHandlerResult handler_result = handler->handle(conn, &error);
 
+    // The switch is now simpler
     switch (handler_result) {
         case HANDLER_ERROR:
-            // The handler failed. Log the error and proceed to cleanup.
             g_warning("Connection %lu: Handler for '%s' failed: %s",
-                     conn->id, handler->name, error ? error->message : "Unknown error");
+                    conn->id, handler->name, error ? error->message : "Unknown error");
             g_clear_error(&error);
-            goto cleanup; // The cleanup block will handle freeing the connection.
+            goto cleanup;
         
         case HANDLER_SUCCESS_CLEANUP_NOW:
-            // The handler finished its synchronous task (like the old blocking tunnel).
-            // We are responsible for cleaning up the connection.
-            g_info("Connection %lu: Synchronous handler for '%s' completed. Cleaning up.", conn->id, handler->name);
-            goto cleanup; // The cleanup block will handle freeing the connection.
+            g_info("Connection %lu: Synchronous handler for '%s' completed.", conn->id, handler->name);
+            goto cleanup;
 
+        // We can remove or leave this case commented out, as it's no longer used
+        /*
         case HANDLER_SUCCESS_ASYNC:
-            // The handler successfully launched an asynchronous operation.
-            // DO NOT CLEAN UP. The connection's lifecycle is now managed by async callbacks.
-            // This thread's job for this connection is finished.
-            g_info("Connection %lu: Asynchronous handler for '%s' started. Releasing connection to event loop.", conn->id, handler->name);
-            // We simply return, we do NOT go to the cleanup block.
-            return;
+            // This case is not currently used by any handlers
+            break;
+        */
     }
 
-cleanup:
+    cleanup:
     // This block is now ONLY reached by synchronous handlers or errors.
     if (conn->handler && conn->handler->cleanup) {
         conn->handler->cleanup(conn);
