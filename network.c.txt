@@ -372,14 +372,12 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
             break;
             
         case HANDLER_ERROR:
-        {
-            const gchar *msg = error ? error->message : "Unknown error";
-            g_warning("Connection %lu: Handler for '%s' failed: %s",
-                      conn->id, handler->name, msg);
-            g_clear_error(&error);
-            goto cleanup;
-        }
-
+            g_warning("Connection %lu: Handler for '%s' failed: %s", 
+                    conn->id, deadlight_protocol_to_string(conn->protocol), 
+                    error ? (*error)->message : "Unknown error");
+            cleanup_connection(conn);
+            break;
+            
         default:
             g_warning("Connection %lu: Unexpected handler result %d", conn->id, handler_result);
             cleanup_connection(conn);
@@ -587,7 +585,7 @@ gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error
     g_return_val_if_fail(conn->client_connection != NULL, FALSE);
     g_return_val_if_fail(conn->upstream_connection != NULL, FALSE);
 
-    // Client streams
+    // Client streams (existing code)
     GInputStream *client_is;
     GOutputStream *client_os;
     if (conn->client_tls) {
@@ -600,7 +598,7 @@ gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error
         client_os = g_io_stream_get_output_stream(G_IO_STREAM(conn->client_connection));
     }
 
-    // Upstream streams
+    // Upstream streams (new symmetric code)
     GInputStream *upstream_is;
     GOutputStream *upstream_os;
     if (conn->upstream_tls) {
@@ -671,5 +669,140 @@ gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error
            deadlight_format_bytes(conn->bytes_client_to_upstream),
            deadlight_format_bytes(conn->bytes_upstream_to_client));
 
+    return TRUE;
+}
+
+// SSL tunnel data transfer
+gboolean deadlight_ssl_tunnel_data(DeadlightConnection *conn, GError **error) {
+    g_return_val_if_fail(conn != NULL, FALSE);
+    g_return_val_if_fail(conn->client_ssl != NULL, FALSE);
+    g_return_val_if_fail(conn->upstream_ssl != NULL, FALSE);
+    
+    (void)error;  // Unused for now
+    
+    conn->state = DEADLIGHT_STATE_TUNNELING;
+    
+    guint8 buffer[16384];  // Larger buffer for efficiency
+    gboolean running = TRUE;
+    gint idle_cycles = 0;
+    const gint max_idle_cycles = 1000;
+    
+    g_debug("Connection %lu: Starting SSL interception tunnel", conn->id);
+    
+    // Make sure we're in non-blocking mode
+    SSL_set_mode(conn->client_ssl, SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+    SSL_set_mode(conn->upstream_ssl, SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+    
+    while (running && idle_cycles < max_idle_cycles) {
+        gboolean data_transferred = FALSE;
+        int ssl_error;
+        
+        // Check for pending data from client
+        if (SSL_pending(conn->client_ssl) > 0 || SSL_has_pending(conn->client_ssl)) {
+            int bytes_read = SSL_read(conn->client_ssl, buffer, sizeof(buffer));
+            
+            if (bytes_read > 0) {
+                g_debug("Read %d bytes from client SSL", bytes_read);
+                
+                // Write to upstream
+                int total_written = 0;
+                while (total_written < bytes_read) {
+                    int bytes_written = SSL_write(conn->upstream_ssl, 
+                                                 buffer + total_written, 
+                                                 bytes_read - total_written);
+                    if (bytes_written > 0) {
+                        total_written += bytes_written;
+                        conn->bytes_client_to_upstream += bytes_written;
+                        data_transferred = TRUE;
+                    } else {
+                        ssl_error = SSL_get_error(conn->upstream_ssl, bytes_written);
+                        if (ssl_error != SSL_ERROR_WANT_READ && ssl_error != SSL_ERROR_WANT_WRITE) {
+                            g_debug("Upstream SSL write error: %d", ssl_error);
+                            running = FALSE;
+                            break;
+                        }
+                        g_usleep(1000); // 1ms wait
+                    }
+                }
+            } else {
+                ssl_error = SSL_get_error(conn->client_ssl, bytes_read);
+                if (ssl_error != SSL_ERROR_WANT_READ && ssl_error != SSL_ERROR_WANT_WRITE) {
+                    g_debug("Client SSL read error: %d", ssl_error);
+                    running = FALSE;
+                }
+            }
+        }
+        
+        // Check for pending data from upstream
+        if (SSL_pending(conn->upstream_ssl) > 0 || SSL_has_pending(conn->upstream_ssl)) {
+            int bytes_read = SSL_read(conn->upstream_ssl, buffer, sizeof(buffer));
+            
+            if (bytes_read > 0) {
+                g_debug("Read %d bytes from upstream SSL", bytes_read);
+                
+                // Write to client
+                int total_written = 0;
+                while (total_written < bytes_read) {
+                    int bytes_written = SSL_write(conn->client_ssl, 
+                                                 buffer + total_written, 
+                                                 bytes_read - total_written);
+                    if (bytes_written > 0) {
+                        total_written += bytes_written;
+                        conn->bytes_upstream_to_client += bytes_written;
+                        data_transferred = TRUE;
+                    } else {
+                        ssl_error = SSL_get_error(conn->client_ssl, bytes_written);
+                        if (ssl_error != SSL_ERROR_WANT_READ && ssl_error != SSL_ERROR_WANT_WRITE) {
+                            g_debug("Client SSL write error: %d", ssl_error);
+                            running = FALSE;
+                            break;
+                        }
+                        g_usleep(1000); // 1ms wait
+                    }
+                }
+            } else {
+                ssl_error = SSL_get_error(conn->upstream_ssl, bytes_read);
+                if (ssl_error != SSL_ERROR_WANT_READ && ssl_error != SSL_ERROR_WANT_WRITE) {
+                    g_debug("Upstream SSL read error: %d", ssl_error);
+                    running = FALSE;
+                }
+            }
+        }
+        
+        // Also check the underlying sockets for data
+        if (!data_transferred) {
+            // Check if there's data waiting on the sockets
+            GSocket *client_socket = g_socket_connection_get_socket(conn->client_connection);
+            GSocket *upstream_socket = g_socket_connection_get_socket(conn->upstream_connection);
+            
+            if (g_socket_condition_check(client_socket, G_IO_IN) & G_IO_IN) {
+                // Force a read attempt
+                SSL_read(conn->client_ssl, buffer, 0);
+                continue;
+            }
+            
+            if (g_socket_condition_check(upstream_socket, G_IO_IN) & G_IO_IN) {
+                // Force a read attempt  
+                SSL_read(conn->upstream_ssl, buffer, 0);
+                continue;
+            }
+        }
+        
+        // Update idle counter
+        if (data_transferred) {
+            idle_cycles = 0;
+        } else {
+            idle_cycles++;
+            g_usleep(10000);  // 10ms sleep when idle
+        }
+    }
+    
+    conn->state = DEADLIGHT_STATE_CLOSING;
+    
+    g_info("Connection %lu: SSL tunnel closed (client->upstream: %s, upstream->client: %s)",
+           conn->id,
+           deadlight_format_bytes(conn->bytes_client_to_upstream),
+           deadlight_format_bytes(conn->bytes_upstream_to_client));
+    
     return TRUE;
 }

@@ -15,6 +15,7 @@
 #include <glib-unix.h>
 #include <glib.h>
 #include <gio/gio.h>
+#include <locale.h>
 
 #include "deadlight.h"
 
@@ -100,7 +101,7 @@ static void cleanup_and_exit(int exit_code) {
  * Test mode - run specific module tests
  */
 static int run_tests(const gchar *module) {
-    g_print("🧪 Deadlight Test Mode\n");
+    g_print("Test Mode\n");
     g_print("Testing module: %s\n\n", module);
     
     if (g_strcmp0(module, "all") == 0) {
@@ -120,21 +121,21 @@ static int run_tests(const gchar *module) {
             gboolean result = deadlight_test_module(modules[i]);
             
             if (result) {
-                g_print("✅ PASS\n");
+                g_print("PASS\n");
             } else {
-                g_print("❌ FAIL\n");
+                g_print("FAIL\n");
                 all_passed = FALSE;
             }
         }
         
-        g_print("\n%s\n", all_passed ? "🎉 All tests passed!" : "💥 Some tests failed!");
+        g_print("\n%s\n", all_passed ? "All tests passed!" : "Some tests failed!");
         return all_passed ? 0 : 1;
     }
     
     // Test specific module
     g_print("Testing %s... ", module);
     gboolean result = deadlight_test_module(module);
-    g_print("%s\n", result ? "✅ PASS" : "❌ FAIL");
+    g_print("%s\n", result ? "PASS" : "FAIL");
     
     return result ? 0 : 1;
 }
@@ -257,7 +258,7 @@ static int run_interactive_mode(void) {
         print_banner();
     }
 
-        deadlight_protocols_init(g_context);
+    deadlight_protocols_init(g_context);
     
     // Initialize core systems
     g_info("Initializing Deadlight systems...");
@@ -296,16 +297,45 @@ static int run_interactive_mode(void) {
     
     // Print configuration info
     if (!opt_daemon) {
-        g_print("\n🚀 Deadlight Proxy is ready!\n");
-        g_print("📡 Listening on port %d\n", port);
-        g_print("🔧 Configuration file: %s\n", 
+        g_print("\nDeadlight Proxy is ready!\n");
+        g_print("Listening on port %d\n", port);
+        g_print("Configuration file: %s\n", 
                 opt_config_file ? opt_config_file : "default");
-        g_print("🔌 Plugins loaded: %d\n", 
+        g_print("Plugins loaded: %d\n", 
                 deadlight_plugins_count(g_context));
-        g_print("\n💡 Test commands:\n");
-        g_print("   curl -x http://localhost:%d http://example.com\n", port);
-        g_print("   curl -x http://localhost:%d https://example.com\n", port);
-        g_print("\n🛑 Press Ctrl+C to stop\n\n");
+
+        /* Test commands for all protocols */
+        g_print("\nTest commands:\n");
+        
+        // HTTP
+        g_print("  # HTTP\n");
+        g_print("  curl -x http://localhost:%d http://example.com\n", port);
+        
+        // HTTPS (trust the local CA)
+        g_print("\n  # HTTPS\n");
+        g_print("  curl --cacert ~/.deadlight/ca.crt -x http://localhost:%d https://example.com\n", port);
+        
+        // SOCKS4
+        g_print("\n  # SOCKS4\n");
+        g_print("  curl --socks4 localhost:%d http://example.com\n", port);
+        
+        // SOCKS5
+        g_print("\n  # SOCKS5\n");
+        g_print("  curl --socks5 localhost:%d http://example.com\n", port);
+        
+        // SMTP handshake
+        g_print("\n  # SMTP\n");
+        g_print("  printf \"A001 NOOP\\r\\n\" | nc localhost %d\n", port);
+
+        // IMAP NOOP
+        g_print("\n  # IMAP (NOOP)\n");
+        g_print("  printf \"A001 NOOP\\r\\n\" | nc localhost %d\n", port);
+        
+        // IMAP STARTTLS (explicit)
+        g_print("\n  # IMAP STARTTLS\n");
+        g_print("  openssl s_client -connect localhost:%d -starttls imap -crlf\n", port);
+
+        g_print("\nPress Ctrl+C to stop\n\n");
     }
     
     // Run main loop
@@ -327,13 +357,13 @@ static int run_interactive_mode(void) {
  */
 static void print_banner(void) {
     g_print("\n");
-    g_print("╔══════════════════════════════════════════════════════╗\n");
-    g_print("║                                                      ║\n");
-    g_print("║              🌟 Deadlight Proxy v4.0 🌟              ║\n");
-    g_print("║                                                      ║\n");
-    g_print("║     Modular • Extensible • High Performance         ║\n");
-    g_print("║                                                      ║\n");
-    g_print("╚══════════════════════════════════════════════════════╝\n");
+    g_print("======================================================\n");
+    g_print("                                                      \n");
+    g_print("              Deadlight Proxy v4.0                   \n");
+    g_print("                                                      \n");
+    g_print("     Modular - Extensible - High Performance         \n");
+    g_print("                                                      \n");
+    g_print("======================================================\n");
     g_print("\n");
 }
 
@@ -366,6 +396,9 @@ static void print_usage(void) {
  * Main entry point
  */
 int main(int argc, char *argv[]) {
+    /* enable Unicode output if LANG is UTF-8 capable */
+    setlocale(LC_ALL, "");
+
     GError *error = NULL;
     GOptionContext *context;
     

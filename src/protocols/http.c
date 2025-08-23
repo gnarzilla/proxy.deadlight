@@ -159,35 +159,35 @@ static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError *
         return HANDLER_ERROR;
     }
     
+    // Check if SSL interception is enabled
     if (conn->context->ssl_intercept_enabled) {
-            // Step 1: Perform the handshakes. This part is unchanged.
-            if (deadlight_ssl_intercept_connection(conn, error)) {
-                
-                // Step 2: Call the NEW BLOCKING tunnel function.
-                // This replaces the call to the old async start_ssl_tunnel.
-                if (start_ssl_tunnel_blocking(conn, error)) {
-                    // The synchronous tunnel finished. The connection is over.
-                    // Tell the caller (network.c) to clean up immediately.
-                    return HANDLER_SUCCESS_CLEANUP_NOW;
-                } else {
-                    // The tunnel itself failed.
-                    return HANDLER_ERROR;
-                }
-
-            } else {
-                // The handshake failed.
-                return HANDLER_ERROR;
-            }
-        } else {
-            // The non-intercepted CONNECT case. This also uses a blocking tunnel.
-            g_info("Connection %lu: SSL intercept disabled. Starting plain TCP tunnel.", conn->id);
+        // Step 1: Perform the handshakes. This part is unchanged.
+        if (deadlight_ssl_intercept_connection(conn, error)) {
+            
+            // Step 2: Call the NEW BLOCKING tunnel function.
             if (deadlight_network_tunnel_data(conn, error)) {
-                // The synchronous tunnel finished.
+                // The synchronous tunnel finished. The connection is over.
+                // Tell the caller (network.c) to clean up immediately.
                 return HANDLER_SUCCESS_CLEANUP_NOW;
             } else {
+                // The tunnel itself failed.
                 return HANDLER_ERROR;
             }
+
+        } else {
+            // The handshake failed.
+            return HANDLER_ERROR;
         }
+    } else {
+        // The non-intercepted CONNECT case. This also uses a blocking tunnel.
+        g_info("Connection %lu: SSL intercept disabled. Starting plain TCP tunnel.", conn->id);
+        if (deadlight_network_tunnel_data(conn, error)) {
+            // The synchronous tunnel finished.
+            return HANDLER_SUCCESS_CLEANUP_NOW;
+        } else {
+            return HANDLER_ERROR;
+        }
+    }
 }
 // --- Helper Functions ---
 // (These remain unchanged)

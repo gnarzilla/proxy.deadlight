@@ -15,7 +15,7 @@ static DeadlightHandlerResult api_federation_receive(DeadlightConnection *conn, 
 
 static const DeadlightProtocolHandler api_protocol_handler = {
     .name = "API",
-    .protocol_id = DEADLIGHT_PROTOCOL_HTTP, // Reuse HTTP protocol ID
+    .protocol_id = DEADLIGHT_PROTOCOL_API, // Reuse HTTP protocol ID
     .detect = api_detect,
     .handle = api_handle,
     .cleanup = api_cleanup
@@ -71,6 +71,18 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
         return api_handle_federation_endpoint(conn, request, error);
     } else {
         return api_send_404(conn, error);
+    }
+}
+
+static DeadlightHandlerResult api_handle_system_endpoint(DeadlightConnection *conn, DeadlightRequest *request, GError **error) {
+    if (g_str_equal(request->uri, "/api/system/ip")) {
+        // Return current external IP
+        gchar *ip = get_external_ip(); // You'd implement this
+        gchar *json_response = g_strdup_printf("{\"external_ip\":\"%s\",\"port\":8080}", ip);
+        DeadlightHandlerResult result = api_send_json_response(conn, 200, "OK", json_response, error);
+        g_free(json_response);
+        g_free(ip);
+        return result;
     }
 }
 

@@ -63,7 +63,6 @@ gboolean deadlight_ssl_init(DeadlightContext *context, GError **error) {
     }
     g_info("System CA trust store loaded successfully.");
     
-    // --- FIXED: Removed duplicated block ---
     // Get configuration for our own CA (used for interception)
     context->ssl->ca_cert_file = deadlight_config_get_string(context, "ssl", "ca_cert_file", "/etc/deadlight/ca.crt");
     context->ssl->ca_key_file = deadlight_config_get_string(context, "ssl", "ca_key_file", "/etc/deadlight/ca.key");
@@ -147,7 +146,6 @@ void deadlight_ssl_cleanup(DeadlightContext *context) {
     
     EVP_cleanup();
     ERR_free_strings();
-    // --- FIXED: Missing closing brace ---
 }
 
 // ... (create_ssl_context, load_ca_certificate, generate_host_certificate, get_host_certificate functions remain unchanged) ...
@@ -391,272 +389,193 @@ cleanup:
     return cert;
 }
 
-/**
- * Get or generate certificate for hostname
- */
-static gboolean get_host_certificate(DeadlightSSLManager *ssl_mgr,
-                                   const gchar *hostname,
-                                   X509 **cert,
-                                   EVP_PKEY **key,
-                                   GError **error) {
-    g_mutex_lock(&ssl_mgr->cert_mutex);
-    
-    // Check cache first
-    gchar *cert_path = g_strdup_printf("%s/%s.crt", 
-                                      ssl_mgr->cert_cache_dir, hostname);
-    gchar *key_path = g_strdup_printf("%s/%s.key", 
-                                     ssl_mgr->cert_cache_dir, hostname);
-    
-    // Try to load from cache
-    FILE *fp = fopen(cert_path, "r");
-    if (fp) {
-        *cert = PEM_read_X509(fp, NULL, NULL, NULL);
-        fclose(fp);
-        
-        fp = fopen(key_path, "r");
-        if (fp) {
-            *key = PEM_read_PrivateKey(fp, NULL, NULL, NULL);
-            fclose(fp);
-            
-            if (*cert && *key) {
-                g_debug("Using cached certificate for %s", hostname);
-                g_free(cert_path);
-                g_free(key_path);
-                g_mutex_unlock(&ssl_mgr->cert_mutex);
-                return TRUE;
-            }
-        }
+static gchar* generate_host_pem(DeadlightSSLManager *ssl_mgr, 
+                                const gchar *hostname,
+                                GError **error) {
+    X509 *cert = NULL;
+    EVP_PKEY *key = NULL;
+    BIO *bio = NULL;
+    gchar *pem_data = NULL;
+    long pem_len;
+
+    // Generate private key
+    key = EVP_RSA_gen(2048);
+    if (!key) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                   "Failed to generate private key: %s",
+                   ERR_error_string(ERR_get_error(), NULL));
+        goto cleanup;
     }
-    
-    // Generate new certificate
-    g_info("Generating certificate for %s", hostname);
-    *cert = generate_host_certificate(ssl_mgr, hostname, key, error);
-    
-    if (!*cert) {
-        g_free(cert_path);
-        g_free(key_path);
-        g_mutex_unlock(&ssl_mgr->cert_mutex);
-        return FALSE;
+
+    // Create certificate
+    cert = X509_new();
+    if (!cert) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                   "Failed to create certificate: %s",
+                   ERR_error_string(ERR_get_error(), NULL));
+        goto cleanup;
     }
-    
-    // Save to cache
-    fp = fopen(cert_path, "w");
-    if (fp) {
-        PEM_write_X509(fp, *cert);
-        fclose(fp);
+
+    // Set version and serial
+    X509_set_version(cert, 2);  // X509v3
+    ASN1_INTEGER_set(X509_get_serialNumber(cert), g_get_real_time() / 1000000);
+
+    // Set validity (1 year)
+    X509_gmtime_adj(X509_get_notBefore(cert), 0);
+    X509_gmtime_adj(X509_get_notAfter(cert), 31536000L);
+
+    // Set subject name
+    X509_NAME *name = X509_get_subject_name(cert);
+    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+                               (unsigned char *)hostname, -1, -1, 0);
+
+    // Set issuer to CA
+    X509_set_issuer_name(cert, X509_get_subject_name(ssl_mgr->ca_cert));
+
+    // Set public key
+    X509_set_pubkey(cert, key);
+
+    // Add extensions
+    X509V3_CTX ctx;
+    X509V3_set_ctx_nodb(&ctx);
+    X509V3_set_ctx(&ctx, cert, ssl_mgr->ca_cert, NULL, NULL, 0);
+
+    // Subject Alternative Name
+    gchar *san = g_strdup_printf("DNS:%s", hostname);
+    X509_EXTENSION *ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_subject_alt_name, san);
+    g_free(san);
+    if (ext) {
+        X509_add_ext(cert, ext, -1);
+        X509_EXTENSION_free(ext);
     }
-    
-    fp = fopen(key_path, "w");
-    if (fp) {
-        PEM_write_PrivateKey(fp, *key, NULL, NULL, 0, NULL, NULL);
-        fclose(fp);
+
+    // Basic constraints
+    ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_basic_constraints, "CA:FALSE");
+    if (ext) {
+        X509_add_ext(cert, ext, -1);
+        X509_EXTENSION_free(ext);
     }
-    
-    g_free(cert_path);
-    g_free(key_path);
-    g_mutex_unlock(&ssl_mgr->cert_mutex);
-    
-    return TRUE;
+
+    // Key usage
+    ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_key_usage,
+                              "digitalSignature,keyEncipherment");
+    if (ext) {
+        X509_add_ext(cert, ext, -1);
+        X509_EXTENSION_free(ext);
+    }
+
+    // Extended key usage
+    ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_ext_key_usage,
+                              "serverAuth,clientAuth");
+    if (ext) {
+        X509_add_ext(cert, ext, -1);
+        X509_EXTENSION_free(ext);
+    }
+
+    // Sign the certificate
+    if (!X509_sign(cert, ssl_mgr->ca_key, EVP_sha256())) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                   "Failed to sign certificate: %s",
+                   ERR_error_string(ERR_get_error(), NULL));
+        goto cleanup;
+    }
+
+    // Write to memory BIO
+    bio = BIO_new(BIO_s_mem());
+    if (!bio) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to create BIO");
+        goto cleanup;
+    }
+
+    if (!PEM_write_bio_X509(bio, cert) || !PEM_write_bio_PrivateKey(bio, key, NULL, NULL, 0, NULL, NULL)) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to write PEM");
+        goto cleanup;
+    }
+
+    pem_len = BIO_pending(bio);
+    pem_data = g_malloc(pem_len + 1);
+    BIO_read(bio, pem_data, pem_len);
+    pem_data[pem_len] = '\0';
+
+cleanup:
+    if (cert) X509_free(cert);
+    if (key) EVP_PKEY_free(key);
+    if (bio) BIO_free(bio);
+    return pem_data;
 }
 
 /**
- * Intercept SSL connection - Complete implementation
+ * Get or generate certificate for hostname
+ */
+static gchar* get_host_certificate(DeadlightSSLManager *ssl_mgr, const gchar *hostname, GError **error) {
+    g_mutex_lock(&ssl_mgr->cert_mutex);
+    gchar *cached_pem = g_hash_table_lookup(ssl_mgr->cert_cache, hostname);
+    if (cached_pem) {
+        g_debug("Using cached PEM for %s", hostname);
+        cached_pem = g_strdup(cached_pem);
+        g_mutex_unlock(&ssl_mgr->cert_mutex);
+        return cached_pem;
+    }
+
+    gchar *pem = generate_host_pem(ssl_mgr, hostname, error);
+    if (pem) {
+        g_hash_table_insert(ssl_mgr->cert_cache, g_strdup(hostname), g_strdup(pem));
+    }
+    g_mutex_unlock(&ssl_mgr->cert_mutex);
+    return pem;
+}
+
+/**
+ * Intercept SSL connection
  */
 gboolean deadlight_ssl_intercept_connection(DeadlightConnection *conn, GError **error) {
     g_return_val_if_fail(conn != NULL, FALSE);
-    g_return_val_if_fail(conn->context != NULL, FALSE);
-    g_return_val_if_fail(conn->context->ssl != NULL, FALSE);
-    
-    DeadlightSSLManager *ssl_mgr = conn->context->ssl;
-    
-    if (!conn->target_host) {
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-                   "No target host specified for SSL interception");
+    g_return_val_if_fail(conn->client_connection != NULL, FALSE);
+    g_return_val_if_fail(conn->target_host != NULL, FALSE);
+
+    // Step 1: Establish upstream TLS (already using GTlsClientConnection)
+    if (!deadlight_network_establish_upstream_ssl(conn, error)) {
         return FALSE;
     }
-    
-    g_info("Intercepting SSL connection to %s", conn->target_host);
-    
-    // Get certificate for target host
-    X509 *cert = NULL;
-    EVP_PKEY *key = NULL;
-    
-    if (!get_host_certificate(ssl_mgr, conn->target_host, &cert, &key, error)) {
+
+    // Step 2: Get forged PEM for the host
+    gchar *pem_data = get_host_certificate(conn->context->ssl, conn->target_host, error);
+    g_file_set_contents("/tmp/test.pem", pem_data, -1, NULL);
+    if (!pem_data) {
         return FALSE;
     }
-    // In deadlight_ssl_intercept_connection, replace the SSL_CTX creation with:
-    
-    // Create SSL context for this connection
-    SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
-    if (!ctx) {
-        X509_free(cert);
-        EVP_PKEY_free(key);
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                   "Failed to create SSL context");
+
+    // Step 3: Create GTlsCertificate from PEM
+    GTlsCertificate *tls_cert = g_tls_certificate_new_from_pem(pem_data, -1, error);
+    g_free(pem_data);
+    if (!tls_cert) {
         return FALSE;
     }
-    
-    // Configure SSL context for better compatibility
-    SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
-    SSL_CTX_set_min_proto_version(ctx, TLS1_VERSION);
-    SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
-    
-    // Set cipher suites
-    SSL_CTX_set_cipher_list(ctx, "DEFAULT:!aNULL:!eNULL:!EXPORT:!DES:!MD5:!PSK:!RC4");
-    
-    // Set ECDH curve for better compatibility
-    SSL_CTX_set_ecdh_auto(ctx, 1);
-    
-    // Set certificate and key
-    if (SSL_CTX_use_certificate(ctx, cert) != 1 ||
-        SSL_CTX_use_PrivateKey(ctx, key) != 1) {
-        SSL_CTX_free(ctx);
-        X509_free(cert);
-        EVP_PKEY_free(key);
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                   "Failed to set certificate/key");
+
+    // Step 4: Wrap client connection as TLS server
+    conn->client_tls = (GTlsConnection *)g_tls_server_connection_new(
+        G_IO_STREAM(conn->client_connection),
+        tls_cert,
+        error
+    );
+    g_object_unref(tls_cert);
+    if (!conn->client_tls) {
         return FALSE;
     }
-    
-    // Create SSL structure for client connection
-    SSL *client_ssl = SSL_new(ctx);
-    if (!client_ssl) {
-        SSL_CTX_free(ctx);
-        X509_free(cert);
-        EVP_PKEY_free(key);
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                   "Failed to create SSL structure");
+
+    // No need for explicit database/validation on server side
+
+    // Step 5: Perform server-side handshake (blocks appropriately in non-async mode)
+    if (!g_tls_connection_handshake(conn->client_tls, NULL, error)) {
+        g_warning("Client TLS handshake failed for conn %lu to host %s: %s", 
+                  conn->id, conn->target_host, (*error)->message);
+        g_object_unref(conn->client_tls);
+        conn->client_tls = NULL;
         return FALSE;
     }
-    
-    // Get client socket
-    GSocket *client_socket = g_socket_connection_get_socket(conn->client_connection);
-    int client_fd = g_socket_get_fd(client_socket);
-    
-    // Set up SSL on client socket
-    SSL_set_fd(client_ssl, client_fd);
-    SSL_set_accept_state(client_ssl);
-    
-    // Set socket to blocking mode temporarily for SSL handshake
-    g_socket_set_blocking(client_socket, TRUE);
-    
-    // Perform SSL handshake with client with retries
-    int ret;
-    int retries = 0;
-    const int max_retries = 50; // 5 seconds max
-    
-    while ((ret = SSL_accept(client_ssl)) <= 0 && retries < max_retries) {
-        int ssl_error = SSL_get_error(client_ssl, ret);
-        
-        if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
-            // Non-blocking operation would block, wait a bit
-            g_usleep(100000); // 100ms
-            retries++;
-            continue;
-        } else {
-            // Real error
-            char err_buf[256];
-            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
-            SSL_free(client_ssl);
-            SSL_CTX_free(ctx);
-            X509_free(cert);
-            EVP_PKEY_free(key);
-            g_socket_set_blocking(client_socket, FALSE); // Restore non-blocking
-            g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                       "SSL handshake failed: %s (error %d)", err_buf, ssl_error);
-            return FALSE;
-        }
-    }
-    
-    if (ret <= 0) {
-        SSL_free(client_ssl);
-        SSL_CTX_free(ctx);
-        X509_free(cert);
-        EVP_PKEY_free(key);
-        g_socket_set_blocking(client_socket, FALSE);
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT,
-                   "SSL handshake timed out");
-        return FALSE;
-    }
-    
-    // Set socket back to non-blocking
-    g_socket_set_blocking(client_socket, FALSE);
-    
-    // Now establish SSL connection to upstream
-    SSL *upstream_ssl = SSL_new(ssl_mgr->client_ctx);
-    if (!upstream_ssl) {
-        SSL_free(client_ssl);
-        SSL_CTX_free(ctx);
-        X509_free(cert);
-        EVP_PKEY_free(key);
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                   "Failed to create upstream SSL");
-        return FALSE;
-    }
-    
-    // Get upstream socket
-    GSocket *upstream_socket = g_socket_connection_get_socket(conn->upstream_connection);
-    int upstream_fd = g_socket_get_fd(upstream_socket);
-    
-    SSL_set_fd(upstream_ssl, upstream_fd);
-    SSL_set_connect_state(upstream_ssl);
-    SSL_set_tlsext_host_name(upstream_ssl, conn->target_host);
-    
-    // Set upstream to blocking for handshake
-    g_socket_set_blocking(upstream_socket, TRUE);
-    
-    // Connect to upstream with retries
-    retries = 0;
-    while ((ret = SSL_connect(upstream_ssl)) <= 0 && retries < max_retries) {
-        int ssl_error = SSL_get_error(upstream_ssl, ret);
-        
-        if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
-            g_usleep(100000); // 100ms
-            retries++;
-            continue;
-        } else {
-            char err_buf[256];
-            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
-            SSL_free(upstream_ssl);
-            SSL_free(client_ssl);
-            SSL_CTX_free(ctx);
-            X509_free(cert);
-            EVP_PKEY_free(key);
-            g_socket_set_blocking(client_socket, FALSE);
-            g_socket_set_blocking(upstream_socket, FALSE);
-            g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                       "Upstream SSL handshake failed: %s (error %d)", err_buf, ssl_error);
-            return FALSE;
-        }
-    }
-    
-    if (ret <= 0) {
-        SSL_free(upstream_ssl);
-        SSL_free(client_ssl);
-        SSL_CTX_free(ctx);
-        X509_free(cert);
-        EVP_PKEY_free(key);
-        g_socket_set_blocking(client_socket, FALSE);
-        g_socket_set_blocking(upstream_socket, FALSE);
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT,
-                   "Upstream SSL handshake timed out");
-        return FALSE;
-    }
-    
-    // Set upstream back to non-blocking
-    g_socket_set_blocking(upstream_socket, FALSE);
-    
-    // Store SSL objects in connection
+
+    g_info("Client TLS interception established for conn %lu to host %s", conn->id, conn->target_host);
     conn->ssl_established = TRUE;
-    conn->client_ssl = client_ssl;
-    conn->upstream_ssl = upstream_ssl;
-    conn->ssl_ctx = ctx;
-    
-    // Clean up (SSL objects have their own references)
-    X509_free(cert);
-    EVP_PKEY_free(key);
-    
-    g_info("SSL interception established for %s", conn->target_host);
     return TRUE;
 }
 

@@ -5,6 +5,9 @@ max_connections = 500
 log_level = info
 worker_threads = 4
 
+[core]
+log_level = debug
+
 [ssl]
 enabled = true
 ca_cert_file = /home/thatch/.deadlight/ca.crt
@@ -46,3 +49,8 @@ auth_token_file = /home/thatch/.deadlight/blog_token
 enabled = true
 domain = deadlight.boo
 email_address = blog@deadlight.boo
+
+[socks5]
+auth_required = false  ; Set to true to force username/pass
+username = testuser
+password = testpass

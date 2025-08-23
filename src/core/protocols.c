@@ -30,34 +30,231 @@ void deadlight_protocols_init(DeadlightContext *context) {
 
     // Register your handlers here
     deadlight_register_api_handler();
-
     deadlight_register_http_handler();
-    // deadlight_register_imap_handler();
+    deadlight_register_imap_handler();
     deadlight_register_imaps_handler();
-
     deadlight_register_socks_handler();
-
     deadlight_register_smtp_handler();
 
     g_info("%d protocol handlers registered.", g_list_length(protocol_handlers));
 }
 
 /**
+ * Helper function to check if data looks like TLS handshake
+ */
+static gboolean looks_like_tls_handshake(const guint8 *buf, gsize len) {
+    // TLS record header: [type][version_major][version_minor][length_high][length_low]
+    // ClientHello: type=0x16, version typically 0x03,0x01-0x03
+    if (len < 5) return FALSE;
+    
+    return (buf[0] == 0x16 &&           // TLS Handshake
+            buf[1] == 0x03 &&           // SSL 3.0/TLS 1.x major version
+            buf[2] >= 0x01 && buf[2] <= 0x04);  // Minor version range
+}
+
+/**
+ * Helper function to check if data looks like HTTP
+ */
+static gboolean looks_like_http(const guint8 *buf, gsize len) {
+    if (len < 3) return FALSE;
+    
+    // Check for HTTP methods with more precision
+    const struct {
+        const gchar *method;
+        gsize len;
+    } methods[] = {
+        {"GET ", 4},
+        {"POST ", 5}, 
+        {"PUT ", 4},
+        {"DELETE ", 7},
+        {"HEAD ", 5},
+        {"OPTIONS ", 8},
+        {"PATCH ", 6},
+        {"CONNECT ", 8},
+        {"TRACE ", 6},
+        {NULL, 0}
+    };
+    
+    for (int i = 0; methods[i].method; i++) {
+        if (len >= methods[i].len && 
+            memcmp(buf, methods[i].method, methods[i].len) == 0) {
+            return TRUE;
+        }
+    }
+    
+    return FALSE;
+}
+
+/**
+ * Helper function to check if data looks like SOCKS
+ */
+static gboolean looks_like_socks(const guint8 *buf, gsize len) {
+    if (len < 2) return FALSE;
+    
+    // SOCKS4: first byte is version (0x04)
+    if (buf[0] == 0x04) return TRUE;
+    
+    // SOCKS5: first byte is version (0x05), second is number of auth methods
+    if (buf[0] == 0x05 && len > 2 && buf[1] > 0 && buf[1] < 16) return TRUE;
+    
+    return FALSE;
+}
+
+/**
+ * Fast-path protocol detection with improved logic
+ */
+static DeadlightProtocol quick_detect(const guint8 *buf, gsize len) {
+    if (len == 0) return DEADLIGHT_PROTOCOL_UNKNOWN;
+    
+    // 1) TLS handshake detection (highest priority for binary protocols)
+    if (looks_like_tls_handshake(buf, len)) {
+        return DEADLIGHT_PROTOCOL_IMAPS;
+    }
+    
+    // 2) SOCKS detection (binary protocols before text)
+    if (looks_like_socks(buf, len)) {
+        return buf[0] == 0x04 ? DEADLIGHT_PROTOCOL_SOCKS4 : DEADLIGHT_PROTOCOL_SOCKS5;
+    }
+    
+    // 3) HTTP method detection with specific handling
+    if (looks_like_http(buf, len)) {
+        // Check if this looks like an API request
+        if (len >= 9 && (memcmp(buf, "GET /api/", 9) == 0 ||
+                        memcmp(buf, "POST /api/", 10) == 0)) {
+            return DEADLIGHT_PROTOCOL_API;
+        }
+        
+        // All HTTP requests (including CONNECT) go to HTTP handler
+        return DEADLIGHT_PROTOCOL_HTTP;
+    }
+    
+    // 4) SMTP detection
+    if (len >= 4) {
+        if (memcmp(buf, "HELO", 4) == 0 || memcmp(buf, "EHLO", 4) == 0) {
+            return DEADLIGHT_PROTOCOL_SMTP;
+        }
+    }
+    
+    // 5) IMAP detection
+    if (len >= 2) {
+        gsize tag_end = 0;
+        gboolean valid_tag = TRUE;
+        
+        for (gsize i = 0; i < MIN(len, 5); i++) {
+            if (buf[i] == ' ') {
+                tag_end = i;
+                break;
+            }
+        }
+        
+        if (tag_end > 0 && tag_end <= 4) {
+            for (gsize i = 0; i < tag_end; i++) {
+                if (!g_ascii_isalnum(buf[i])) {
+                    valid_tag = FALSE;
+                    break;
+                }
+            }
+            
+            if (valid_tag && len > tag_end + 1) {
+                const gchar *remaining = (const gchar *)(buf + tag_end + 1);
+                gsize remaining_len = len - tag_end - 1;
+                
+                const gchar *imap_commands[] = {
+                    "NOOP", "LOGIN", "SELECT", "EXAMINE", "LIST", 
+                    "FETCH", "SEARCH", "CAPABILITY", "LOGOUT", NULL
+                };
+                
+                for (int i = 0; imap_commands[i]; i++) {
+                    gsize cmd_len = strlen(imap_commands[i]);
+                    if (remaining_len >= cmd_len && 
+                        memcmp(remaining, imap_commands[i], cmd_len) == 0) {
+                        return DEADLIGHT_PROTOCOL_IMAP;
+                    }
+                }
+            }
+        }
+    }
+    
+    return DEADLIGHT_PROTOCOL_UNKNOWN;
+}
+
+
+/**
  * Iterates through registered handlers to find one that can
  * process the incoming data.
  */
-const DeadlightProtocolHandler* deadlight_protocol_detect_and_assign(DeadlightConnection *conn, const guint8 *data, gsize length) {
-    for (GList *l = protocol_handlers; l != NULL; l = l->next) {
-        const DeadlightProtocolHandler *handler = l->data;
-        if (handler->detect(data, length)) {
-            conn->protocol = handler->protocol_id;
-            conn->handler = handler;
-            return handler;
+const DeadlightProtocolHandler*
+deadlight_protocol_detect_and_assign(DeadlightConnection *conn,
+                                     const guint8 *data,
+                                     gsize length)
+{
+    // 1) Fast-path detection
+    DeadlightProtocol detected = quick_detect(data, length);
+    
+    // Create a safe printable string for debugging
+    gchar *debug_str = g_strndup((const gchar *)data, MIN(length, 8));
+    for (gsize i = 0; i < MIN(length, 8); i++) {
+        if (!g_ascii_isprint(debug_str[i])) {
+            debug_str[i] = '.';
         }
     }
+    
+    g_debug("quick_detect: first %zu bytes = '%s' → %s",
+            MIN(length, (gsize)8),
+            debug_str,
+            deadlight_protocol_to_string(detected));
+    
+    g_free(debug_str);
+
+    if (detected != DEADLIGHT_PROTOCOL_UNKNOWN) {
+        // Find the handler for the detected protocol
+        for (GList *l = protocol_handlers; l; l = l->next) {
+            const DeadlightProtocolHandler *h = l->data;
+            if (h->protocol_id == detected) {
+                conn->protocol = detected;
+                conn->handler = h;
+                g_debug("Quick detect matched handler: %s", h->name);
+                return h;
+            }
+        }
+        g_warning("Quick detect found protocol %s but no handler registered", 
+                  deadlight_protocol_to_string(detected));
+    }
+
+    // 2) Fallback: let each handler try its own detect function
+    // BUT skip this if we already had a quick_detect match - trust the quick detect
+    if (detected == DEADLIGHT_PROTOCOL_UNKNOWN) {
+        for (GList *l = protocol_handlers; l; l = l->next) {
+            const DeadlightProtocolHandler *h = l->data;
+            if (h->detect && h->detect(data, length)) {
+                conn->protocol = h->protocol_id;
+                conn->handler = h;
+                g_debug("Handler-specific detection matched: %s", h->name);
+                return h;
+            }
+        }
+    }
+
+    // 3) Nothing matched - default to HTTP for text data, or unknown
+    if (length > 0 && g_ascii_isprint(data[0])) {
+        // Try to find HTTP handler as last resort for text data
+        for (GList *l = protocol_handlers; l; l = l->next) {
+            const DeadlightProtocolHandler *h = l->data;
+            if (h->protocol_id == DEADLIGHT_PROTOCOL_HTTP) {
+                conn->protocol = DEADLIGHT_PROTOCOL_HTTP;
+                conn->handler = h;
+                g_debug("Defaulting unknown text protocol to HTTP");
+                return h;
+            }
+        }
+    }
+
+    // 4) Truly unknown
+    conn->protocol = DEADLIGHT_PROTOCOL_UNKNOWN;
+    conn->handler = NULL;
+    g_debug("No handler found for protocol");
     return NULL;
 }
-
 
 /**
  * Convert protocol enum to string
@@ -74,6 +271,17 @@ const gchar *deadlight_protocol_to_string(DeadlightProtocol protocol) {
         case DEADLIGHT_PROTOCOL_IMAP: return "IMAP";
         case DEADLIGHT_PROTOCOL_IMAPS: return "IMAPS";
         case DEADLIGHT_PROTOCOL_SMTP: return "SMTP"; 
+        case DEADLIGHT_PROTOCOL_UNKNOWN: return "Unknown";
         default: return "Unknown";
+    }
+}
+
+/**
+ * Cleanup function to free protocol handler list
+ */
+void deadlight_protocols_cleanup(void) {
+    if (protocol_handlers) {
+        g_list_free(protocol_handlers);
+        protocol_handlers = NULL;
     }
 }

@@ -50,39 +50,92 @@ static gboolean send_socks5_error_reply(GOutputStream *client_os, guint8 error_c
 static DeadlightHandlerResult handle_socks5(DeadlightConnection *conn, GError **error) {
     GInputStream *client_is = g_io_stream_get_input_stream(G_IO_STREAM(conn->client_connection));
     GOutputStream *client_os = g_io_stream_get_output_stream(G_IO_STREAM(conn->client_connection));
-    
+    DeadlightContext *ctx = conn->context;
+
+    // Load config
+    gboolean auth_required = deadlight_config_get_bool(ctx, "socks5", "auth_required", FALSE);
+    gchar *config_username = deadlight_config_get_string(ctx, "socks5", "username", NULL);
+    gchar *config_password = deadlight_config_get_string(ctx, "socks5", "password", NULL);
+
     // --- Phase 1: Greeting & Method Selection ---
     g_debug("SOCKS5 conn %lu: Starting phase 1 (Greeting).", conn->id);
     guint8 *greeting_data = conn->client_buffer->data;
     guint nmethods = greeting_data[1];
-    
+
     if (conn->client_buffer->len < 2 + nmethods) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Incomplete SOCKS5 greeting.");
         return HANDLER_ERROR;
     }
 
-    gboolean no_auth_supported = FALSE;
+    gboolean no_auth_offered = FALSE;
+    gboolean user_pass_offered = FALSE;
     for (guint i = 0; i < nmethods; i++) {
-        if (greeting_data[2 + i] == SOCKS5_AUTH_NONE) {
-            no_auth_supported = TRUE;
-            break;
-        }
+        guint8 method = greeting_data[2 + i];
+        if (method == SOCKS5_AUTH_NONE) no_auth_offered = TRUE;
+        if (method == 0x02) user_pass_offered = TRUE;  // Username/pass
     }
-    
-    guint8 reply_method[2] = {SOCKS5_VERSION, SOCKS5_AUTH_NO_ACCEPTABLE};
-    if (no_auth_supported) {
-        reply_method[1] = SOCKS5_AUTH_NONE;
+
+    guint8 selected_method = SOCKS5_AUTH_NO_ACCEPTABLE;
+    if (!auth_required && no_auth_offered) {
+        selected_method = SOCKS5_AUTH_NONE;
+    } else if (user_pass_offered && config_username && config_password) {
+        selected_method = 0x02;
     }
-    
+
+    guint8 reply_method[2] = {SOCKS5_VERSION, selected_method};
     if (!g_output_stream_write_all(client_os, reply_method, 2, NULL, NULL, error)) {
         g_warning("SOCKS5 conn %lu: Failed to send method reply: %s", conn->id, (*error)->message);
         return HANDLER_ERROR;
     }
-    
-    if (!no_auth_supported) {
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "No acceptable authentication methods offered.");
+
+    if (selected_method == SOCKS5_AUTH_NO_ACCEPTABLE) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "No acceptable authentication methods.");
         return HANDLER_ERROR;
     }
+    g_info("SOCKS5 conn %lu: Method %02x selected.", conn->id, selected_method);
+
+    // --- Auth Sub-Negotiation (if user/pass) ---
+    if (selected_method == 0x02) {
+        guint8 auth_buffer[512];  // Max username/pass len 255 each + headers
+        gsize bytes_read;
+        if (!g_input_stream_read_all(client_is, auth_buffer, 2, &bytes_read, NULL, error)) {  // VER + ULEN
+            send_socks5_error_reply(client_os, SOCKS5_REP_GENERAL_FAILURE, NULL);
+            return HANDLER_ERROR;
+        }
+        if (auth_buffer[0] != 0x01) {  // Subnegotiation version
+            guint8 auth_reply[2] = {0x01, 0x01};  // Failure
+            g_output_stream_write_all(client_os, auth_reply, 2, NULL, NULL, NULL);
+            g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Invalid auth subnegotiation version.");
+            return HANDLER_ERROR;
+        }
+        guint8 ulen = auth_buffer[1];
+        if (!g_input_stream_read_all(client_is, auth_buffer + 2, ulen + 1, &bytes_read, NULL, error)) {  // Username + PLEN
+            return HANDLER_ERROR;
+        }
+        guint8 plen = auth_buffer[2 + ulen];
+        if (!g_input_stream_read_all(client_is, auth_buffer + 2 + ulen + 1, plen, &bytes_read, NULL, error)) {  // Password
+            return HANDLER_ERROR;
+        }
+
+        gchar *client_username = g_strndup((gchar*)(auth_buffer + 2), ulen);
+        gchar *client_password = g_strndup((gchar*)(auth_buffer + 2 + ulen + 1), plen);
+
+        gboolean auth_ok = g_strcmp0(client_username, config_username) == 0 &&
+                           g_strcmp0(client_password, config_password) == 0;
+
+        guint8 auth_reply[2] = {0x01, auth_ok ? 0x00 : 0x01};
+        g_output_stream_write_all(client_os, auth_reply, 2, NULL, NULL, error);
+
+        g_free(client_username);
+        g_free(client_password);
+
+        if (!auth_ok) {
+            g_set_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "SOCKS5 authentication failed.");
+            return HANDLER_ERROR;
+        }
+        g_info("SOCKS5 conn %lu: User/pass auth succeeded.", conn->id);
+    }
+
     g_info("SOCKS5 conn %lu: Method 'NO AUTHENTICATION' selected.", conn->id);
     
     // --- Phase 2: Connection Request ---
@@ -206,7 +259,7 @@ static DeadlightHandlerResult socks_handle(DeadlightConnection *conn, GError **e
     }
 
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Unknown SOCKS version: %d", version);
-    return HANDLER_ERROR;
+    return deadlight_network_tunnel_data(conn, error) ? HANDLER_SUCCESS_CLEANUP_NOW : HANDLER_ERROR;
 }
 
 /**
