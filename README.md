@@ -246,7 +246,7 @@ cd ../deadlight
 wrangler dev
 
 # Or to deploy to your live site
-wrangler dev
+wrangler deploy
 ```
 Access `http://localhost:8787/admin/proxy` for real-time proxy management including:
 - Live connection monitoring
@@ -310,12 +310,12 @@ deadlight/
 
 **v5.0 BREAKTHROUGH:** Complete integration achieved with blog.deadlight!
 
-- ✅ **REST API Server**: Full HTTP API implementation for external integration
-- ✅ **Real-time Dashboard**: Minimalist web interface for proxy management  
-- ✅ **Email Federation**: Working email-based social media federation
-- ✅ **Multi-Protocol Support**: HTTP/HTTPS/SOCKS/SMTP/IMAP/IMAPS/API protocols
-- ➡️ **SOCKS5 Enhancement**: Full authentication support (next milestone)
-- 🚀 **Production Deployment**: VPS deployment with global CDN integration
+- **REST API Server**: Full HTTP API implementation for external integration
+- **Real-time Dashboard**: Minimalist web interface for proxy management  
+- **Email Federation**: Working email-based social media federation
+- **Multi-Protocol Support**: HTTP/HTTPS/SOCKS/SMTP/IMAP/IMAPS/API protocols
+- ➡**SOCKS5 Enhancement**: Full authentication support (next milestone)
+- **Production Deployment**: VPS deployment with global CDN integration
 
 ### License
 
