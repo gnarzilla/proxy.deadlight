@@ -128,7 +128,7 @@ This is all managed by a set of distinct managers:
 
 + **Cloudflare Tunnel Integration:** Production-ready deployment using Cloudflare Tunnel.
 
-Future Considerations:
+#### Future Considerations:
 
 ➡ **SOCKS5 Authentication:** Implement full authentication for the SOCKS5 proxy.
 
