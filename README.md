@@ -1,6 +1,6 @@
 # Deadlight Proxy v5.0
 
-![Deadlight Proxy](https://github.com/user-attachments/assets/7f3febdf-5621-4b7d-b834-c2f912a3fa3b)
+![Deadlight Proxy](assets/proxy.deadlight_test_commands.png)
 
 **A modular, protocol-agnostic, and high-performance proxy server written in C using the GLib ecosystem, designed for deep inspection and extensibility.**
 
