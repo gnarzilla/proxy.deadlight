@@ -110,6 +110,13 @@ This is all managed by a set of distinct managers:
 
 - **Advanced Security:** Features include on-the-fly TLS interception (for development/analysis), robust certificate validation, and a secure deployment model that leverages outbound-only connections.
 
+**API Endpoints:**
+- `GET /api/blog/status` - Blog service health and version info
+- `GET /api/email/status` - Email queue status and processing metrics
+- `POST /api/email/send` - Send emails through proxy SMTP bridge
+- `POST /api/federation/send` - Federated blog post distribution via email
+
+
 ### Roadmap
 #### v5.0 (Current):
 
@@ -131,11 +138,6 @@ Future Considerations:
 
 ➡ **Mobile & Desktop Clients:** Publish an API specification to enable the development of native clients.
 
-**API Endpoints:**
-- `GET /api/blog/status` - Blog service health and version info
-- `GET /api/email/status` - Email queue status and processing metrics
-- `POST /api/email/send` - Send emails through proxy SMTP bridge
-- `POST /api/federation/send` - Federated blog post distribution via email
 
 [Web Integration from CLI](https://github.com/gnarzilla/proxy.deadlight/blob/main/src/assets/Proxy%20%26%20Blog%20Terminal%20Side-by-Side.png)
 
