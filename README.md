@@ -10,22 +10,13 @@
 1.  [Overview](#overview)
 2.  [Architecture](#architecture)
 3.  [Features](#features)
-4.  
+4.  [Roadmap](#roadmap)
 5.  [Getting Started](#getting-started)
-    *   [Prerequisites](#prerequisites)
-    *   [Building](#building)
-    *   [Configuration](#configuration)
-    *   [Running](#running)
 6.  [Usage](#usage)
-    *   [Command Line Options](#command-line-options)
-    *   [Proxying HTTP](#proxying-http)
-    *   [Proxying & Intercepting HTTPS](#proxying--intercepting-httpshttps)
 7.  [Extending Deadlight](#extending-deadlight)
-    *   [Adding a New Protocol](#adding-a-new-protocol)
 8.  [Project Structure](#project-structure)
-9.  [Development Status](#development-status)
-10.  [License](#license)
-11. [Support](#support)
+9.  [License](#license)
+10. [Support](#support) 
 
 ---
 
