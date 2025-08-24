@@ -22,7 +22,7 @@
 
 ### Overview
 
-`proxy.deadlight` is a high-performance network proxy that serves as a stateless protocol bridge. It connects ancient, stateful TCP protocols (SMTP, IMAP, SOCKS) to the modern, stateless, and globally distributed serverless ecosystem.
+`proxy.deadlight` is a high-performance network proxy that serves as a stateless protocol bridge. It connects mature, stateful TCP protocols (SMTP, IMAP, SOCKS) to the modern, stateless, and globally distributed serverless ecosystem.
 
 By bridging these two worlds, the Deadlight Proxy enables a powerful new form of self-sovereign infrastructure. It eliminates the need for an "always-on" home server by delegating state management to a serverless database (Cloudflare D1), all while preserving the privacy and control of a self-hosted solution.
 
@@ -39,6 +39,7 @@ The Architectural Breakthrough - Deadlight’s core innovation is its decoupling
 **Eliminating the "Always-On" Server:** The proxy's design leverages **Cloudflare Tunnel** for secure, outbound-only connectivity. This means your home IP address is never exposed, your firewall can remain closed, and you don’t need to worry about dynamic IPs or complex NAT configurations. Your home machine becomes a trusted network gateway, not a public server.
 
 
+
                     🌐 DEADLIGHT ECOSYSTEM ARCHITECTURE 🌐
 
     ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -53,18 +54,18 @@ The Architectural Breakthrough - Deadlight’s core innovation is its decoupling
     ┌─────────────────────────────────────────────────────────────────────────────┐
     │                         LOCAL PROTOCOL BRIDGE                               │
     ├─────────────────────────────────────────────────────────────────────────────┤
-    │                    📡 proxy.deadlight v5.0                                 │
+    │                        proxy.deadlight v5.0                                 │
     │                                                                             │
     │  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐          │
-    │  │   🌐 API       │    │   📧 SMTP       │    │   🔒 SOCKS4/5   │         │
-    │  │   Handler       │    │   Bridge        │    │   Proxy         │         │
-    │  └─────────────────┘    └─────────────────┘    └─────────────────┘         │
-    │                                                                            │
-    │  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐         │
-    │  │   🌍 HTTP/S    │    │   📬 IMAP/S     │    │   🔧 Protocol   │        │
-    │  │   Proxy         │    │   Tunnel        │    │   Detection     │         │
-    │  └─────────────────┘    └─────────────────┘    └─────────────────┘         │
-    └─────────────────────────┬──────────────────────────────────────────────────┘
+    │  │    API          │    │   SMTP          │    │   SOCKS4/5      │          │
+    │  │   Handler       │    │   Bridge        │    │   Proxy         │          │
+    │  └─────────────────┘    └─────────────────┘    └─────────────────┘          │
+    │                                                                             │
+    │  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐          │
+    │  │   🌍 HTTP/S    │    │   📬 IMAP/S     │    │    Protocol     │          │
+    │  │   Proxy         │    │   Tunnel        │    │   Detection     │          │
+    │  └─────────────────┘    └─────────────────┘    └─────────────────┘          │
+    └─────────────────────────┬───────────────────────────────────────────────────┘
                               │
                               │ Native TCP/SSL Protocols
                               ▼
@@ -81,6 +82,7 @@ The Architectural Breakthrough - Deadlight’s core innovation is its decoupling
     │   Cloudflare       │                    │   VPS/Pi/Desktop   │
     │   Workers/Pages    │                    │   localhost:8080   │
     └────────────────────┘                    └────────────────────┘
+
 
 Deadlight is built on a modular design managed by a central `DeadlightContext`. A connection flows through the system as follows:
 1.  The **Main Thread** runs a `GSocketService`, accepting new connections.
