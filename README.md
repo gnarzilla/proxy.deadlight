@@ -8,68 +8,45 @@
 
 ### Table of Contents
 1.  [Overview](#overview)
-2.  [Features](#features)
-3.  [Architecture](#architecture)
-4.  [Getting Started](#getting-started)
+2.  [Architecture](#architecture)
+3.  [Features](#features)
+4.  
+5.  [Getting Started](#getting-started)
     *   [Prerequisites](#prerequisites)
     *   [Building](#building)
     *   [Configuration](#configuration)
     *   [Running](#running)
-5.  [Usage](#usage)
+6.  [Usage](#usage)
     *   [Command Line Options](#command-line-options)
     *   [Proxying HTTP](#proxying-http)
     *   [Proxying & Intercepting HTTPS](#proxying--intercepting-httpshttps)
-6.  [Extending Deadlight](#extending-deadlight)
+7.  [Extending Deadlight](#extending-deadlight)
     *   [Adding a New Protocol](#adding-a-new-protocol)
-7.  [Project Structure](#project-structure)
-8.  [Development Status](#development-status)
-9.  [License](#license)
-10. [Support](#support)
+8.  [Project Structure](#project-structure)
+9.  [Development Status](#development-status)
+10.  [License](#license)
+11. [Support](#support)
 
 ---
 
 ### Overview
 
-`proxy.deadlight` is a high-performance, protocol-agnostic network proxy written in C that serves as the **Protocol Bridge** for the Deadlight Ecosystem. It seamlessly connects modern HTTP-only serverless platforms (like Cloudflare Workers) to foundational TCP protocols (SMTP, IMAP, SOCKS), enabling **true self-sovereign infrastructure**.
+`proxy.deadlight` is a high-performance network proxy that serves as a stateless protocol bridge. It connects ancient, stateful TCP protocols (SMTP, IMAP, SOCKS) to the modern, stateless, and globally distributed serverless ecosystem.
 
-**NEW in v5.0:** Complete integration with `deadlight.boo` via REST API endpoints, enabling real-time proxy management through a beautiful web interface deployable anywhere.
+By bridging these two worlds, the Deadlight Proxy enables a powerful new form of self-sovereign infrastructure. It eliminates the need for an "always-on" home server by delegating state management to a serverless database (Cloudflare D1), all while preserving the privacy and control of a self-hosted solution.
 
-### Features (Current Status)
-
-After a comprehensive refactoring and development cycle, `proxy.deadlight` has evolved from a simple proxy into a robust, extensible framework.
-
-- 📦 **Modular, Protocol-Agnostic Architecture:** Built around a `DeadlightProtocolHandler` interface that allows new protocols to be added easily as self-contained modules.
-- 🚀 **High-Performance C Foundation:** Utilizes the robust and efficient GNU/GLib ecosystem for high-throughput, low-latency network I/O and multi-threaded connection handling.
-- 🔒 **Secure Tunneling & Interception:**
-   - **HTTP/HTTPS Proxy:** Functions as a standard forward proxy for web traffic.
-   - **SSL (TLS) Interception:** Capable of generating certificates on-the-fly for traffic inspection (MitM), a powerful tool for development and security analysis.
-   - **IMAPS Tunneling:** Securely tunnels IMAP traffic over TLS, with robust certificate validation against the system's trust store.
-- 🌐 **SOCKS4 Proxy Support:** Provides basic IP masking and privacy by serving as a SOCKS4 proxy for compatible applications.
-- 🎛️ **REST API Server:** Complete HTTP API for external integration and management
-- 🛜 **Multi-Protocol Support**: HTTP/HTTPS/SOCKS/SMTP/IMAP/IMAPS/API protocols
-- 📱 **Web Dashboard Integration:** Real-time proxy control via modern web interface
-- 📧 **Email-based Federation:** Revolutionary approach to decentralized social media using proven email protocols
-- 🔧 **File-Based Configuration:** All core settings, listeners, and protocol behaviors are controlled via a simple .ini-style configuration file.
-
-### Integration Features (NEW in v5.0)
-
-- 🌐 **REST API Interface:** Complete HTTP API for integration with web applications
-- 📊 **Real-time Status Monitoring:** Live connection tracking and system health reporting  
-- 📧 **Email Federation Bridge:** SMTP protocol translation for decentralized social media
-- 🎛️ **Web-based Management:** Full proxy control via `blog.deadlight` admin dashboard
-- ⚡ **Instant Deployment:** One command deployment to global CDN with local proxy backend
-
-**API Endpoints:**
-- `GET /api/blog/status` - Blog service health and version info
-- `GET /api/email/status` - Email queue status and processing metrics
-- `POST /api/email/send` - Send emails through proxy SMTP bridge
-- `POST /api/federation/send` - Federated blog post distribution via email
-
-[Web Integration from CLI](https://github.com/gnarzilla/proxy.deadlight/blob/main/src/assets/Proxy%20%26%20Blog%20Terminal%20Side-by-Side.png)
+This release represents a major breakthrough, with a complete REST API that integrates seamlessly with `blog.deadlight`. This allows for real-time proxy management, status monitoring, and email-based federation, all controlled from a web interface you can deploy anywhere in the world.
 
 ### Architecture
 
-#### System Architecture
+The Architectural Breakthrough - Deadlight’s core innovation is its decoupling of the protocol from the service.
+
+**Stateless by Design:** Instead of maintaining a local database or a mail queue, the proxy translates TCP traffic into clean HTTP API calls. This offloads all state management to a globally available database, allowing the proxy to remain lightweight and stateless. It can be turned off without losing any data.
+
+**Protocol Agnostic:** The proxy is not an "email server" or a "SOCKS proxy"—it’s a platform for handling any TCP-based protocol. Its modular architecture means you can add new protocol handlers (e.g., for XMPP or Matrix) as simple, self-contained C files without changing the core application.
+
+**Eliminating the "Always-On" Server:** The proxy's design leverages **Cloudflare Tunnel** for secure, outbound-only connectivity. This means your home IP address is never exposed, your firewall can remain closed, and you don’t need to worry about dynamic IPs or complex NAT configurations. Your home machine becomes a trusted network gateway, not a public server.
+
 
                     🌐 DEADLIGHT ECOSYSTEM ARCHITECTURE 🌐
 
@@ -127,6 +104,47 @@ This is all managed by a set of distinct managers:
 -   **Protocol System**: Manages the registration and detection of protocol handlers.
 -   **Configuration Manager**: Parses INI-style configuration files.
 -   **Connection Pool**: Manages and reuses upstream server connections.
+
+### Features
+
+- **High-Performance C Foundation:** Built with the robust and efficient GLib ecosystem for high-throughput, low-latency network I/O and multi-threaded connection handling.
+
+- **Multi-Protocol Support:** A single binary can act as a bridge for HTTP/HTTPS, SOCKS, SMTP, IMAP/S, and a custom API.
+
+- **API-First Design:** Complete REST API for external integration, enabling real-time status monitoring, email sending, and federation from any web application.
+
+- **Email-based Federation:** A simplified, or revolutionary, approach to decentralized social media that uses proven email protocols for instance-to-instance communication, eliminating the need to invent a new protocol.
+
+- **Advanced Security:** Features include on-the-fly TLS interception (for development/analysis), robust certificate validation, and a secure deployment model that leverages outbound-only connections.
+
+### Roadmap
+#### v5.0 (Current):
+
++ **Stateless Protocol Bridge:** Complete integration with blog.deadlight via HTTP API endpoints.
+
++ **API-First:** Full REST API for real-time status and management.
+
++ **Email Federation:** Working email-based social media federation.
+
++ **Cloudflare Tunnel Integration:** Production-ready deployment using Cloudflare Tunnel.
+
+Future Considerations:
+
+➡ **SOCKS5 Authentication:** Implement full authentication for the SOCKS5 proxy.
+
+➡ **Plugin Ecosystem:** Develop a core API for creating and sharing ad-blocking, analytics, and other plugins.
+
+➡ **Local Web Interface:** A minimalist web server within the proxy for easy, direct configuration and debugging.
+
+➡ **Mobile & Desktop Clients:** Publish an API specification to enable the development of native clients.
+
+**API Endpoints:**
+- `GET /api/blog/status` - Blog service health and version info
+- `GET /api/email/status` - Email queue status and processing metrics
+- `POST /api/email/send` - Send emails through proxy SMTP bridge
+- `POST /api/federation/send` - Federated blog post distribution via email
+
+[Web Integration from CLI](https://github.com/gnarzilla/proxy.deadlight/blob/main/src/assets/Proxy%20%26%20Blog%20Terminal%20Side-by-Side.png)
 
 ### Getting Started
 
@@ -276,6 +294,7 @@ curl --cacert ssl/ca.crt -x http://localhost:8080 https://example.com
 ```
 
 ### Extending Deadlight
+The `DeadlightProtocolHandler` interface and modular design make extending the proxy simple and powerful. To add a new protocol, you simply implement a few functions, and the core handles everything else.
 
 #### Adding a New Protocol
 The core strength of Deadlight is its extensible protocol system. To add support for a new protocol:
