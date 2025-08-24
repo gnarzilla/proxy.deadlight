@@ -103,6 +103,7 @@ static gboolean looks_like_socks(const guint8 *buf, gsize len) {
 /**
  * Fast-path protocol detection with improved logic
  */
+
 static DeadlightProtocol quick_detect(const guint8 *buf, gsize len) {
     if (len == 0) return DEADLIGHT_PROTOCOL_UNKNOWN;
     
@@ -113,68 +114,32 @@ static DeadlightProtocol quick_detect(const guint8 *buf, gsize len) {
     
     // 2) SOCKS detection (binary protocols before text)
     if (looks_like_socks(buf, len)) {
-        return buf[0] == 0x04 ? DEADLIGHT_PROTOCOL_SOCKS4 : DEADLIGHT_PROTOCOL_SOCKS5;
+        return DEADLIGHT_PROTOCOL_SOCKS; 
     }
-    
-    // 3) HTTP method detection with specific handling
-    if (looks_like_http(buf, len)) {
-        // Check if this looks like an API request
-        if (len >= 9 && (memcmp(buf, "GET /api/", 9) == 0 ||
-                        memcmp(buf, "POST /api/", 10) == 0)) {
-            return DEADLIGHT_PROTOCOL_API;
-        }
-        
-        // All HTTP requests (including CONNECT) go to HTTP handler
+
+    // 3) Text-based protocols (check for specific greetings)
+    if (g_str_has_prefix((const gchar*)buf, "GET") ||
+        g_str_has_prefix((const gchar*)buf, "POST") ||
+        g_str_has_prefix((const gchar*)buf, "HEAD") ||
+        g_str_has_prefix((const gchar*)buf, "PUT") ||
+        g_str_has_prefix((const gchar*)buf, "DELETE") ||
+        g_str_has_prefix((const gchar*)buf, "OPTIONS") ||
+        g_str_has_prefix((const gchar*)buf, "CONNECT")) {
         return DEADLIGHT_PROTOCOL_HTTP;
     }
-    
-    // 4) SMTP detection
-    if (len >= 4) {
-        if (memcmp(buf, "HELO", 4) == 0 || memcmp(buf, "EHLO", 4) == 0) {
-            return DEADLIGHT_PROTOCOL_SMTP;
-        }
+
+    // New: Check for SMTP greetings
+    if (g_str_has_prefix((const gchar*)buf, "HELO") ||
+        g_str_has_prefix((const gchar*)buf, "EHLO")) {
+        return DEADLIGHT_PROTOCOL_SMTP;
     }
-    
-    // 5) IMAP detection
-    if (len >= 2) {
-        gsize tag_end = 0;
-        gboolean valid_tag = TRUE;
-        
-        for (gsize i = 0; i < MIN(len, 5); i++) {
-            if (buf[i] == ' ') {
-                tag_end = i;
-                break;
-            }
-        }
-        
-        if (tag_end > 0 && tag_end <= 4) {
-            for (gsize i = 0; i < tag_end; i++) {
-                if (!g_ascii_isalnum(buf[i])) {
-                    valid_tag = FALSE;
-                    break;
-                }
-            }
-            
-            if (valid_tag && len > tag_end + 1) {
-                const gchar *remaining = (const gchar *)(buf + tag_end + 1);
-                gsize remaining_len = len - tag_end - 1;
-                
-                const gchar *imap_commands[] = {
-                    "NOOP", "LOGIN", "SELECT", "EXAMINE", "LIST", 
-                    "FETCH", "SEARCH", "CAPABILITY", "LOGOUT", NULL
-                };
-                
-                for (int i = 0; imap_commands[i]; i++) {
-                    gsize cmd_len = strlen(imap_commands[i]);
-                    if (remaining_len >= cmd_len && 
-                        memcmp(remaining, imap_commands[i], cmd_len) == 0) {
-                        return DEADLIGHT_PROTOCOL_IMAP;
-                    }
-                }
-            }
-        }
+
+    // New: Check for IMAP greeting from client (e.g., "A001")
+    if (g_str_has_prefix((const gchar*)buf, "A0")) {
+        return DEADLIGHT_PROTOCOL_IMAP;
     }
-    
+
+    // 4) Truly unknown
     return DEADLIGHT_PROTOCOL_UNKNOWN;
 }
 
@@ -264,8 +229,7 @@ const gchar *deadlight_protocol_to_string(DeadlightProtocol protocol) {
         case DEADLIGHT_PROTOCOL_API: return "API"; 
         case DEADLIGHT_PROTOCOL_HTTP: return "HTTP";
         case DEADLIGHT_PROTOCOL_HTTPS: return "HTTPS";
-        case DEADLIGHT_PROTOCOL_SOCKS4: return "SOCKS4";
-        case DEADLIGHT_PROTOCOL_SOCKS5: return "SOCKS5";
+        case DEADLIGHT_PROTOCOL_SOCKS: return "SOCKS";
         case DEADLIGHT_PROTOCOL_CONNECT: return "CONNECT";
         case DEADLIGHT_PROTOCOL_WEBSOCKET: return "WebSocket";
         case DEADLIGHT_PROTOCOL_IMAP: return "IMAP";

@@ -308,32 +308,32 @@ static int run_interactive_mode(void) {
         g_print("\nTest commands:\n");
         
         // HTTP
-        g_print("  # HTTP\n");
-        g_print("  curl -x http://localhost:%d http://example.com\n", port);
+        g_print("  # HTTP\n");
+        g_print("  curl -x http://localhost:%d http://example.com\n", port);
         
         // HTTPS (trust the local CA)
-        g_print("\n  # HTTPS\n");
-        g_print("  curl --cacert ~/.deadlight/ca.crt -x http://localhost:%d https://example.com\n", port);
+        g_print("\n  # HTTPS\n");
+        g_print("  curl --cacert ~/.deadlight/ca.crt -x http://localhost:%d https://example.com\n", port);
         
         // SOCKS4
-        g_print("\n  # SOCKS4\n");
-        g_print("  curl --socks4 localhost:%d http://example.com\n", port);
+        g_print("\n  # SOCKS4\n");
+        g_print("  curl --socks4 localhost:%d http://example.com\n", port);
         
         // SOCKS5
-        g_print("\n  # SOCKS5\n");
-        g_print("  curl --socks5 localhost:%d http://example.com\n", port);
+        g_print("\n  # SOCKS5\n");
+        g_print("  curl --socks5 localhost:%d http://example.com\n", port);
         
         // SMTP handshake
-        g_print("\n  # SMTP\n");
-        g_print("  printf \"A001 NOOP\\r\\n\" | nc localhost %d\n", port);
+        g_print("\n  # SMTP\n");
+        g_print("  printf \"HELO test.com\\r\\n\" | nc localhost %d\n", port);
 
         // IMAP NOOP
-        g_print("\n  # IMAP (NOOP)\n");
-        g_print("  printf \"A001 NOOP\\r\\n\" | nc localhost %d\n", port);
+        g_print("\n  # IMAP (NOOP)\n");
+        g_print("  printf \"A001 NOOP\\r\\n\" | nc localhost %d\n", port);
         
         // IMAP STARTTLS (explicit)
-        g_print("\n  # IMAP STARTTLS\n");
-        g_print("  openssl s_client -connect localhost:%d -starttls imap -crlf\n", port);
+        g_print("\n  # IMAP STARTTLS\n");
+        g_print("  openssl s_client -connect localhost:%d -starttls imap -crlf\n", port);
 
         g_print("\nPress Ctrl+C to stop\n\n");
     }

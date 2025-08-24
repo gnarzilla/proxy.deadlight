@@ -21,7 +21,7 @@ static gboolean smtp_send_to_api(DeadlightConnection *conn, DeadlightSMTPData *s
 // The handler object
 static const DeadlightProtocolHandler smtp_protocol_handler = {
     .name = "SMTP",
-    .protocol_id = DEADLIGHT_PROTOCOL_UNKNOWN, // Add DEADLIGHT_PROTOCOL_SMTP to enum
+    .protocol_id = DEADLIGHT_PROTOCOL_SMTP, // Add DEADLIGHT_PROTOCOL_SMTP to enum
     .detect = smtp_detect,
     .handle = smtp_handle,
     .cleanup = smtp_cleanup

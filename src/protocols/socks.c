@@ -335,7 +335,7 @@ static void socks_cleanup(DeadlightConnection *conn) {
 // The handler object
 static const DeadlightProtocolHandler socks_protocol_handler = {
     .name = "SOCKS",
-    .protocol_id = DEADLIGHT_PROTOCOL_SOCKS5,
+    .protocol_id = DEADLIGHT_PROTOCOL_SOCKS,
     .detect = socks_detect,
     .handle = socks_handle,  // <-- This calls your dispatcher
     .cleanup = socks_cleanup
