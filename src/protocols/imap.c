@@ -83,6 +83,20 @@ static DeadlightHandlerResult imap_handle(DeadlightConnection *conn, GError **er
         return HANDLER_ERROR;
     }
 
+    // Forward the detection buffer
+    if (conn->client_buffer && conn->client_buffer->len > 0) {
+        GOutputStream *upstream_os = g_io_stream_get_output_stream(
+            G_IO_STREAM(conn->upstream_connection));
+        
+        if (!g_output_stream_write_all(upstream_os, 
+                                    conn->client_buffer->data,
+                                    conn->client_buffer->len, 
+                                    NULL, NULL, error)) {
+            g_warning("IMAP: Failed to forward initial buffer: %s", (*error)->message);
+            return HANDLER_ERROR;
+        }
+    }
+
     g_info("IMAP handler for conn %lu: upstream connected, starting data tunnel.", conn->id);
     
     // deadlight_network_tunnel_data is a synchronous, blocking call.

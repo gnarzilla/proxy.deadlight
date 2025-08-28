@@ -23,9 +23,10 @@ connect_enabled = true
 enabled = true
 
 [imap]
-# The upstream IMAP server to proxy connections to.
+# For STARTTLS support
 upstream_host = imap.gmail.com
 upstream_port = 143
+starttls = true
 
 [imaps]
 # The upstream IMAPS server to proxy connections to.

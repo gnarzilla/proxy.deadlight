@@ -335,6 +335,12 @@ static int run_interactive_mode(void) {
         g_print("\n  # IMAP STARTTLS\n");
         g_print("  openssl s_client -connect localhost:%d -starttls imap -crlf\n", port);
 
+        // IMAPS Secure Tunnel
+        g_print("\n  # IMAPS tunnel using telnet\n");
+        g_print("  telnet localhost 8080\n");
+        g_print("\n  # Once connected, type the following and press Enter:\n");
+        g_print("  A001 NOOP\n");
+
         g_print("\nPress Ctrl+C to stop\n\n");
     }
     
@@ -359,7 +365,7 @@ static void print_banner(void) {
     g_print("\n");
     g_print("======================================================\n");
     g_print("                                                      \n");
-    g_print("              Deadlight Proxy v4.0                   \n");
+    g_print("              Deadlight Proxy v5.0                   \n");
     g_print("                                                      \n");
     g_print("     Modular - Extensible - High Performance         \n");
     g_print("                                                      \n");
