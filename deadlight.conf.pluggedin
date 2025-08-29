@@ -55,3 +55,4 @@ email_address = blog@deadlight.boo
 auth_required = false  ; Set to true to force username/pass
 username = testuser
 password = testpass
+

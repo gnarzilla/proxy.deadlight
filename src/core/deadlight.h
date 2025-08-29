@@ -135,6 +135,7 @@ struct _DeadlightConnection {
     // Fields for tunneling (used by both plain and SSL tunnels)
     GIOChannel *client_channel;
     GIOChannel *upstream_channel;
+    GTlsCertificate *upstream_peer_cert;
     gint client_fd;
     gint upstream_fd;
 };
