@@ -153,51 +153,43 @@ deadlight_protocol_detect_and_assign(DeadlightConnection *conn,
                                      const guint8 *data,
                                      gsize length)
 {
-    // 1) Fast-path detection
-    DeadlightProtocol detected = quick_detect(data, length);
+    // 1) Let each handler detect and return a priority
+    const DeadlightProtocolHandler *best_handler = NULL;
+    gsize best_priority = 0;
     
-    // Create a safe printable string for debugging
-    gchar *debug_str = g_strndup((const gchar *)data, MIN(length, 8));
-    for (gsize i = 0; i < MIN(length, 8); i++) {
-        if (!g_ascii_isprint(debug_str[i])) {
-            debug_str[i] = '.';
+    for (GList *l = protocol_handlers; l; l = l->next) {
+        const DeadlightProtocolHandler *h = l->data;
+        if (h->detect) {
+            gsize priority = h->detect(data, length);
+            if (priority > best_priority) {
+                best_priority = priority;
+                best_handler = h;
+            }
         }
     }
     
-    g_debug("quick_detect: first %zu bytes = '%s' → %s",
-            MIN(length, (gsize)8),
-            debug_str,
-            deadlight_protocol_to_string(detected));
+    if (best_handler) {
+        conn->protocol = best_handler->protocol_id;
+        conn->handler = best_handler;
+        g_debug("Best handler match: %s with priority %zu", best_handler->name, best_priority);
+        return best_handler;
+    }
     
-    g_free(debug_str);
-
+    // 2) Fallback to quick_detect only if no handler claimed it
+    DeadlightProtocol detected = quick_detect(data, length);
+    
     if (detected != DEADLIGHT_PROTOCOL_UNKNOWN) {
-        // Find the handler for the detected protocol
         for (GList *l = protocol_handlers; l; l = l->next) {
             const DeadlightProtocolHandler *h = l->data;
             if (h->protocol_id == detected) {
                 conn->protocol = detected;
                 conn->handler = h;
-                g_debug("Quick detect matched handler: %s", h->name);
+                g_debug("Quick detect fallback matched: %s", h->name);
                 return h;
             }
         }
         g_warning("Quick detect found protocol %s but no handler registered", 
                   deadlight_protocol_to_string(detected));
-    }
-
-    // 2) Fallback: let each handler try its own detect function
-    // BUT skip this if we already had a quick_detect match - trust the quick detect
-    if (detected == DEADLIGHT_PROTOCOL_UNKNOWN) {
-        for (GList *l = protocol_handlers; l; l = l->next) {
-            const DeadlightProtocolHandler *h = l->data;
-            if (h->detect && h->detect(data, length)) {
-                conn->protocol = h->protocol_id;
-                conn->handler = h;
-                g_debug("Handler-specific detection matched: %s", h->name);
-                return h;
-            }
-        }
     }
 
     // 3) Nothing matched - default to HTTP for text data, or unknown
