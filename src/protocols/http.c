@@ -21,7 +21,7 @@ static const DeadlightProtocolHandler http_protocol_handler = {
     .name = "HTTP",
     .protocol_id = DEADLIGHT_PROTOCOL_HTTP,
     .detect = http_detect,
-    .handle = http_handle, // This is fine, as http_handle's signature now matches
+    .handle = http_handle,
     .cleanup = http_cleanup
 };
 
@@ -58,14 +58,24 @@ static void http_cleanup(DeadlightConnection *conn) {
     (void)conn;
 }
 
-// Changed return type from gboolean to DeadlightHandlerResult
 static DeadlightHandlerResult handle_plain_http(DeadlightConnection *conn, GError **error) {
     conn->current_request = deadlight_request_new(conn);
 
-    // Casting to const gchar* to resolve the signedness warning
+    // Parse headers first
     if (!deadlight_request_parse_headers(conn->current_request, (const gchar *)conn->client_buffer->data, conn->client_buffer->len)) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Failed to parse HTTP request headers");
-        return HANDLER_ERROR; // Changed from FALSE
+        return HANDLER_ERROR;
+    }
+
+    // Check if this is an API request BEFORE checking for proxy loops
+    if (g_str_has_prefix(conn->current_request->uri, "/api/")) {
+        const gchar *host_header = deadlight_request_get_header(conn->current_request, "host");
+        if (host_header && (strstr(host_header, "localhost") || strstr(host_header, "127.0.0.1"))) {
+            g_info("Connection %lu: API request detected, HTTP handler passing", conn->id);
+            // Return error so the connection gets re-evaluated by other handlers
+            g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "API request - wrong handler");
+            return HANDLER_ERROR;
+        }
     }
 
     const gchar *host_header = deadlight_request_get_header(conn->current_request, "host");

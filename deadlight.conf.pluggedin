@@ -17,7 +17,7 @@ cert_cache_dir = /tmp/deadlight_certs
 [protocols]
 http_enabled = true
 https_enabled = true
-connect_enabled = true
+# connect_enabled = true
 
 [plugins]
 enabled = true

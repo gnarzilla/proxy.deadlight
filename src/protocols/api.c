@@ -26,20 +26,19 @@ void deadlight_register_api_handler(void) {
 }
 
 static gsize api_detect(const guint8 *data, gsize len) {
-    if (len < 20) return 0;
+    // Need at least "GET /api/" (9 chars)
+    if (len < 9) return 0;
     
     const char *str = (const char*)data;
     
-    // Look for direct HTTP API requests (not proxy requests)
-    if (g_strstr_len(str, len, "GET /api/") ||
-        g_strstr_len(str, len, "POST /api/") ||
-        g_strstr_len(str, len, "PUT /api/") ||
-        g_strstr_len(str, len, "DELETE /api/")) {
-        // Make sure it's NOT a proxy request by checking for "Host: localhost"
-        if (g_strstr_len(str, len, "Host: localhost") || 
-            g_strstr_len(str, len, "Host: 127.0.0.1")) {
-            return 2; // Higher priority than HTTP handler
-        }
+    // Check for API path in the request line (before headers)
+    if ((len >= 9 && memcmp(data, "GET /api/", 9) == 0) ||
+        (len >= 10 && memcmp(data, "POST /api/", 10) == 0) ||
+        (len >= 9 && memcmp(data, "PUT /api/", 9) == 0) ||
+        (len >= 12 && memcmp(data, "DELETE /api/", 12) == 0)) {
+        
+        // Return high priority
+        return 100; // Much higher than HTTP's max of 8
     }
     
     return 0;
@@ -61,6 +60,21 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
     }
     
     g_free(request_str);
+
+    if (g_str_equal(request->method, "OPTIONS")) {
+        // Handle CORS preflight
+        const gchar *response = 
+            "HTTP/1.1 200 OK\r\n"
+            "Access-Control-Allow-Origin: https://deadlight.boo\r\n"
+            "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+            "Access-Control-Allow-Headers: Content-Type, X-API-Key\r\n"
+            "Content-Length: 0\r\n"
+            "\r\n";
+        
+        GOutputStream *client_os = g_io_stream_get_output_stream(G_IO_STREAM(conn->client_connection));
+        g_output_stream_write_all(client_os, response, strlen(response), NULL, NULL, error);
+        return HANDLER_SUCCESS_CLEANUP_NOW;
+    }
     
     // Route to appropriate handler
     if (g_str_has_prefix(request->uri, "/api/email/")) {
@@ -139,6 +153,9 @@ static DeadlightHandlerResult api_send_json_response(DeadlightConnection *conn, 
         "HTTP/1.1 %d %s\r\n"
         "Content-Type: application/json\r\n"
         "Content-Length: %zu\r\n"
+        "Access-Control-Allow-Origin: https://deadlight.boo\r\n"  // Add your domain
+        "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+        "Access-Control-Allow-Headers: Content-Type, X-API-Key\r\n"
         "Connection: close\r\n"
         "\r\n"
         "%s", status_code, status_text, strlen(json_body), json_body);
