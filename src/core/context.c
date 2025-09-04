@@ -17,6 +17,9 @@ DeadlightContext *deadlight_context_new(void) {
     // Initialize hash tables
     ctx->certificates = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     
+    // Initialize plugin data storage
+    ctx->plugins_data = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    
     // Initialize statistics
     ctx->total_connections = 0;
     ctx->active_connections = 0;
@@ -28,7 +31,6 @@ DeadlightContext *deadlight_context_new(void) {
     
     return ctx;
 }
-
 /**
  * Free Deadlight context
  */
@@ -51,6 +53,11 @@ void deadlight_context_free(DeadlightContext *ctx) {
     // Clean up certificates
     if (ctx->certificates) {
         g_hash_table_destroy(ctx->certificates);
+    }
+
+    // Clean up plugin data
+    if (ctx->plugins_data) {
+        g_hash_table_destroy(ctx->plugins_data);
     }
     
     // Stop worker pool

@@ -85,6 +85,7 @@ struct _DeadlightContext {
     DeadlightNetworkManager *network;
     DeadlightSSLManager *ssl;
     DeadlightPluginManager *plugins;
+    GHashTable *plugins_data;
     GHashTable *connections;
     GHashTable *certificates;
     GThreadPool *worker_pool;

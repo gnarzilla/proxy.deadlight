@@ -69,6 +69,9 @@ static gboolean adblocker_init(DeadlightContext *context) {
     g_info("Initializing AdBlocker plugin...");
     
     AdBlockerData *data = g_new0(AdBlockerData, 1);
+
+     // Initialize the enabled field
+    data->enabled = deadlight_config_get_bool(context, "adblocker", "enabled", TRUE);
     
     // Create hash tables
     data->blocked_domains = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
@@ -128,10 +131,17 @@ static gboolean adblocker_init(DeadlightContext *context) {
     return TRUE;
 }
 
+static gboolean on_response_headers(DeadlightResponse *response) {
+    (void)response;
+    // For now, just pass through - we mainly block at request stage
+    return TRUE;
+}
+
 /**
  * Load blocklists from files and URLs
  */
 static gboolean load_blocklists(AdBlockerData *data, DeadlightContext *context) {
+    (void)context;  // Suppress unused parameter warning
     gint total_entries = 0;
     
     // First, load local blocklist
@@ -249,14 +259,32 @@ static gboolean on_request_headers(DeadlightRequest *request) {
         return TRUE;
     }
     
+    // CRITICAL: Get the adblocker data first
     AdBlockerData *data = g_hash_table_lookup(
         request->connection->context->plugins_data, "adblocker");
-    if (!data) return TRUE;
+    if (!data || !data->enabled) return TRUE;
+    
+    // IMPORTANT: Skip if this is a CONNECT request (HTTPS tunnel)
+    // The connection protocol will be CONNECT for HTTPS tunnels
+    if (request->connection->protocol == DEADLIGHT_PROTOCOL_CONNECT) {
+        g_debug("AdBlocker: Skipping CONNECT request for %s", request->host);
+        return TRUE;
+    }
+    
+    // Also skip if method is CONNECT
+    if (request->method && g_strcmp0(request->method, "CONNECT") == 0) {
+        return TRUE;
+    }
+    
+    // Only block actual HTTP requests, not tunnel establishment
+    if (!request->host && !request->uri) {
+        return TRUE;
+    }
     
     // Extract domain from host header or request
     const gchar *host = request->host;
     if (!host) {
-        host = g_hash_table_lookup(request->headers, "host");
+        host = g_hash_table_lookup(request->headers, "Host");
     }
     
     if (host && is_blocked_domain(data, host)) {
@@ -281,7 +309,7 @@ static gboolean on_request_headers(DeadlightRequest *request) {
         return FALSE; // Stop processing
     }
     
-    // Check URL patterns
+    // Check URL patterns only for non-HTTPS requests
     if (request->uri && is_blocked_url(data, request->uri)) {
         g_info("AdBlocker: Blocking URL pattern %s", request->uri);
         
@@ -296,26 +324,6 @@ static gboolean on_request_headers(DeadlightRequest *request) {
     data->requests_allowed++;
     return TRUE; // Continue processing
 }
-
-/**
- * Plugin cleanup
- */
-static void adblocker_cleanup(DeadlightContext *context) {
-    AdBlockerData *data = g_hash_table_lookup(context->plugins_data, "adblocker");
-    if (!data) return;
-    
-    g_info("AdBlocker statistics: %lu blocked, %lu allowed, %s saved",
-           data->requests_blocked, data->requests_allowed,
-           deadlight_format_bytes(data->bytes_saved));
-    
-    if (data->update_source_id) {
-        g_source_remove(data->update_source_id);
-    }
-    
-    g_hash_table_destroy(data->blocked_domains);
-    g_hash_table_destroy(data->blocked_keywords);
-    g_strfreev(data->blocklist_
-
 /**
  * Handle response body
  */
@@ -357,9 +365,8 @@ static void adblocker_cleanup(DeadlightContext *context) {
     AdBlockerData *data = g_hash_table_lookup(context->plugins_data, "adblocker");
     if (!data) return;
     
-    g_info("AdBlocker statistics: %lu blocked, %lu allowed, %s saved",
-           data->requests_blocked, data->requests_allowed,
-           deadlight_format_bytes(data->bytes_saved));
+    g_info("AdBlocker statistics: %lu blocked, %lu allowed, %lu bytes saved",
+           data->requests_blocked, data->requests_allowed, data->bytes_saved);
     
     if (data->update_source_id) {
         g_source_remove(data->update_source_id);
@@ -416,11 +423,6 @@ gboolean deadlight_adblocker_init(DeadlightContext *context) {
     return adblocker_init(context);
 }
 
-// Cleanup adblocker directly (non-plugin mode)
-void deadlight_adblocker_cleanup(DeadlightContext *context) {
-    adblocker_cleanup(context);
-}
-
 // Get statistics
 void deadlight_adblocker_get_stats(DeadlightContext *context, 
                                   guint64 *blocked, 
@@ -435,63 +437,63 @@ void deadlight_adblocker_get_stats(DeadlightContext *context,
     if (allowed) *allowed = data->requests_allowed;
     if (bytes_saved) *bytes_saved = data->bytes_saved;
 }
-    g_socket_set_blocking(upstream_socket, FALSE);
+
+
+static gboolean is_blocked_url(AdBlockerData *data, const gchar *url) {
+    if (!url) return FALSE;
     
-    // Create buffers for data transfer
-    GInputStream *client_input = g_io_stream_get_input_stream(
-        G_IO_STREAM(conn->client_connection));
-    GOutputStream *client_output = g_io_stream_get_output_stream(
-        G_IO_STREAM(conn->client_connection));
-    
-    GInputStream *upstream_input = g_io_stream_get_input_stream(
-        G_IO_STREAM(conn->upstream_connection));
-    GOutputStream *upstream_output = g_io_stream_get_output_stream(
-        G_IO_STREAM(conn->upstream_connection));
-    
-    // Start tunneling data
-    gboolean success = TRUE;
-    
-    while (success) {
-        // Read from client and write to upstream
-        gsize bytes_read = 0;
-        guint8 buffer[4096];
-        
-        bytes_read = g_input_stream_read(client_input, buffer, sizeof(buffer), NULL, NULL);
-        if (bytes_read <= 0) break; // EOF or error
-        
-        success = g_output_stream_write(upstream_output, buffer, bytes_read, NULL, NULL) >= 0;
-        
-        if (!success) break; // Error writing to upstream
-        
-        conn->bytes_client_to_upstream += bytes_read;
-        
-        // Read from upstream and write to client
-        bytes_read = g_input_stream_read(upstream_input, buffer, sizeof(buffer), NULL, NULL);
-        if (bytes_read <= 0) break; // EOF or error
-        
-        success = g_output_stream_write(client_output, buffer, bytes_read, NULL, NULL) >= 0;
-        
-        if (!success) break; // Error writing to client
-        
-        conn->bytes_upstream_to_client += bytes_read;
+    // Check against regex patterns
+    for (gint i = 0; i < data->pattern_count; i++) {
+        if (data->blocked_patterns[i] && 
+            g_regex_match(data->blocked_patterns[i], url, 0, NULL)) {
+            return TRUE;
+        }
     }
     
-    return success;
+    // Check for common ad URL patterns
+    const gchar *ad_patterns[] = {
+        "/doubleclick/",
+        "/googleads/",
+        "/adsense/",
+        "/adserver/",
+        "/advertisement/",
+        "/analytics/",
+        "/tracking/",
+        "/beacon/",
+        "?utm_",
+        NULL
+    };
+    
+    for (int i = 0; ad_patterns[i]; i++) {
+        if (strstr(url, ad_patterns[i])) {
+            return TRUE;
+        }
+    }
+    
+    return FALSE;
 }
 
-// Direct integration function for non-plugin mode
-gboolean deadlight_adblocker_init(DeadlightContext *context) {
-    // Call the existing adblocker_init function
-    return adblocker_init(context);
+// Plugin definition structure
+static DeadlightPlugin adblocker_plugin = {
+    .name = "AdBlocker",
+    .version = "1.0.0",
+    .description = "Blocks ads at DNS and content level",
+    .author = "Deadlight Team",
+    .init = adblocker_init,
+    .cleanup = adblocker_cleanup,
+    .on_request_headers = on_request_headers,
+    .on_response_headers = on_response_headers,
+    .on_response_body = on_response_body,
+    .on_connection_accept = NULL,
+    .on_protocol_detect = NULL,
+    .on_connection_close = NULL,
+    .on_config_change = NULL,
+    .private_data = NULL,
+    .ref_count = 1
+};
+
+// CRITICAL: Export function for plugin loader
+G_MODULE_EXPORT gboolean deadlight_plugin_get_info(DeadlightPlugin **plugin) {
+    *plugin = &adblocker_plugin;
+    return TRUE;
 }
-
-// Direct cleanup function
-void deadlight_adblocker_cleanup(DeadlightContext *context) {
-    adblocker_cleanup(context);
-}
-
-// Make is_blocked_domain non-static by removing 'static' from its definition
-// (just remove the 'static' keyword from the existing function)
-
-// Make is_blocked_url non-static as well
-// (just remove the 'static' keyword from the existing function)

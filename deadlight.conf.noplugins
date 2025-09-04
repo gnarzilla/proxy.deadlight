@@ -20,7 +20,7 @@ https_enabled = true
 # connect_enabled = true
 
 [plugins]
-enabled = true
+enabled = false
 plugin_dir = ./bin/plugins
 
 [imap]

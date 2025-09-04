@@ -17,6 +17,121 @@ struct _DeadlightPluginManager {
     gboolean initialized;
 };
 
+// Forward declarations
+static gboolean load_plugin_from_file(DeadlightContext *context, const gchar *filepath, GError **error);
+static gboolean load_plugins_from_directory(DeadlightContext *context, GError **error);
+gboolean deadlight_plugin_register(DeadlightContext *context, DeadlightPlugin *plugin);
+
+/**
+ * Load a plugin from file
+ */
+static gboolean load_plugin_from_file(DeadlightContext *context, const gchar *filepath, GError **error) {
+    GModule *module = NULL;
+    DeadlightPlugin *plugin = NULL;
+    gboolean (*get_plugin_info)(DeadlightPlugin **plugin);
+    
+    g_info("Loading plugin from %s", filepath);
+    
+    // Open the module
+    module = g_module_open(filepath, G_MODULE_BIND_LAZY | G_MODULE_BIND_LOCAL);
+    if (!module) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                   "Failed to load plugin %s: %s", filepath, g_module_error());
+        return FALSE;
+    }
+    
+    // Look for the plugin info function
+    if (!g_module_symbol(module, "deadlight_plugin_get_info", (gpointer *)&get_plugin_info)) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                   "Plugin %s missing deadlight_plugin_get_info function", filepath);
+        g_module_close(module);
+        return FALSE;
+    }
+    
+    // Get plugin information
+    if (!get_plugin_info(&plugin) || !plugin) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                   "Failed to get plugin info from %s", filepath);
+        g_module_close(module);
+        return FALSE;
+    }
+    
+    // Make module resident so it doesn't get unloaded
+    g_module_make_resident(module);
+    
+    // Register the plugin
+    if (!deadlight_plugin_register(context, plugin)) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                   "Failed to register plugin %s", plugin->name);
+        g_module_close(module);
+        return FALSE;
+    }
+    
+    g_info("Successfully loaded plugin: %s v%s by %s", 
+           plugin->name, plugin->version, plugin->author);
+    
+    return TRUE;
+}
+
+/**
+ * Load all plugins from directory
+ */
+static gboolean load_plugins_from_directory(DeadlightContext *context, GError **error) {
+    GDir *dir;
+    const gchar *filename;
+    gchar *filepath;
+    GError *local_error = NULL;
+    gint loaded = 0;
+    
+    (void)error; // Suppress unused parameter warning
+    
+    g_info("Looking for plugins in: %s", context->plugins->plugin_dir);
+    
+    // Check if directory exists
+    if (!g_file_test(context->plugins->plugin_dir, G_FILE_TEST_IS_DIR)) {
+        g_warning("Plugin directory does not exist: %s", context->plugins->plugin_dir);
+        return TRUE; // Not a fatal error
+    }
+    
+    // Open directory
+    dir = g_dir_open(context->plugins->plugin_dir, 0, &local_error);
+    if (!dir) {
+        g_warning("Failed to open plugin directory %s: %s",
+                 context->plugins->plugin_dir, local_error->message);
+        g_error_free(local_error);
+        return TRUE; // Not a fatal error
+    }
+    
+    // Iterate through files
+    while ((filename = g_dir_read_name(dir)) != NULL) {
+        // Only load .so files
+        if (!g_str_has_suffix(filename, ".so")) {
+            continue;
+        }
+        
+        filepath = g_build_filename(context->plugins->plugin_dir, filename, NULL);
+        
+        // Load the plugin
+        local_error = NULL;
+        if (load_plugin_from_file(context, filepath, &local_error)) {
+            loaded++;
+        } else {
+            g_warning("Failed to load plugin %s: %s", 
+                     filename, local_error ? local_error->message : "Unknown error");
+            if (local_error) {
+                g_error_free(local_error);
+            }
+        }
+        
+        g_free(filepath);
+    }
+    
+    g_dir_close(dir);
+    g_info("Loaded %d plugins from %s", loaded, context->plugins->plugin_dir);
+    
+    return TRUE;
+}
+
 /**
  * Initialize plugin system
  */
@@ -43,10 +158,13 @@ gboolean deadlight_plugins_init(DeadlightContext *context, GError **error) {
         return TRUE;
     }
     
-    // TODO: Load plugins from directory
+    // Load plugins from directory
+    if (!load_plugins_from_directory(context, error)) {
+        return FALSE;
+    }
     
     context->plugins->initialized = TRUE;
-    g_info("Plugin system initialized");
+    g_info("Plugin system initialized with %d plugins", deadlight_plugins_count(context));
     
     return TRUE;
 }
@@ -145,4 +263,16 @@ DeadlightPlugin *deadlight_plugin_find(DeadlightContext *context, const gchar *n
     g_return_val_if_fail(name != NULL, NULL);
     
     return g_hash_table_lookup(context->plugins->plugins, name);
+}
+
+gchar **deadlight_config_get_string_list(DeadlightContext *context, 
+                                        const gchar *section, 
+                                        const gchar *key, 
+                                        gchar **default_value) {
+    // Suppress unused parameter warnings
+    (void)context;
+    (void)section;
+    (void)key;
+    // Simple implementation - just return default for now
+    return default_value;
 }
