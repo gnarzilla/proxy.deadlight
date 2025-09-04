@@ -43,7 +43,6 @@ static gsize http_detect(const guint8 *data, gsize len) {
     return 0;
 }
 
-// Changed return type from gboolean to DeadlightHandlerResult
 static DeadlightHandlerResult http_handle(DeadlightConnection *conn, GError **error) {
     if (conn->client_buffer->len > 8 && strncmp((char*)conn->client_buffer->data, "CONNECT ", 8) == 0) {
         conn->protocol = DEADLIGHT_PROTOCOL_CONNECT;
@@ -53,8 +52,6 @@ static DeadlightHandlerResult http_handle(DeadlightConnection *conn, GError **er
 }
 
 static void http_cleanup(DeadlightConnection *conn) {
-    // This function remains the same. The connection is freed by the caller
-    // based on the DeadlightHandlerResult.
     (void)conn;
 }
 
@@ -133,7 +130,7 @@ static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError *
     if (g_strv_length(req_parts) < 2) {
         g_strfreev(req_parts);
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Invalid CONNECT request line");
-        return HANDLER_ERROR; // Changed from FALSE
+        return HANDLER_ERROR;
     }
 
     gchar *host = NULL;
@@ -141,7 +138,7 @@ static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError *
     if (!parse_host_port(req_parts[1], &host, &port)) {
         g_strfreev(req_parts);
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Invalid host:port in CONNECT request");
-        return HANDLER_ERROR; // Changed from FALSE
+        return HANDLER_ERROR;
     }
     g_strfreev(req_parts);
     
@@ -150,7 +147,7 @@ static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError *
         g_warning("Connection %lu: Detected proxy loop to %s:%d. Denying request.", conn->id, host, port);
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "Proxy loop detected");
         g_free(host);
-        return HANDLER_ERROR; // Changed from FALSE
+        return HANDLER_ERROR;
     }
 
     g_info("Connection %lu: CONNECT request to %s:%d", conn->id, host, port);
@@ -159,7 +156,7 @@ static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError *
 
     if (!deadlight_network_connect_upstream(conn, host, port, error)) {
         g_free(host);
-        return HANDLER_ERROR; // Changed from FALSE
+        return HANDLER_ERROR;
     }
     g_free(host);
 
@@ -168,31 +165,24 @@ static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError *
     if (g_output_stream_write_all(client_output, response, strlen(response), NULL, NULL, error) == FALSE) {
         return HANDLER_ERROR;
     }
-    
-    // Check if SSL interception is enabled
+
     if (conn->context->ssl_intercept_enabled) {
-        // Step 1: Perform the handshakes. This part is unchanged.
         if (deadlight_ssl_intercept_connection(conn, error)) {
+            g_info("Connection %lu: Tunneling with intercepted client TLS.", conn->id);
+            g_info("Connection %lu: Tunneling with upstream TLS.", conn->id);
             
-            // Step 2: Call the NEW BLOCKING tunnel function.
-            if (deadlight_network_tunnel_data(conn, error)) {
-                // The synchronous tunnel finished. The connection is over.
-                // Tell the caller (network.c) to clean up immediately.
+            if (deadlight_tls_tunnel_data(conn, error)) {
                 return HANDLER_SUCCESS_CLEANUP_NOW;
             } else {
-                // The tunnel itself failed.
                 return HANDLER_ERROR;
             }
-
         } else {
-            // The handshake failed.
             return HANDLER_ERROR;
         }
     } else {
-        // The non-intercepted CONNECT case. This also uses a blocking tunnel.
+        // Non-intercepted CONNECT - plain TCP tunnel
         g_info("Connection %lu: SSL intercept disabled. Starting plain TCP tunnel.", conn->id);
         if (deadlight_network_tunnel_data(conn, error)) {
-            // The synchronous tunnel finished.
             return HANDLER_SUCCESS_CLEANUP_NOW;
         } else {
             return HANDLER_ERROR;
@@ -200,7 +190,6 @@ static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError *
     }
 }
 // --- Helper Functions ---
-// (These remain unchanged)
 
 static gboolean parse_http_request_line(const gchar *line, gchar **method, gchar **uri, gchar **version) {
     gchar **parts = g_strsplit(line, " ", 3);

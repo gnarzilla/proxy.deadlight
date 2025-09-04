@@ -69,7 +69,7 @@ typedef struct _DeadlightProtocolHandler {
 } DeadlightProtocolHandler;
 
 
-//===[ STRUCT DEFINITIONS (RESTORED) ]===
+//===[ STRUCT DEFINITIONS ]===
 struct _DeadlightConfig {
     GKeyFile *keyfile;
     gchar *config_path;
@@ -216,6 +216,7 @@ void deadlight_network_stop(DeadlightContext *context);
 DeadlightConnection *deadlight_connection_new(DeadlightContext *context, GSocketConnection *client_connection);
 gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, const gchar *host, guint16 port, GError **error);
 gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error);
+gboolean deadlight_tls_tunnel_data(DeadlightConnection *conn, GError **error);
 
 // Protocol API
 gboolean deadlight_protocol_handle_response(DeadlightConnection *connection, GError **error);
@@ -237,8 +238,6 @@ gboolean deadlight_ssl_generate_host_certificate(DeadlightSSLManager *ssl_mgr, c
 gboolean deadlight_plugins_init(DeadlightContext *context, GError **error);
 void deadlight_plugins_cleanup(DeadlightContext *context);
 gint deadlight_plugins_count(DeadlightContext *context);
-
-// in src/core/deadlight.h
 
 // Request/Response API
 DeadlightRequest *deadlight_request_new(DeadlightConnection *connection);
