@@ -93,7 +93,7 @@ Deadlight is built on a modular design managed by a central `DeadlightContext`. 
 
 This is all managed by a set of distinct managers:
 -   **Network Manager**: Handles listener sockets, the worker pool, and connection state.
--   **SSL Manager**: Manages OpenSSL contexts, CA certificates, and performs SSL interception.
+-   **SSL Manager**: Manages GIO/gnutls contexts, CA certificates, and performs SSL interception.
 -   **Protocol System**: Manages the registration and detection of protocol handlers.
 -   **Configuration Manager**: Parses INI-style configuration files.
 -   **Connection Pool**: Manages and reuses upstream server connections.
@@ -149,7 +149,7 @@ This is all managed by a set of distinct managers:
 -   `make`
 -   `pkg-config`
 -   GLib 2.0+ & GIO development libraries (`libglib2.0-dev`)
--   OpenSSL 1.1.1+ development libraries (`libssl-dev`)
+-   gnutls development libraries (`gnutls`)
 
 On Debian/Ubuntu, install all prerequisites with:
 ```bash
@@ -158,15 +158,15 @@ sudo apt-get install build-essential pkg-config libglib2.0-dev libssl-dev glib-n
 ```
 - `build-essential`: Provides gcc, make, etc.
 - `libglib2.0-dev`: The GLib core libraries and development headers.
-- `libopenssl-dev`: For all cryptographic and TLS functions.
+- `gnutls`: GNU TLS functions.
 - `glib-networking`: The essential backend for GIO's TLS functionality.
 
 #### Building
 
 Clone the repository and use the provided Makefile:
 ```bash
-git clone https://your-repo-url/deadlight.git
-cd deadlight
+git clone https://github.com/gnarzilla/proxy.deadlight
+cd proxy.deadlight
 make
 ```
 The executable will be located at `bin/deadlight`.
@@ -185,8 +185,8 @@ worker_threads = 4
 
 [ssl]
 enabled = true
-ca_cert_file = /home/thatch/.deadlight/ca.crt
-ca_key_file = /home/thatch/.deadlight/ca.key
+ca_cert_file = /home/thatch/.deadlight/ca/ca.crt
+ca_key_file = /home/thatch/.deadlight/ca/ca.key
 cert_cache_dir = /tmp/deadlight_certs
 
 [protocols]
@@ -214,6 +214,12 @@ upstream_port = 993
 ```bash
 ./bin/deadlight -c deadlight.conf.example
 ```
+Add deadlight certificate to the trust store. If using Firefox you will also need to add via firefox's settings.
+```bash
+sudo cp ~/.deadlight/ca/ca.crt /usr/local/share/ca-certificates/
+sudo update-ca-certificates
+```
+
 
 ### Usage
 
@@ -248,6 +254,8 @@ a001 NOOP
 The proxy will establish a secure TLS connection to the upstream IMAP server and tunnel the data.
 
 #### Example 4. Web Dashboard Management
+
+<img width="1914" height="1019" alt="image" src="https://github.com/user-attachments/assets/5f77e2b7-c749-459f-89a4-a498221f17ad" />
 
 Deploy the integrated blog.deadlight dashboard
 ```bash
