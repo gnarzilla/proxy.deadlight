@@ -1,7 +1,7 @@
 [core]
 port = 8080
 bind_address = 0.0.0.0
-max_connections = 500
+max_connections = 5000
 log_level = info
 worker_threads = 4
 

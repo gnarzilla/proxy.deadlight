@@ -14,6 +14,7 @@ typedef struct {
     GHashTable *blocked_keywords;     // Keyword blocking
     GRegex **blocked_patterns;        // Regex patterns for URLs
     gint pattern_count;
+    gboolean enabled;
     
     // Statistics
     guint64 requests_blocked;
@@ -119,7 +120,7 @@ static gboolean adblocker_init(DeadlightContext *context) {
     // Schedule periodic updates (every 24 hours)
     data->update_source_id = g_timeout_add_seconds(86400, update_blocklists, data);
     
-    // Store in context (you'll need to add a plugins_data hashtable to context)
+    // Store in context (will need to add a plugins_data hashtable to context)
     if (!context->plugins_data) {
         context->plugins_data = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     }
@@ -259,43 +260,60 @@ static gboolean on_request_headers(DeadlightRequest *request) {
         return TRUE;
     }
     
-    // CRITICAL: Get the adblocker data first
     AdBlockerData *data = g_hash_table_lookup(
         request->connection->context->plugins_data, "adblocker");
     if (!data || !data->enabled) return TRUE;
     
-    // IMPORTANT: Skip if this is a CONNECT request (HTTPS tunnel)
-    // The connection protocol will be CONNECT for HTTPS tunnels
-    if (request->connection->protocol == DEADLIGHT_PROTOCOL_CONNECT) {
-        g_debug("AdBlocker: Skipping CONNECT request for %s", request->host);
-        return TRUE;
-    }
-    
-    // Also skip if method is CONNECT
+    // For CONNECT requests, check the host being connected to
     if (request->method && g_strcmp0(request->method, "CONNECT") == 0) {
-        return TRUE;
+        const gchar *host = request->host;
+        if (!host) {
+            // Extract from CONNECT target (e.g., "example.com:443")
+            if (request->uri) {
+                gchar *colon = strrchr(request->uri, ':');
+                if (colon) {
+                    host = g_strndup(request->uri, colon - request->uri);
+                } else {
+                    host = request->uri;
+                }
+            }
+        }
+        
+        if (host && is_blocked_domain(data, host)) {
+            g_info("AdBlocker: Blocking CONNECT to %s", host);
+            
+            data->requests_blocked++;
+            
+            // Send blocked response for CONNECT
+            const gchar *blocked_response = 
+                "HTTP/1.1 403 Forbidden\r\n"
+                "Content-Length: 0\r\n"
+                "X-Blocked-By: Deadlight-AdBlocker\r\n"
+                "\r\n";
+            
+            GOutputStream *output = g_io_stream_get_output_stream(
+                G_IO_STREAM(request->connection->client_connection));
+            g_output_stream_write(output, blocked_response, strlen(blocked_response), 
+                                NULL, NULL);
+            
+            return FALSE; // Stop processing
+        }
+        
+        data->requests_allowed++;
+        return TRUE; // Allow non-blocked CONNECT
     }
     
-    // Only block actual HTTP requests, not tunnel establishment
-    if (!request->host && !request->uri) {
-        return TRUE;
-    }
-    
-    // Extract domain from host header or request
+    // For regular HTTP requests, check as before
     const gchar *host = request->host;
     if (!host) {
         host = g_hash_table_lookup(request->headers, "Host");
     }
     
     if (host && is_blocked_domain(data, host)) {
-        g_info("AdBlocker: Blocking request to %s", host);
-        
-        request->blocked = TRUE;
-        request->block_reason = g_strdup_printf("Domain blocked by AdBlocker: %s", host);
+        g_info("AdBlocker: Blocking HTTP request to %s", host);
         
         data->requests_blocked++;
         
-        // Send a minimal blocked response
         const gchar *blocked_response = 
             "HTTP/1.1 204 No Content\r\n"
             "Content-Length: 0\r\n"
@@ -304,26 +322,16 @@ static gboolean on_request_headers(DeadlightRequest *request) {
         
         GOutputStream *output = g_io_stream_get_output_stream(
             G_IO_STREAM(request->connection->client_connection));
-        g_output_stream_write(output, blocked_response, strlen(blocked_response), NULL, NULL);
-        
-        return FALSE; // Stop processing
-    }
-    
-    // Check URL patterns only for non-HTTPS requests
-    if (request->uri && is_blocked_url(data, request->uri)) {
-        g_info("AdBlocker: Blocking URL pattern %s", request->uri);
-        
-        request->blocked = TRUE;
-        request->block_reason = g_strdup("URL pattern blocked by AdBlocker");
-        
-        data->requests_blocked++;
+        g_output_stream_write(output, blocked_response, strlen(blocked_response), 
+                            NULL, NULL);
         
         return FALSE;
     }
     
     data->requests_allowed++;
-    return TRUE; // Continue processing
+    return TRUE;
 }
+
 /**
  * Handle response body
  */
