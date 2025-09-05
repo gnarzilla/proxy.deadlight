@@ -275,6 +275,30 @@ Access `http://localhost:8787/admin/proxy` for real-time proxy management includ
 - Federation testing
 - Email system management
 
+#### Example 5, Rate Limiter/Ad Blocking Plugins
+Test AdBlocker with known ad domains:
+```bash
+# These should be BLOCKED:
+curl -x http://localhost:8080 https://googleadservices.com --verbose
+curl -x http://localhost:8080 https://doubleclick.net --verbose
+curl -x http://localhost:8080 https://google-analytics.com --verbose
+
+# This should WORK:
+curl -x http://localhost:8080 https://example.com --verbose
+```
+Test Rate Limiter:
+```bash
+# Rapid-fire requests to trigger rate limit (default is 120/min = 2/sec)
+for i in {1..10}; do 
+    curl -x http://localhost:8080 http://httpbin.org/get &
+done
+
+# Test auth endpoint rate limiting (stricter at 10/min)
+for i in {1..15}; do 
+    curl -x http://localhost:8080 http://httpbin.org/auth/test &
+done
+```
+
 #### Command Line Options
 
 -   `-c, --config FILE`: Path to configuration file.
@@ -289,11 +313,11 @@ curl -x http://localhost:8080 http://example.com
 ```
 
 #### Proxying & Intercepting HTTPS
-For TLS interception to work, you must instruct your client to trust the proxy's Certificate Authority. The CA certificate is generated automatically (e.g., in `ssl/ca.crt`).
+For TLS interception to work, you must instruct your client to trust the proxy's Certificate Authority. The CA certificate is generated automatically (e.g., in `~/.deadlight/ca.crt`).
 
 ```bash
 # The --cacert flag tells curl to trust our custom CA for this one request.
-curl --cacert ssl/ca.crt -x http://localhost:8080 https://example.com
+curl --cacert ~./deadlight/ca/ca.crt -x http://localhost:8080 https://example.com
 ```
 
 ### Extending Deadlight
