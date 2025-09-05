@@ -276,3 +276,140 @@ gchar **deadlight_config_get_string_list(DeadlightContext *context,
     // Simple implementation - just return default for now
     return default_value;
 }
+
+// Helper function to iterate and call a hook, stopping if any plugin returns FALSE
+typedef gboolean (*PluginHookCaller)(DeadlightPlugin *plugin, DeadlightContext *context, gpointer user_data);
+
+static gboolean call_plugin_hook_internal(DeadlightContext *context, PluginHookCaller caller, gpointer user_data) {
+    if (!context || !context->plugins || !context->plugins->plugins) {
+        return TRUE; // No plugins or plugin system not initialized
+    }
+
+    GHashTableIter iter;
+    gpointer key, value;
+    g_hash_table_iter_init(&iter, context->plugins->plugins);
+
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        DeadlightPlugin *plugin = (DeadlightPlugin *)value;
+        if (caller(plugin, context, user_data) == FALSE) {
+            return FALSE; // Plugin blocked/stopped processing
+        }
+    }
+    return TRUE; // All plugins allowed
+}
+
+// --- on_connection_accept ---
+static gboolean on_connection_accept_caller(DeadlightPlugin *plugin, DeadlightContext *context, gpointer user_data) {
+    (void)context; // Suppress unused warning
+    if (plugin->on_connection_accept) {
+        return plugin->on_connection_accept((DeadlightConnection *)user_data);
+    }
+    return TRUE;
+}
+
+// --- on_protocol_detect ---
+static gboolean on_protocol_detect_caller(DeadlightPlugin *plugin, DeadlightContext *context, gpointer user_data) {
+    (void)context; // Suppress unused warning
+    if (plugin->on_protocol_detect) {
+        DeadlightConnection *conn = (DeadlightConnection *)user_data;
+        // We need to pass both connection and protocol
+        // The protocol should be available in conn->protocol
+        return plugin->on_protocol_detect(conn, conn->protocol);
+    }
+    return TRUE;
+}
+
+// --- on_request_headers ---
+static gboolean on_request_headers_caller(DeadlightPlugin *plugin, DeadlightContext *context, gpointer user_data) {
+    (void)context; // Suppress unused warning
+    if (plugin->on_request_headers) {
+        return plugin->on_request_headers((DeadlightRequest *)user_data);
+    }
+    return TRUE;
+}
+
+// --- on_request_body --- (You were missing this one!)
+static gboolean on_request_body_caller(DeadlightPlugin *plugin, DeadlightContext *context, gpointer user_data) {
+    (void)context; // Suppress unused warning
+    if (plugin->on_request_body) {
+        return plugin->on_request_body((DeadlightRequest *)user_data);
+    }
+    return TRUE;
+}
+
+// --- on_response_headers ---
+static gboolean on_response_headers_caller(DeadlightPlugin *plugin, DeadlightContext *context, gpointer user_data) {
+    (void)context; // Suppress unused warning
+    if (plugin->on_response_headers) {
+        return plugin->on_response_headers((DeadlightResponse *)user_data);
+    }
+    return TRUE;
+}
+
+// --- on_response_body ---
+static gboolean on_response_body_caller(DeadlightPlugin *plugin, DeadlightContext *context, gpointer user_data) {
+    (void)context; // Suppress unused warning
+    if (plugin->on_response_body) {
+        return plugin->on_response_body((DeadlightResponse *)user_data);
+    }
+    return TRUE;
+}
+
+// --- on_connection_close ---
+static gboolean on_connection_close_caller(DeadlightPlugin *plugin, DeadlightContext *context, gpointer user_data) {
+    (void)context; // Suppress unused warning
+    if (plugin->on_connection_close) {
+        return plugin->on_connection_close((DeadlightConnection *)user_data);
+    }
+    return TRUE;
+}
+
+// --- on_config_change ---
+// For this one, we need to pass section and key through user_data
+typedef struct {
+    const gchar *section;
+    const gchar *key;
+} ConfigChangeData;
+
+static gboolean on_config_change_caller(DeadlightPlugin *plugin, DeadlightContext *context, gpointer user_data) {
+    if (plugin->on_config_change) {
+        ConfigChangeData *data = (ConfigChangeData *)user_data;
+        return plugin->on_config_change(context, data ? data->section : NULL, data ? data->key : NULL);
+    }
+    return TRUE;
+}
+
+// Add the public functions that will be called from other parts of the code:
+
+gboolean deadlight_plugins_call_on_connection_accept(DeadlightContext *context, DeadlightConnection *conn) {
+    return call_plugin_hook_internal(context, on_connection_accept_caller, conn);
+}
+
+gboolean deadlight_plugins_call_on_protocol_detect(DeadlightContext *context, DeadlightConnection *conn) {
+    return call_plugin_hook_internal(context, on_protocol_detect_caller, conn);
+}
+
+gboolean deadlight_plugins_call_on_request_headers(DeadlightContext *context, DeadlightRequest *request) {
+    return call_plugin_hook_internal(context, on_request_headers_caller, request);
+}
+
+gboolean deadlight_plugins_call_on_request_body(DeadlightContext *context, DeadlightRequest *request) {
+    return call_plugin_hook_internal(context, on_request_body_caller, request);
+}
+
+gboolean deadlight_plugins_call_on_response_headers(DeadlightContext *context, DeadlightResponse *response) {
+    return call_plugin_hook_internal(context, on_response_headers_caller, response);
+}
+
+gboolean deadlight_plugins_call_on_response_body(DeadlightContext *context, DeadlightResponse *response) {
+    return call_plugin_hook_internal(context, on_response_body_caller, response);
+}
+
+gboolean deadlight_plugins_call_on_connection_close(DeadlightContext *context, DeadlightConnection *conn) {
+    return call_plugin_hook_internal(context, on_connection_close_caller, conn);
+}
+
+void deadlight_plugins_call_on_config_change(DeadlightContext *context, const gchar *section, const gchar *key) {
+    ConfigChangeData data = { section, key };
+    call_plugin_hook_internal(context, on_config_change_caller, &data);
+}

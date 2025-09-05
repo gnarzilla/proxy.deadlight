@@ -64,6 +64,16 @@ static DeadlightHandlerResult handle_plain_http(DeadlightConnection *conn, GErro
         return HANDLER_ERROR;
     }
 
+    // ADD THIS DEBUG AND PLUGIN CALL:
+    g_debug("Connection %lu: Calling plugin hook for %s %s", 
+            conn->id, conn->current_request->method, conn->current_request->uri);
+    
+    // Call plugin hook for request headers
+    if (!deadlight_plugins_call_on_request_headers(conn->context, conn->current_request)) {
+        g_info("Connection %lu: HTTP request blocked by plugin", conn->id);
+        return HANDLER_SUCCESS_CLEANUP_NOW; // Plugin handled the response
+    }
+
     // Check if this is an API request BEFORE checking for proxy loops
     if (g_str_has_prefix(conn->current_request->uri, "/api/")) {
         const gchar *host_header = deadlight_request_get_header(conn->current_request, "host");
@@ -140,7 +150,23 @@ static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError *
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Invalid host:port in CONNECT request");
         return HANDLER_ERROR;
     }
+
+    conn->current_request = deadlight_request_new(conn);
+    conn->current_request->method = g_strdup("CONNECT");
+    conn->current_request->uri = g_strdup(req_parts[1]); // host:port
+    conn->current_request->host = g_strdup(host);
+
     g_strfreev(req_parts);
+
+    // ADD DEBUG LOGGING:
+    g_debug("Connection %lu: Calling plugin hook for CONNECT to %s", conn->id, host);
+
+    // Call plugin hook for CONNECT requests
+    if (!deadlight_plugins_call_on_request_headers(conn->context, conn->current_request)) {
+        g_info("Connection %lu: CONNECT request blocked by plugin", conn->id);
+        g_free(host);
+        return HANDLER_SUCCESS_CLEANUP_NOW;
+    }
     
     // Proxy loop prevention is perfect, keep it.
     if ((g_strcmp0(host, conn->context->listen_address) == 0 || g_strcmp0(host, "localhost") == 0 || g_strcmp0(host, "127.0.0.1") == 0) && port == conn->context->listen_port) {

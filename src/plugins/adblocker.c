@@ -264,27 +264,26 @@ static gboolean on_request_headers(DeadlightRequest *request) {
         request->connection->context->plugins_data, "adblocker");
     if (!data || !data->enabled) return TRUE;
     
-    // For CONNECT requests, check the host being connected to
+    const gchar *host = request->host;  // Single declaration at the top
+    gchar *extracted_host = NULL;       // For CONNECT hostname extraction
+    
+    // For CONNECT requests, extract hostname from the request
     if (request->method && g_strcmp0(request->method, "CONNECT") == 0) {
-        const gchar *host = request->host;
-        if (!host) {
-            // Extract from CONNECT target (e.g., "example.com:443")
-            if (request->uri) {
-                gchar *colon = strrchr(request->uri, ':');
-                if (colon) {
-                    host = g_strndup(request->uri, colon - request->uri);
-                } else {
-                    host = request->uri;
-                }
+        if (request->uri) {
+            // Extract hostname from "hostname:port"
+            gchar *colon = strrchr(request->uri, ':');
+            if (colon) {
+                extracted_host = g_strndup(request->uri, colon - request->uri);
+                host = extracted_host;  // Use extracted host for checking
+            } else {
+                host = request->uri;   // No port, use as-is
             }
         }
         
         if (host && is_blocked_domain(data, host)) {
-            g_info("AdBlocker: Blocking CONNECT to %s", host);
-            
+            g_info("AdBlocker: Blocking CONNECT to %s", request->uri);
             data->requests_blocked++;
             
-            // Send blocked response for CONNECT
             const gchar *blocked_response = 
                 "HTTP/1.1 403 Forbidden\r\n"
                 "Content-Length: 0\r\n"
@@ -293,18 +292,19 @@ static gboolean on_request_headers(DeadlightRequest *request) {
             
             GOutputStream *output = g_io_stream_get_output_stream(
                 G_IO_STREAM(request->connection->client_connection));
-            g_output_stream_write(output, blocked_response, strlen(blocked_response), 
-                                NULL, NULL);
+            g_output_stream_write(output, blocked_response, 
+                                strlen(blocked_response), NULL, NULL);
             
-            return FALSE; // Stop processing
+            if (extracted_host) g_free(extracted_host);
+            return FALSE; // Block it
         }
         
+        if (extracted_host) g_free(extracted_host);
         data->requests_allowed++;
-        return TRUE; // Allow non-blocked CONNECT
+        return TRUE;
     }
     
-    // For regular HTTP requests, check as before
-    const gchar *host = request->host;
+    // Handle regular HTTP requests
     if (!host) {
         host = g_hash_table_lookup(request->headers, "Host");
     }
@@ -324,6 +324,18 @@ static gboolean on_request_headers(DeadlightRequest *request) {
             G_IO_STREAM(request->connection->client_connection));
         g_output_stream_write(output, blocked_response, strlen(blocked_response), 
                             NULL, NULL);
+        
+        return FALSE;
+    }
+    
+    // Check URL patterns for non-HTTPS
+    if (request->uri && is_blocked_url(data, request->uri)) {
+        g_info("AdBlocker: Blocking URL pattern %s", request->uri);
+        
+        request->blocked = TRUE;
+        request->block_reason = g_strdup("URL pattern blocked by AdBlocker");
+        
+        data->requests_blocked++;
         
         return FALSE;
     }

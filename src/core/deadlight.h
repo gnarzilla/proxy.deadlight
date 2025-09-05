@@ -239,6 +239,14 @@ gboolean deadlight_ssl_generate_host_certificate(DeadlightSSLManager *ssl_mgr, c
 gboolean deadlight_plugins_init(DeadlightContext *context, GError **error);
 void deadlight_plugins_cleanup(DeadlightContext *context);
 gint deadlight_plugins_count(DeadlightContext *context);
+gboolean deadlight_plugins_call_on_connection_accept(DeadlightContext *context, DeadlightConnection *conn);
+gboolean deadlight_plugins_call_on_protocol_detect(DeadlightContext *context, DeadlightConnection *conn);
+gboolean deadlight_plugins_call_on_request_headers(DeadlightContext *context, DeadlightRequest *request);
+gboolean deadlight_plugins_call_on_request_body(DeadlightContext *context, DeadlightRequest *request);
+gboolean deadlight_plugins_call_on_response_headers(DeadlightContext *context, DeadlightResponse *response);
+gboolean deadlight_plugins_call_on_response_body(DeadlightContext *context, DeadlightResponse *response);
+gboolean deadlight_plugins_call_on_connection_close(DeadlightContext *context, DeadlightConnection *conn);
+void deadlight_plugins_call_on_config_change(DeadlightContext *context, const gchar *section, const gchar *key);
 
 // Request/Response API
 DeadlightRequest *deadlight_request_new(DeadlightConnection *connection);

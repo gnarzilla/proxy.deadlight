@@ -63,7 +63,8 @@ PROTOCOL_SOURCES = src/protocols/http.c \
                    src/protocols/smtp.c \
                    src/protocols/api.c
 
-PLUGIN_SOURCES = $(PLUGINDIR)/adblocker.c
+PLUGIN_SOURCES = $(PLUGINDIR)/adblocker.c \
+                 $(PLUGINDIR)/ratelimiter.c
 
 #=============================================================================
 # Object Files
@@ -76,7 +77,8 @@ ALL_OBJECTS = $(CORE_OBJECTS) $(PROTOCOL_OBJECTS)
 # Targets
 #=============================================================================
 MAIN_TARGET = $(BINDIR)/$(PROJECT)
-PLUGIN_TARGETS = $(PLUGIN_BINDIR)/adblocker.so
+PLUGIN_TARGETS = $(PLUGIN_BINDIR)/adblocker.so \
+                 $(PLUGIN_BINDIR)/ratelimiter.so
 
 #=============================================================================
 # Build Rules
@@ -110,6 +112,10 @@ plugins: $(PLUGIN_TARGETS)
 
 $(PLUGIN_BINDIR)/adblocker.so: $(PLUGINDIR)/adblocker.c $(PLUGINDIR)/adblocker.h | $(PLUGIN_BINDIR)
 	@echo "🔌 Building AdBlocker plugin..."
+	@$(CC) $(CFLAGS) $(GLIB_CFLAGS) -DDEADLIGHT_VERSION=\"$(VERSION)\" -Isrc -Isrc/core -fPIC -shared -o $@ $< $(ALL_LIBS)
+
+$(PLUGIN_BINDIR)/ratelimiter.so: $(PLUGINDIR)/ratelimiter.c $(PLUGINDIR)/ratelimiter.h | $(PLUGIN_BINDIR)
+	@echo "🔌 Building RateLimiter plugin..."
 	@$(CC) $(CFLAGS) $(GLIB_CFLAGS) -DDEADLIGHT_VERSION=\"$(VERSION)\" -Isrc -Isrc/core -fPIC -shared -o $@ $< $(ALL_LIBS)
 
 #=============================================================================

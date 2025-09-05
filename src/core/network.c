@@ -212,6 +212,13 @@ static gboolean on_incoming_connection(GSocketService *service,
     // Create connection object
     DeadlightConnection *conn = deadlight_connection_new(context, connection);
     conn->client_address = client_str;
+
+    // Call plugin hook for new connection
+    if (!deadlight_plugins_call_on_connection_accept(context, conn)) {
+        g_info("Connection %lu rejected by plugin", conn->id);
+        deadlight_connection_free(conn);
+        return FALSE;
+    }
     
     // Add to connection table
     g_mutex_lock(&context->network->connection_mutex);
@@ -307,7 +314,6 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
     // --- Your existing socket setup and initial read logic is perfect and stays here ---
     GSocket *socket = g_socket_connection_get_socket(conn->client_connection);
     g_socket_set_blocking(socket, FALSE);
-    // ... keep your SO_KEEPALIVE and TCP_NODELAY options here ...
     guint8 peek_buffer[2048];
     gssize bytes_peeked = 0;
     gint timeout = deadlight_config_get_int(context, "protocols", "protocol_detection_timeout", 5);
@@ -324,7 +330,7 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
             else if(error) g_warning("Connection %lu: Read error: %s", conn->id, error->message);
             else g_warning("Connection %lu: Protocol detection timeout.", conn->id);
             g_clear_error(&error);
-            goto cleanup; // Use goto for initial read failures
+            goto cleanup; 
         }
         g_clear_error(&error);
         g_usleep(10000); // 10ms
@@ -339,6 +345,12 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
 
     g_info("Connection %lu: Detected protocol '%s'", conn->id, handler->name);
     conn->state = DEADLIGHT_STATE_CONNECTING;
+
+    // Call plugin hook for protocol detection
+    if (!deadlight_plugins_call_on_protocol_detect(context, conn)) {
+        g_info("Connection %lu blocked by plugin after protocol detection", conn->id);
+        goto cleanup;
+    }
 
     gchar *config_key = g_strdup_printf("%s_enabled", g_ascii_strdown(handler->name, -1));
     gboolean enabled = deadlight_config_get_bool(context, "protocols", config_key, TRUE);
@@ -479,6 +491,11 @@ static void cleanup_connection(DeadlightConnection *conn) {
     if (!conn) return;
     
     g_debug("Cleaning up connection %lu", conn->id);
+
+    // Notify plugins of connection close
+    if (conn->context) {
+        deadlight_plugins_call_on_connection_close(conn->context, conn);
+    }
 
     // Return upstream connection to pool if possible
     if (conn->upstream_connection && conn->target_host && conn->state == DEADLIGHT_STATE_CLOSING) {

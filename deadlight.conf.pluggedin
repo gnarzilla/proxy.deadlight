@@ -63,3 +63,16 @@ blocklist_path = /etc/deadlight/blocklist.txt
 # You can add custom blocklist URLs
 blocklist_url_0 = https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
 
+[ratelimiter]
+enabled = true
+# General rate limit
+requests_per_minute = 120
+
+# Stricter limit for auth endpoints
+auth_requests_per_minute = 10
+
+# Allow bursts
+burst_size = 15
+
+# Auth endpoint patterns
+auth_patterns = /auth/,/login/,/api/auth,/token
