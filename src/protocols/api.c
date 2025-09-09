@@ -5,6 +5,7 @@
 static gsize api_detect(const guint8 *data, gsize len);
 static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **error);
 static void api_cleanup(DeadlightConnection *conn);
+static DeadlightHandlerResult api_handle_system_endpoint(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
 static DeadlightHandlerResult api_handle_federation_endpoint(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
 static DeadlightHandlerResult api_handle_email_endpoint(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
 static DeadlightHandlerResult api_handle_blog_endpoint(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
@@ -28,8 +29,6 @@ void deadlight_register_api_handler(void) {
 static gsize api_detect(const guint8 *data, gsize len) {
     // Need at least "GET /api/" (9 chars)
     if (len < 9) return 0;
-    
-    const char *str = (const char*)data;
     
     // Check for API path in the request line (before headers)
     if ((len >= 9 && memcmp(data, "GET /api/", 9) == 0) ||
@@ -77,7 +76,9 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
     }
     
     // Route to appropriate handler
-    if (g_str_has_prefix(request->uri, "/api/email/")) {
+    if (g_str_has_prefix(request->uri, "/api/system/")) {
+        return api_handle_system_endpoint(conn, request, error);
+    } else if (g_str_has_prefix(request->uri, "/api/email/")) {
         return api_handle_email_endpoint(conn, request, error);
     } else if (g_str_has_prefix(request->uri, "/api/blog/")) {
         return api_handle_blog_endpoint(conn, request, error);
@@ -98,6 +99,7 @@ static DeadlightHandlerResult api_handle_system_endpoint(DeadlightConnection *co
         g_free(ip);
         return result;
     }
+    return api_send_404(conn, error);
 }
 
 static DeadlightHandlerResult api_handle_federation_endpoint(DeadlightConnection *conn, 
@@ -116,8 +118,6 @@ static DeadlightHandlerResult api_handle_federation_endpoint(DeadlightConnection
     
     return api_send_404(conn, error);
 }
-
-// Add these missing API function implementations:
 
 static void api_cleanup(DeadlightConnection *conn) {
     g_debug("API cleanup called for conn %lu", conn->id);
@@ -211,6 +211,7 @@ static DeadlightHandlerResult api_handle_blog_endpoint(DeadlightConnection *conn
 }
 
 static DeadlightHandlerResult api_federation_send(DeadlightConnection *conn, DeadlightRequest *request, GError **error) {
+    (void)request;
     g_info("API federation send for conn %lu", conn->id);
     
     // TODO: Implement federated post sending via email
@@ -219,6 +220,7 @@ static DeadlightHandlerResult api_federation_send(DeadlightConnection *conn, Dea
 }
 
 static DeadlightHandlerResult api_federation_receive(DeadlightConnection *conn, DeadlightRequest *request, GError **error) {
+    (void)request;
     g_info("API federation receive for conn %lu", conn->id);
     
     // TODO: Process incoming federated content from email

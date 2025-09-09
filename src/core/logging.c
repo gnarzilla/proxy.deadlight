@@ -127,7 +127,7 @@ void deadlight_log_handler(const gchar *log_domain, GLogLevelFlags log_level,
  */
 gboolean deadlight_logging_init(DeadlightContext *context, GError **error) {
     g_return_val_if_fail(context != NULL, FALSE);
-    g_debug("deadlight_logging_init() called; default log_file=%p", log_file);
+    g_debug("deadlight_logging_init() called; default log_file=%p", (void*)log_file);
     
     // Get log level from config
     gchar *log_level_str = deadlight_config_get_string(context, "core", "log_level", "info");

@@ -11,6 +11,7 @@
  * This fits a "one-shot" worker thread model.
  */
 gboolean start_ssl_tunnel_blocking(DeadlightConnection *conn, GError **error) {
+    (void)error;
     g_return_val_if_fail(conn != NULL, FALSE);
     g_return_val_if_fail(conn->client_ssl != NULL, FALSE);
     g_return_val_if_fail(conn->upstream_ssl != NULL, FALSE);

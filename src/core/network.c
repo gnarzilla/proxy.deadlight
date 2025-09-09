@@ -159,6 +159,23 @@ void deadlight_network_stop(DeadlightContext *context) {
 }
 
 /**
+ * Free connection object
+ */
+
+void deadlight_connection_free(DeadlightConnection *conn) {
+    if (!conn) return;
+
+    // Remove from the master list first.
+    g_mutex_lock(&conn->context->network->connection_mutex);
+    g_hash_table_remove(conn->context->connections, &conn->id);
+    conn->context->active_connections--;
+    g_mutex_unlock(&conn->context->network->connection_mutex);
+
+    // Now call the main cleanup worker.
+    cleanup_connection(conn);
+}
+
+/**
  * Handle incoming connection
  */
 static gboolean on_incoming_connection(GSocketService *service,
@@ -280,27 +297,8 @@ DeadlightConnection *deadlight_connection_new(DeadlightContext *context,
 }
 
 /**
- * Free connection object
- */
-// In src/core/network.c
-
-void deadlight_connection_free(DeadlightConnection *conn) {
-    if (!conn) return;
-
-    // Remove from the master list first.
-    g_mutex_lock(&conn->context->network->connection_mutex);
-    g_hash_table_remove(conn->context->connections, &conn->id);
-    conn->context->active_connections--;
-    g_mutex_unlock(&conn->context->network->connection_mutex);
-
-    // Now call the main cleanup worker.
-    cleanup_connection(conn);
-}
-
-/**
  * Worker thread function
  */
-// In src/core/network.c
 
 static void connection_thread_func(gpointer data, gpointer user_data) {
     DeadlightConnection *conn = (DeadlightConnection *)data;

@@ -1,4 +1,52 @@
 #include "deadlight.h"
+#include <gio/gio.h>
+#include <string.h>
+
+gchar *get_external_ip(void) {
+    GError *error = NULL;
+    GSocketClient *client = g_socket_client_new();
+    GSocketConnection *connection = NULL;
+    gchar *result = NULL;
+    
+    // Try to connect to a simple IP checking service
+    connection = g_socket_client_connect_to_host(client, 
+                                                  "api.ipify.org", 80, 
+                                                  NULL, &error);
+    
+    if (connection) {
+        GOutputStream *output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
+        GInputStream *input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
+        
+        const gchar *request = "GET / HTTP/1.0\r\nHost: api.ipify.org\r\n\r\n";
+        
+        if (g_output_stream_write_all(output, request, strlen(request), NULL, NULL, &error)) {
+            gchar buffer[1024];
+            gssize bytes_read = g_input_stream_read(input, buffer, sizeof(buffer) - 1, NULL, &error);
+            
+            if (bytes_read > 0) {
+                buffer[bytes_read] = '\0';
+                // Find the IP address after the headers
+                gchar *body = strstr(buffer, "\r\n\r\n");
+                if (body) {
+                    body += 4; // Skip the \r\n\r\n
+                    result = g_strdup(g_strstrip(body));
+                }
+            }
+        }
+        
+        g_object_unref(connection);
+    }
+    
+    g_object_unref(client);
+    
+    if (error) {
+        g_warning("Failed to get external IP: %s", error->message);
+        g_error_free(error);
+    }
+    
+    // Return localhost if we couldn't get external IP
+    return result ? result : g_strdup("127.0.0.1");
+}
 
 gboolean deadlight_test_module(const gchar *module_name) {
     g_return_val_if_fail(module_name != NULL, FALSE);

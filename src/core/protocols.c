@@ -26,6 +26,7 @@ void deadlight_protocol_register(const DeadlightProtocolHandler *handler) {
  * This is called once at startup from main.c.
  */
 void deadlight_protocols_init(DeadlightContext *context) {
+    (void)context;
     g_info("Initializing protocol handlers...");
 
     // Register your handlers here
@@ -55,6 +56,7 @@ static gboolean looks_like_tls_handshake(const guint8 *buf, gsize len) {
 /**
  * Helper function to check if data looks like HTTP
  */
+#ifdef FUTURE_USE
 static gboolean looks_like_http(const guint8 *buf, gsize len) {
     if (len < 3) return FALSE;
     
@@ -84,6 +86,7 @@ static gboolean looks_like_http(const guint8 *buf, gsize len) {
     
     return FALSE;
 }
+#endif
 
 /**
  * Helper function to check if data looks like SOCKS

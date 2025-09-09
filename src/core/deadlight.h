@@ -13,10 +13,10 @@ extern "C" {
 #endif
 
 //===[ MACROS AND DEFINES (RESTORED) ]===
-#define DEADLIGHT_VERSION_MAJOR 4
-#define DEADLIGHT_VERSION_MINOR 0
+#define DEADLIGHT_VERSION_MAJOR 5
+#define DEADLIGHT_VERSION_MINOR 1
 #define DEADLIGHT_VERSION_PATCH 0
-#define DEADLIGHT_VERSION_STRING "4.0.0"
+#define DEADLIGHT_VERSION_STRING "5.1.0"
 
 #define DEADLIGHT_DEFAULT_PORT 8080
 #define DEADLIGHT_DEFAULT_CONFIG_FILE "/etc/deadlight/deadlight.conf"
@@ -28,7 +28,8 @@ typedef enum {
     DEADLIGHT_PROTOCOL_UNKNOWN = 0, DEADLIGHT_PROTOCOL_HTTP, DEADLIGHT_PROTOCOL_HTTPS,
     DEADLIGHT_PROTOCOL_SOCKS, DEADLIGHT_PROTOCOL_CONNECT,
     DEADLIGHT_PROTOCOL_WEBSOCKET, DEADLIGHT_PROTOCOL_IMAP,
-    DEADLIGHT_PROTOCOL_IMAPS, DEADLIGHT_PROTOCOL_SMTP, DEADLIGHT_PROTOCOL_API
+    DEADLIGHT_PROTOCOL_IMAPS, DEADLIGHT_PROTOCOL_SMTP, DEADLIGHT_PROTOCOL_API,
+    DEADLIGHT_PROTOCOL_SOCKS4, DEADLIGHT_PROTOCOL_SOCKS5
 } DeadlightProtocol;
 
 typedef enum {
@@ -218,6 +219,7 @@ DeadlightConnection *deadlight_connection_new(DeadlightContext *context, GSocket
 gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, const gchar *host, guint16 port, GError **error);
 gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error);
 gboolean deadlight_tls_tunnel_data(DeadlightConnection *conn, GError **error);
+void deadlight_connection_free(DeadlightConnection *conn);
 
 // Protocol API
 gboolean deadlight_protocol_handle_response(DeadlightConnection *connection, GError **error);
@@ -273,6 +275,7 @@ gboolean deadlight_test_module(const gchar *module_name);
 // Utility API
 const gchar *deadlight_protocol_to_string(DeadlightProtocol protocol);
 gchar *deadlight_format_bytes(guint64 bytes); // Restored
+gchar* get_external_ip(void);
 
 #ifdef __cplusplus
 }

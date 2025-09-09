@@ -40,8 +40,8 @@ static const struct {
     
     // SSL/TLS settings
     {"ssl", "enabled", "true", "Enable SSL interception"},
-    {"ssl", "ca_cert_file", "/etc/deadlight/ca.crt", "CA certificate file"},
-    {"ssl", "ca_key_file", "/etc/deadlight/ca.key", "CA private key file"},
+    {"ssl", "ca_cert_file", "/etc/deadlight/ca/ca.crt", "CA certificate file"},
+    {"ssl", "ca_key_file", "/etc/deadlight/ca/ca.key", "CA private key file"},
     {"ssl", "cert_cache_dir", "/tmp/deadlight_certs", "Certificate cache directory"},
     {"ssl", "cert_cache_size", "1000", "Maximum cached certificates"},
     {"ssl", "cert_validity_days", "30", "Generated certificate validity period"},
@@ -54,7 +54,9 @@ static const struct {
     {"protocols", "socks4_enabled", "true", "Enable SOCKS4 support"},
     {"protocols", "socks5_enabled", "true", "Enable SOCKS5 support"},
     {"protocols", "connect_enabled", "true", "Enable HTTP CONNECT support"},
-    {"protocols", "websocket_enabled", "true", "Enable WebSocket support"},
+    {"protocols", "imap_enabled", "true", "Enable IMAP support"},
+    {"protocols", "imaps_enabled", "true", "Enable IMAPS support"},
+    {"protocols", "smtp_enabled", "true", "Enable SMTP support"},
     {"protocols", "protocol_detection_timeout", "5", "Protocol detection timeout"},
     
     // Network settings

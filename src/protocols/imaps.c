@@ -94,20 +94,20 @@ static DeadlightHandlerResult imaps_handle(DeadlightConnection *conn, GError **e
         return HANDLER_ERROR;
     }
     
-    // --- THE REFINEMENT, IN THE CORRECT PLACE ---
     // Step 3: Now that the channel is secure, forward the initial data from the detection buffer.
     if (conn->client_buffer && conn->client_buffer->len > 0) {
-        g_info("IMAPS handler for conn %lu: Forwarding initial %" G_GSIZE_FORMAT " bytes of data.", conn->id, conn->client_buffer->len);
+        g_info("IMAPS handler for conn %" G_GUINT64_FORMAT ": Forwarding initial %u bytes of data.", 
+            conn->id, conn->client_buffer->len);
         
         // Get the output stream of our now-encrypted connection.
         GOutputStream *upstream_os = g_io_stream_get_output_stream(G_IO_STREAM(conn->upstream_tls));
         
         if (!g_output_stream_write_all(upstream_os, conn->client_buffer->data, conn->client_buffer->len, NULL, NULL, error)) {
-            g_warning("IMAPS handler for conn %lu: Failed to forward initial buffer: %s", conn->id, (*error)->message);
+            g_warning("IMAPS handler for conn %" G_GUINT64_FORMAT ": Failed to forward initial buffer: %s", 
+                    conn->id, (*error)->message);
             return HANDLER_ERROR;
         }
     }
-    // --- END REFINEMENT ---
 
     // Step 4: Begin tunneling any subsequent data.
     g_info("IMAPS handler for conn %lu: Initial data sent, starting data tunnel.", conn->id);

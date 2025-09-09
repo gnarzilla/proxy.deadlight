@@ -1,12 +1,10 @@
 #include "smtp.h"
 #include <string.h>
+#include <json-glib/json-glib.h>
 
-// Forward declarations (ADD ALL OF THESE AT THE TOP)
 static gsize smtp_detect(const guint8 *data, gsize len);
 static DeadlightHandlerResult smtp_handle(DeadlightConnection *conn, GError **error);
 static void smtp_cleanup(DeadlightConnection *conn);
-
-// Add these missing forward declarations:
 static DeadlightHandlerResult smtp_handle_bridge_mode(DeadlightConnection *conn, GError **error);
 static DeadlightHandlerResult smtp_handle_proxy_mode(DeadlightConnection *conn, const gchar *upstream_host, gint upstream_port, GError **error);
 static DeadlightHandlerResult smtp_handle_local_mode(DeadlightConnection *conn, GError **error);
@@ -21,7 +19,7 @@ static gboolean smtp_send_to_api(DeadlightConnection *conn, DeadlightSMTPData *s
 // The handler object
 static const DeadlightProtocolHandler smtp_protocol_handler = {
     .name = "SMTP",
-    .protocol_id = DEADLIGHT_PROTOCOL_SMTP, // Add DEADLIGHT_PROTOCOL_SMTP to enum
+    .protocol_id = DEADLIGHT_PROTOCOL_SMTP,
     .detect = smtp_detect,
     .handle = smtp_handle,
     .cleanup = smtp_cleanup
@@ -154,34 +152,178 @@ static DeadlightHandlerResult smtp_handle_bridge_mode(DeadlightConnection *conn,
     return HANDLER_SUCCESS_CLEANUP_NOW;
 }
 
-// Helper function to send email to HTTP API
-static gboolean smtp_send_to_api(DeadlightConnection *conn, DeadlightSMTPData *smtp_data, 
-                                 const gchar *api_endpoint, GError **error) {
-    // This would use libcurl or similar to POST to your Cloudflare Worker
-    // Format: JSON payload with sender, recipient, message body
-    
-    g_info("SMTP bridge conn %lu: Sending email to API - From: %s, To: %s, Size: %u bytes",
-           conn->id, smtp_data->sender, smtp_data->recipient, smtp_data->message_buffer->len);
-    
-    // TODO: Implement HTTP POST to API endpoint
-    // For now, return success to complete the SMTP transaction
-    return TRUE;
-}
-
-static void smtp_cleanup(DeadlightConnection *conn) {
-    if (conn->protocol_data) {
-        DeadlightSMTPData *smtp_data = (DeadlightSMTPData*)conn->protocol_data;
-        g_free(smtp_data->sender);
-        g_free(smtp_data->recipient);
-        if (smtp_data->message_buffer) {
-            g_byte_array_free(smtp_data->message_buffer, TRUE);
-        }
-        g_free(smtp_data);
-        conn->protocol_data = NULL;
+static gchar* read_auth_token(DeadlightContext *context) {
+    gchar *token_file = deadlight_config_get_string(context, "api", "auth_token_file", NULL);
+    if (!token_file) {
+        return NULL;
     }
+    
+    gchar *token = NULL;
+    GError *error = NULL;
+    
+    if (g_file_get_contents(token_file, &token, NULL, &error)) {
+        // Remove any trailing newlines
+        g_strstrip(token);
+    } else {
+        g_warning("Failed to read auth token from %s: %s", token_file, error->message);
+        g_error_free(error);
+    }
+    
+    g_free(token_file);
+    return token;
 }
 
-// Add these missing function implementations at the end of smtp.c:
+// Enhanced SMTP to API function
+static gboolean smtp_send_to_api(DeadlightConnection *conn, DeadlightSMTPData *smtp_data, 
+                                       const gchar *api_endpoint, GError **error) {
+    gboolean success = FALSE;
+    gchar *json_str = NULL;
+    gchar *auth_token = NULL;
+    
+    // Get endpoint from config
+    gchar *endpoint = api_endpoint ? g_strdup(api_endpoint) : 
+                     deadlight_config_get_string(conn->context, "smtp", "api_endpoint", 
+                                                "http://localhost:8080/api/email/receive");
+    
+    // Parse URL
+    gchar *host = NULL;
+    guint16 port = 80;
+    gchar *path = NULL;
+    gboolean use_ssl = FALSE;
+    
+    if (g_str_has_prefix(endpoint, "https://")) {
+        use_ssl = TRUE;
+        port = 443;
+        host = g_strdup(endpoint + 8);
+    } else if (g_str_has_prefix(endpoint, "http://")) {
+        host = g_strdup(endpoint + 7);
+    } else {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                   "Invalid API endpoint URL: %s", endpoint);
+        g_free(endpoint);
+        return FALSE;
+    }
+    
+    // Extract path from host
+    gchar *slash = strchr(host, '/');
+    if (slash) {
+        path = g_strdup(slash);
+        *slash = '\0';
+    } else {
+        path = g_strdup("/");
+    }
+    
+    // Extract port from host if specified
+    gchar *colon = strchr(host, ':');
+    if (colon) {
+        *colon = '\0';
+        port = atoi(colon + 1);
+    }
+    
+    g_info("SMTP bridge: Connecting to %s:%d%s", host, port, path);
+    
+    // Build JSON payload (simplified)
+    JsonBuilder *builder = json_builder_new();
+    json_builder_begin_object(builder);
+    json_builder_set_member_name(builder, "from");
+    json_builder_add_string_value(builder, smtp_data->sender);
+    json_builder_set_member_name(builder, "to");
+    json_builder_add_string_value(builder, smtp_data->recipient);
+    json_builder_set_member_name(builder, "body");
+    json_builder_add_string_value(builder, (gchar*)smtp_data->message_buffer->data);
+    json_builder_set_member_name(builder, "timestamp");
+    json_builder_add_int_value(builder, g_get_real_time() / G_USEC_PER_SEC);
+    json_builder_end_object(builder);
+    
+    JsonGenerator *gen = json_generator_new();
+    JsonNode *root = json_builder_get_root(builder);
+    json_generator_set_root(gen, root);
+    json_str = json_generator_to_data(gen, NULL);
+    
+    // Read auth token
+    auth_token = read_auth_token(conn->context);
+    
+    // Build HTTP request
+    GString *request = g_string_new("");
+    g_string_printf(request,
+        "POST %s HTTP/1.1\r\n"
+        "Host: %s\r\n"
+        "User-Agent: Deadlight-SMTP-Bridge/1.0\r\n"
+        "Content-Type: application/json\r\n"
+        "Content-Length: %zu\r\n",
+        path, host, strlen(json_str));
+    
+    if (auth_token) {
+        g_string_append_printf(request, "Authorization: Bearer %s\r\n", auth_token);
+    }
+    
+    g_string_append_printf(request, "Connection: close\r\n\r\n%s", json_str);
+    
+    // Connect to API
+    GSocketClient *client = g_socket_client_new();
+    GSocketConnection *connection = NULL;
+    
+    // With:
+    if (use_ssl) {
+        g_socket_client_set_tls(client, TRUE);
+        // For GLib 2.72+, use the new API if available
+        #if GLIB_CHECK_VERSION(2, 72, 0)
+            GTlsCertificateFlags flags = G_TLS_CERTIFICATE_VALIDATE_ALL;
+            g_object_set(client, "tls-validation-flags", flags, NULL);
+        #else
+            g_socket_client_set_tls_validation_flags(client, G_TLS_CERTIFICATE_VALIDATE_ALL);
+        #endif
+    }
+    
+    connection = g_socket_client_connect_to_host(client, host, port, NULL, error);
+    
+    if (connection) {
+        GOutputStream *out = g_io_stream_get_output_stream(G_IO_STREAM(connection));
+        GInputStream *in = g_io_stream_get_input_stream(G_IO_STREAM(connection));
+        
+        // Send request
+        if (g_output_stream_write_all(out, request->str, request->len, NULL, NULL, error)) {
+            // Read response
+            gchar buffer[4096];
+            gssize bytes_read = g_input_stream_read(in, buffer, sizeof(buffer) - 1, NULL, error);
+            
+            if (bytes_read > 0) {
+                buffer[bytes_read] = '\0';
+                
+                // Check for success
+                if (g_strstr_len(buffer, bytes_read, "200 OK") ||
+                    g_strstr_len(buffer, bytes_read, "201 Created")) {
+                    g_info("SMTP bridge: Successfully posted to API");
+                    success = TRUE;
+                    
+                    // Log response body
+                    gchar *body_start = g_strstr_len(buffer, bytes_read, "\r\n\r\n");
+                    if (body_start) {
+                        g_debug("SMTP bridge: API response: %s", body_start + 4);
+                    }
+                } else {
+                    g_warning("SMTP bridge: API request failed: %s", buffer);
+                }
+            }
+        }
+        
+        g_object_unref(connection);
+    }
+    
+    // Cleanup
+    g_string_free(request, TRUE);
+    g_object_unref(client);
+    g_free(host);
+    g_free(path);
+    g_free(endpoint);
+    g_free(auth_token);
+    g_free(json_str);
+    json_node_unref(root);
+    g_object_unref(gen);
+    g_object_unref(builder);
+    
+    return success;
+}
 
 static DeadlightHandlerResult smtp_handle_proxy_mode(DeadlightConnection *conn, const gchar *upstream_host, gint upstream_port, GError **error) {
     g_info("SMTP proxy mode for conn %lu: Forwarding to %s:%d", conn->id, upstream_host, upstream_port);
@@ -222,4 +364,25 @@ static DeadlightHandlerResult smtp_handle_local_mode(DeadlightConnection *conn, 
     
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "Local SMTP mode not yet implemented");
     return HANDLER_ERROR;
+}
+
+static void smtp_cleanup(DeadlightConnection *conn) {
+    g_debug("SMTP cleanup for connection %lu", conn->id);
+    
+    if (!conn->protocol_data) {
+        return;
+    }
+    
+    DeadlightSMTPData *smtp_data = (DeadlightSMTPData *)conn->protocol_data;
+    
+    // Free SMTP-specific data
+    if (smtp_data->message_buffer) {
+        g_byte_array_unref(smtp_data->message_buffer);
+    }
+    
+    g_free(smtp_data->sender);
+    g_free(smtp_data->recipient);
+    g_free(smtp_data);
+    
+    conn->protocol_data = NULL;
 }
