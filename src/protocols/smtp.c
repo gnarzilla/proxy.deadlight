@@ -36,7 +36,7 @@ static gsize smtp_detect(const guint8 *data, gsize len) {
     
     const char *str = (const char*)data;
     
-    // SMTP client commands
+    // SMTP client commands - return priority 10 (much higher than IMAP's 1)
     if (g_str_has_prefix(str, "EHLO") ||
         g_str_has_prefix(str, "HELO") ||
         g_str_has_prefix(str, "MAIL FROM:") ||
@@ -45,7 +45,13 @@ static gsize smtp_detect(const guint8 *data, gsize len) {
         g_str_has_prefix(str, "QUIT") ||
         g_str_has_prefix(str, "RSET") ||
         g_str_has_prefix(str, "NOOP")) {
-        return 1;
+        return 10;  // Changed from 1 to 10
+    }
+    
+    // Also check for SMTP server responses
+    if (len >= 3 && str[0] >= '2' && str[0] <= '5' && 
+        isdigit(str[1]) && isdigit(str[2])) {
+        return 8;  // Server responses get slightly lower priority
     }
     
     return 0;
