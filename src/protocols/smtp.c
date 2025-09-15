@@ -1,6 +1,7 @@
 #include "smtp.h"
 #include <string.h>
 #include <json-glib/json-glib.h>
+#include <ctype.h>
 
 static gsize smtp_detect(const guint8 *data, gsize len);
 static DeadlightHandlerResult smtp_handle(DeadlightConnection *conn, GError **error);
