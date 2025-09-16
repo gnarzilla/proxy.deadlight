@@ -225,7 +225,7 @@ sudo update-ca-certificates
 
 #### Example 1: HTTP/HTTPS Web Proxy
 
-Configure your browser or system to use `http:/localhost:8080` as its proxy. Or, use `curl`:
+Configure your browser or system to use `http://localhost:8080` as its proxy. Or, use `curl`:
 
 ```bash
 # Proxy a standard HTTP request
