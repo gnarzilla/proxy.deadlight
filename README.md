@@ -26,7 +26,7 @@
 
 By bridging these two worlds, the Deadlight Proxy enables a powerful new form of self-sovereign infrastructure. It eliminates the need for an "always-on" home server by delegating state management to a serverless database (Cloudflare D1), all while preserving the privacy and control of a self-hosted solution.
 
-This release represents a major breakthrough, with a complete REST API that integrates seamlessly with `blog.deadlight`. This allows for real-time proxy management, status monitoring, and email-based federation, all controlled from a web interface you can deploy anywhere in the world.
+This release represents a major breakthrough, with a complete REST API that integrates with `blog.deadlight`. This allows for real-time proxy management, status monitoring, and email-based federation, all controlled from a web interface you can deploy anywhere in the world.
 
 ### Architecture
 
