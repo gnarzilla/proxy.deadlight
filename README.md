@@ -30,7 +30,7 @@ This release represents a major breakthrough, with a complete REST API that inte
 
 ### Architecture
 
-The Architectural Breakthrough - Deadlight’s core innovation is its decoupling of the protocol from the service.
+Deadlight’s core innovation is its decoupling of the protocol from the service.
 
 **Stateless by Design:** Instead of maintaining a local database or a mail queue, the proxy translates TCP traffic into clean HTTP API calls. This offloads all state management to a globally available database, allowing the proxy to remain lightweight and stateless. It can be turned off without losing any data.
 
