@@ -122,9 +122,6 @@ struct _DeadlightConnection {
     GTlsConnection *client_tls;
     GTlsConnection *upstream_tls;
     gboolean ssl_established;
-    SSL *client_ssl;
-    SSL *upstream_ssl;
-    SSL_CTX *ssl_ctx;
     GByteArray *client_buffer;
     GByteArray *upstream_buffer;
     guint64 bytes_client_to_upstream;

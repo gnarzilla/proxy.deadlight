@@ -400,7 +400,7 @@ void deadlight_config_set_bool(DeadlightContext *context, const gchar *section,
  */
 static void config_file_changed(GFileMonitor *monitor, GFile *file, GFile *other_file,
                                GFileMonitorEvent event_type, gpointer user_data) {
-    (void)monitor;  // Mark as unused
+    (void)monitor; 
     (void)file;
     (void)other_file;
     

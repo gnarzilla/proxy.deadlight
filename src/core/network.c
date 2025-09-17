@@ -51,8 +51,7 @@ gboolean deadlight_network_init(DeadlightContext *context, GError **error) {
     
     // Initialize connection tracking
     context->connections = g_hash_table_new_full(g_int64_hash, g_int64_equal,
-                                                g_free, (GDestroyNotify)cleanup_connection);
-    
+                                            g_free, NULL);  // <-- No automatic cleanup
     // Create worker thread pool
     gint worker_threads = deadlight_config_get_int(context, "core", "worker_threads", 4);
     context->worker_pool = g_thread_pool_new(connection_thread_func, context,
@@ -170,9 +169,6 @@ void deadlight_connection_free(DeadlightConnection *conn) {
     g_hash_table_remove(conn->context->connections, &conn->id);
     conn->context->active_connections--;
     g_mutex_unlock(&conn->context->network->connection_mutex);
-
-    // Now call the main cleanup worker.
-    cleanup_connection(conn);
 }
 
 /**
@@ -554,21 +550,6 @@ static void cleanup_connection(DeadlightConnection *conn) {
         }
         conn->upstream_connection = NULL;
     }
-
-    // Clean up OpenSSL objects (if any remain from old code)
-    if (conn->client_ssl) {
-        SSL_shutdown(conn->client_ssl);
-        SSL_free(conn->client_ssl);
-    }
-
-    if (conn->upstream_ssl) {
-        SSL_shutdown(conn->upstream_ssl);
-        SSL_free(conn->upstream_ssl);
-    }
-
-    if (conn->ssl_ctx) {
-        SSL_CTX_free(conn->ssl_ctx);
-    }
     
     // Clean up certificate reference
     if (conn->upstream_peer_cert) {
@@ -816,7 +797,7 @@ gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error
         upstream_os = g_io_stream_get_output_stream(G_IO_STREAM(conn->upstream_connection));
     }
 
-    // Your existing bidirectional tunnel logic (polling, reading, writing)
+    // Bidirectional tunnel logic (polling, reading, writing)
     guint8 buffer[16384];
     gboolean running = TRUE;
     GPollFD fds[2];

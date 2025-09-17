@@ -8,7 +8,7 @@
 #include "deadlight.h"
 
 //==============================================================
-// STRUCT DEFINITIONS MUST COME FIRST
+// STRUCT DEFINITIONS 
 //==============================================================
 struct _PooledConnection {
     GSocketConnection *connection;
@@ -28,13 +28,9 @@ struct _ConnectionPool {
 };
 
 
-// Forward declaration of the timer function so other functions know it exists.
+// Forward declaration of the timer function
 static gboolean cleanup_idle_connections(gpointer user_data);
 typedef struct _PooledConnection PooledConnection;
-
-//==============================================================
-// NOW THE FUNCTIONS CAN USE THE STRUCTS
-//==============================================================
 
 ConnectionPool* connection_pool_new(gint max_per_host, gint idle_timeout) {
     ConnectionPool *pool = g_new0(ConnectionPool, 1);
