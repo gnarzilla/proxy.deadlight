@@ -1,4 +1,4 @@
-# Deadlight Proxy v5.0
+# Deadlight Proxy v5.2
 
 ![Deadlight Proxy](assets/proxy.deadlight_test_commands.png)
 
