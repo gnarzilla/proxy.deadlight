@@ -138,9 +138,9 @@ This is all managed by a set of distinct managers:
 
 ➡ **Mobile & Desktop Clients:** Publish an API specification to enable the development of native clients.
 
-### Getting Started
+![Deadlight Proxy](assets/proxy.deadlight_test_commands.png)
 
-![Deadlight Proxy - thatch-dt](assets/thatch-dt_proxy.png)
+### Getting Started
 
 #### Prerequisites
 
@@ -254,7 +254,7 @@ The proxy will establish a secure TLS connection to the upstream IMAP server and
 
 #### Example 4. Web Dashboard Management
 
-![Deadlight Proxy](assets/proxy.deadlight_test_commands.png)
+![Deadlight Proxy - thatch-dt](assets/thatch-dt_proxy.png)
 
 Deploy the integrated blog.deadlight dashboard
 ```bash
