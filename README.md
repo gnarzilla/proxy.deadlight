@@ -85,8 +85,7 @@ Deadlight’s core innovation is its decoupling of the protocol from the service
     │   Workers/Pages    │                    │   localhost:8080   │
     └────────────────────┘                    └────────────────────┘
 
-
-![Deadlight Proxy - thatch-dt](assets/thatch-dt_proxy.png)
+![Deadlight Proxy/Blog Integration](assets/thatch-dt_proxy_browser_dual.png)
 
 Deadlight is built on a modular design managed by a central `DeadlightContext`. A connection flows through the system as follows:
 1.  The **Main Thread** runs a `GSocketService`, accepting new connections.
@@ -141,7 +140,7 @@ This is all managed by a set of distinct managers:
 
 ### Getting Started
 
-![Thatch's blog - proxy/dash[(assets/thatch-dt_proxy_browser_dual.png)
+![Deadlight Proxy - thatch-dt](assets/thatch-dt_proxy.png)
 
 #### Prerequisites
 
