@@ -141,7 +141,7 @@ This is all managed by a set of distinct managers:
 
 ### Getting Started
 
-![Deadlight Proxy](assets/proxy.deadlight_test_commands.png)
+![Thatch's blog - proxy/dash[(assets/thatch-dt_proxy_browser_dual.png)
 
 #### Prerequisites
 
@@ -255,7 +255,7 @@ The proxy will establish a secure TLS connection to the upstream IMAP server and
 
 #### Example 4. Web Dashboard Management
 
-<img width="1914" height="1019" alt="image" src="https://github.com/user-attachments/assets/5f77e2b7-c749-459f-89a4-a498221f17ad" />
+![Deadlight Proxy](assets/proxy.deadlight_test_commands.png)
 
 Deploy the integrated blog.deadlight dashboard
 ```bash
