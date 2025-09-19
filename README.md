@@ -30,8 +30,6 @@ By bridging these two worlds, the Deadlight Proxy enables a powerful new form of
 
 This release represents a major breakthrough, with a complete REST API that integrates with `blog.deadlight`. This allows for real-time proxy management, status monitoring, and email-based federation, all controlled from a web interface you can deploy anywhere in the world.
 
-![Testing embedded video/gif/jeoff](assets/API_dash.mp4)
-
 ### Architecture
 
 Deadlight’s core innovation is its decoupling of the protocol from the service.
