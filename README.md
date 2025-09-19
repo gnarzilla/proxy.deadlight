@@ -14,7 +14,6 @@
 5.  [Getting Started](#getting-started)
 6.  [Usage](#usage)
 7.  [Extending Deadlight](#extending-deadlight)
-8.  [Adding a New Protocol](#adding-a-new-protocol)
 9.  [Project Structure](#project-structure)
 10.  [License](#license)
 11. [Support](#support) 
