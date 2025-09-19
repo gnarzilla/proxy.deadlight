@@ -342,13 +342,11 @@ static int run_interactive_mode(void) {
         g_print("  A001 NOOP\n");
 
         // Websocket
-        g_print("  # WebSocket\n");
+        g_print("\n  # WebSocket\n");
         g_print("  curl -v --proxy http://localhost:8080 -H \"Upgrade: websocket\" http://ws.ifelse.io/\n\n");
 
         // FTP
-        g_print("  # FTP\n");
-        g_print("  curl --proxy http://localhost:8080 ftp://ftp.debian.org/\n");
-        g_print("  # or test with netcat:\n"); 
+        g_print("  # FTP with netcat:\n"); 
         g_print("  printf \"USER anonymous\\r\\n\" | nc localhost 8080\n\n");
 
         g_print("\nPress Ctrl+C to stop\n\n");
@@ -425,7 +423,7 @@ int main(int argc, char *argv[]) {
     context = g_option_context_new("- HTTP/HTTPS Proxy");
     g_option_context_add_main_entries(context, entries, NULL);
     g_option_context_set_description(context, 
-        "Deadlight Proxy v4.0 - A modular, extensible proxy server\n"
+        "Deadlight Proxy v1.0 - A modular, extensible proxy server\n"
         "Built with GNU/GLib for robustness and performance");
     
     if (!g_option_context_parse(context, &argc, &argv, &error)) {
