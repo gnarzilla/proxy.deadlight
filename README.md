@@ -1,8 +1,8 @@
-# Deadlight Proxy v5.2
-
-![Deadlight Proxy](assets/proxy.deadlight_test_commands.png)
+# Deadlight Proxy
 
 **A modular, protocol-agnostic, and high-performance proxy server written in C using the GLib ecosystem, designed for deep inspection and extensibility.**
+
+![Deadlight Proxy Side-by-Side](assets/proxy_live_dual.png)
 
 ---
 
@@ -27,6 +27,8 @@
 By bridging these two worlds, the Deadlight Proxy enables a powerful new form of self-sovereign infrastructure. It eliminates the need for an "always-on" home server by delegating state management to a serverless database (Cloudflare D1), all while preserving the privacy and control of a self-hosted solution.
 
 This release represents a major breakthrough, with a complete REST API that integrates with `blog.deadlight`. This allows for real-time proxy management, status monitoring, and email-based federation, all controlled from a web interface you can deploy anywhere in the world.
+
+
 
 ### Architecture
 
@@ -83,6 +85,7 @@ Deadlight’s core innovation is its decoupling of the protocol from the service
     │   Workers/Pages    │                    │   localhost:8080   │
     └────────────────────┘                    └────────────────────┘
 
+![Deadlight Proxy/Blog Integration](assets/thatch-dt_proxy_browser_dual.png)
 
 Deadlight is built on a modular design managed by a central `DeadlightContext`. A connection flows through the system as follows:
 1.  The **Main Thread** runs a `GSocketService`, accepting new connections.
@@ -116,7 +119,6 @@ This is all managed by a set of distinct managers:
 - `POST /api/email/send` - Send emails through proxy SMTP bridge
 - `POST /api/federation/send` - Federated blog post distribution via email
 
-
 ### Roadmap
 #### v5.0 (Current):
 
@@ -128,18 +130,15 @@ This is all managed by a set of distinct managers:
 
 + **Cloudflare Tunnel Integration:** Production-ready deployment using Cloudflare Tunnel.
 
++ **Plugin Ecosystem:** API for creating and sharing ad-blocking, analytics, and other plugins.
+
 #### Future Considerations:
-
-➡ **SOCKS5 Authentication:** Implement full authentication for the SOCKS5 proxy.
-
-➡ **Plugin Ecosystem:** Develop a core API for creating and sharing ad-blocking, analytics, and other plugins.
 
 ➡ **Local Web Interface:** A minimalist web server within the proxy for easy, direct configuration and debugging.
 
 ➡ **Mobile & Desktop Clients:** Publish an API specification to enable the development of native clients.
 
-
-[Web Integration from CLI](https://github.com/gnarzilla/proxy.deadlight/blob/main/src/assets/Proxy%20%26%20Blog%20Terminal%20Side-by-Side.png)
+![Deadlight Proxy](assets/proxy.deadlight_test_commands.png)
 
 ### Getting Started
 
@@ -255,7 +254,7 @@ The proxy will establish a secure TLS connection to the upstream IMAP server and
 
 #### Example 4. Web Dashboard Management
 
-<img width="1914" height="1019" alt="image" src="https://github.com/user-attachments/assets/5f77e2b7-c749-459f-89a4-a498221f17ad" />
+![Deadlight Proxy - thatch-dt](assets/thatch-dt_proxy.png)
 
 Deploy the integrated blog.deadlight dashboard
 ```bash
