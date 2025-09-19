@@ -14,9 +14,10 @@
 5.  [Getting Started](#getting-started)
 6.  [Usage](#usage)
 7.  [Extending Deadlight](#extending-deadlight)
-8.  [Project Structure](#project-structure)
-9.  [License](#license)
-10. [Support](#support) 
+8.  [Adding a New Protocol](#adding-a-new-protocol)
+9.  [Project Structure](#project-structure)
+10.  [License](#license)
+11. [Support](#support) 
 
 ---
 
@@ -297,18 +298,46 @@ curl --cacert ssl/ca.crt -x http://localhost:8080 https://example.com
 
 ### Extending Deadlight
 The `DeadlightProtocolHandler` interface and modular design make extending the proxy simple and powerful. To add a new protocol, you simply implement a few functions, and the core handles everything else.
+## Extending Deadlight
 
-#### Adding a New Protocol
-The core strength of Deadlight is its extensible protocol system. To add support for a new protocol:
-1.  Create `my_protocol.c` and `my_protocol.h` in the `src/protocols/` directory.
-2.  Implement the `DeadlightProtocolHandler` interface:
-    *   `detect`: A function that inspects a buffer and returns a non-zero value if it matches the protocol.
-    *   `handle`: The main function to process the connection. It **must** return a `DeadlightHandlerResult` to correctly manage the connection's lifecycle (`HANDLER_SUCCESS_CLEANUP_NOW` for synchronous tasks, `HANDLER_SUCCESS_ASYNC` for asynchronous tasks).
-    *   `cleanup`: An optional function for any protocol-specific cleanup.
-3.  Create a public registration function, e.g., `deadlight_register_my_protocol_handler()`.
-4.  Call your registration function from `deadlight_protocols_init()` in `src/core/protocols.c`.
-5.  Add `src/protocols/my_protocol.c` to the `PROTOCOL_SOURCES` list in the `Makefile`.
-6.  Recompile. Your protocol is now live.
+The DeadlightProtocolHandler interface and table-driven detection system make extending the proxy simple and powerful. To add a new protocol, you implement a few functions and add detection rules - the core handles everything else.
+
+### Adding a New Protocol
+
+To add support for a new protocol:
+
+1. **Create protocol files** in `src/protocols/`: `my_protocol.c` and `my_protocol.h`
+
+2. **Implement the DeadlightProtocolHandler interface:**
+   - `detect`: Inspects initial bytes and returns a priority (0 = no match, higher = better match)
+   - `handle`: Main function to process the connection. Returns:
+     - `HANDLER_SUCCESS_CLEANUP_NOW` for synchronous completion
+     - `HANDLER_SUCCESS_ASYNC` for async operations
+     - `HANDLER_ERROR` on failure
+   - `cleanup`: Optional protocol-specific cleanup
+
+3. **Add detection rules** in `src/core/protocol_detection.c`:
+   ```c
+   // Add to protocol_table array
+   {
+       .name = "MyProtocol",
+       .protocol_id = DEADLIGHT_PROTOCOL_MYPROTOCOL,
+       .priority = 30,
+       .rules = my_protocol_rules,
+       .rule_count = 1
+   }
+   ```
+
+4. **Update core files:**
+   - Add enum value to `DeadlightProtocol` in `deadlight.h`
+   - Add case to `deadlight_protocol_to_string()` in `protocols.c`
+   - Register handler in `deadlight_protocols_init()` in `protocols.c`
+
+5. **Add to Makefile:** Add `src/protocols/my_protocol.c` to `PROTOCOL_SOURCES`
+
+6. **Recompile:** Your protocol is now live!
+
+The table-driven detection system supports multiple matching types (exact, prefix, contains, custom) and compound rules (AND/OR), making it easy to handle complex protocol signatures.
 
 ### Project Structure
 ```
