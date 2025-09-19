@@ -161,30 +161,6 @@ static void ratelimiter_cleanup(DeadlightContext *context) {
     g_free(data);
 }
 
-// Periodic cleanup of old entries (run every 5 minutes)
-static gboolean cleanup_old_entries(gpointer user_data) {
-    RateLimiterData *data = (RateLimiterData *)user_data;
-    gint64 now = g_get_monotonic_time() / G_USEC_PER_SEC;
-    gint64 cutoff = now - 300;  // Remove entries older than 5 minutes
-    
-    g_mutex_lock(&data->mutex);
-    
-    GHashTableIter iter;
-    gpointer key, value;
-    g_hash_table_iter_init(&iter, data->ip_limits);
-    
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        RateLimitEntry *entry = (RateLimitEntry *)value;
-        if (entry->timestamp < cutoff) {
-            g_hash_table_iter_remove(&iter);
-        }
-    }
-    
-    g_mutex_unlock(&data->mutex);
-    
-    return G_SOURCE_CONTINUE;
-}
-
 // Plugin definition
 static DeadlightPlugin ratelimiter_plugin = {
     .name = "RateLimiter",

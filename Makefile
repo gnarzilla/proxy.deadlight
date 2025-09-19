@@ -1,11 +1,11 @@
-# Deadlight Proxy v4.0 - Makefile
+# Deadlight Proxy v1.0 - Makefile
 # Build system for the modular proxy server
 
 #=============================================================================
 # Project Configuration
 #=============================================================================
 PROJECT = deadlight
-VERSION = 5.1.0
+VERSION = 1.0.0
 PREFIX = /usr/local
 
 #=============================================================================
@@ -50,6 +50,7 @@ CORE_SOURCES = $(SRCDIR)/main.c \
                $(SRCDIR)/network.c \
                $(SRCDIR)/ssl.c \
                $(SRCDIR)/protocols.c \
+               $(SRCDIR)/protocol_detection.c \
                $(SRCDIR)/plugins.c \
                $(SRCDIR)/request.c \
                $(SRCDIR)/utils.c \
@@ -61,6 +62,8 @@ PROTOCOL_SOURCES = src/protocols/http.c \
                    src/protocols/imaps.c \
                    src/protocols/socks.c \
                    src/protocols/smtp.c \
+				   src/protocols/websocket.c \
+				   src/protocols/ftp.c \
                    src/protocols/api.c
 
 PLUGIN_SOURCES = $(PLUGINDIR)/adblocker.c \

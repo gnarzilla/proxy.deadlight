@@ -12,6 +12,8 @@
 #include "protocols/socks.h"
 #include "protocols/smtp.h"
 #include "protocols/api.h"
+#include "protocols/websocket.h"
+#include "protocols/ftp.h"
 
 static GList *protocol_handlers = NULL;
 
@@ -36,6 +38,8 @@ void deadlight_protocols_init(DeadlightContext *context) {
     deadlight_register_imaps_handler();
     deadlight_register_socks_handler();
     deadlight_register_smtp_handler();
+    deadlight_register_websocket_handler();
+    deadlight_register_ftp_handler();
 
     g_info("%d protocol handlers registered.", g_list_length(protocol_handlers));
 }
@@ -225,11 +229,14 @@ const gchar *deadlight_protocol_to_string(DeadlightProtocol protocol) {
         case DEADLIGHT_PROTOCOL_HTTP: return "HTTP";
         case DEADLIGHT_PROTOCOL_HTTPS: return "HTTPS";
         case DEADLIGHT_PROTOCOL_SOCKS: return "SOCKS";
+        case DEADLIGHT_PROTOCOL_SOCKS4: return "SOCKS4";
+        case DEADLIGHT_PROTOCOL_SOCKS5: return "SOCKS5";
         case DEADLIGHT_PROTOCOL_CONNECT: return "CONNECT";
         case DEADLIGHT_PROTOCOL_WEBSOCKET: return "WebSocket";
         case DEADLIGHT_PROTOCOL_IMAP: return "IMAP";
         case DEADLIGHT_PROTOCOL_IMAPS: return "IMAPS";
-        case DEADLIGHT_PROTOCOL_SMTP: return "SMTP"; 
+        case DEADLIGHT_PROTOCOL_SMTP: return "SMTP";
+        case DEADLIGHT_PROTOCOL_FTP: return "FTP";
         case DEADLIGHT_PROTOCOL_UNKNOWN: return "Unknown";
         default: return "Unknown";
     }

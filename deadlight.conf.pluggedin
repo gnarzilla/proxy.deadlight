@@ -57,6 +57,10 @@ auth_required = false  ; Set to true to force username/pass
 username = testuser
 password = testpass
 
+[ftp]
+upstream_host = ftp.gnu.org
+upstream_port = 21
+
 [adblocker]
 enabled = true
 blocklist_path = /etc/deadlight/blocklist.txt
