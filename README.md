@@ -2,7 +2,7 @@
 
 **A modular, protocol-agnostic, and high-performance proxy server written in C using the GLib ecosystem, designed for deep inspection and extensibility.**
 
-![Deadlight Proxy Side-by-Side](assets/proxy_live_dual.png)
+![Proxy in terminal reacting to API calls from deadlight.boo](assets/interactive_proxy_dash.gif)
 
 ---
 
@@ -20,6 +20,8 @@
 
 ---
 
+![Deadlight Proxy Side-by-Side](assets/proxy_live_dual.png)
+
 ### Overview
 
 `proxy.deadlight` is a high-performance network proxy that serves as a stateless protocol bridge. It connects mature, stateful TCP protocols (SMTP, IMAP, SOCKS) to the modern, stateless, and globally distributed serverless ecosystem.
@@ -28,7 +30,7 @@ By bridging these two worlds, the Deadlight Proxy enables a powerful new form of
 
 This release represents a major breakthrough, with a complete REST API that integrates with `blog.deadlight`. This allows for real-time proxy management, status monitoring, and email-based federation, all controlled from a web interface you can deploy anywhere in the world.
 
-
+![Testing embedded video/gif/jeoff](assets/API_dash.mp4)
 
 ### Architecture
 
