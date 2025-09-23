@@ -2,7 +2,7 @@
 
 **A modular, protocol-agnostic, and high-performance proxy server written in C using the GLib ecosystem, designed for deep inspection and extensibility.**
 
-![Proxy in terminal reacting to API calls from deadlight.boo](assets/interactive_proxy_dash.gif)
+![Deadlight Proxy with local UI](assets/proxy_ui.gif)
 
 ---
 
@@ -29,6 +29,8 @@
 By bridging these two worlds, the Deadlight Proxy enables a powerful new form of self-sovereign infrastructure. It eliminates the need for an "always-on" home server by delegating state management to a serverless database (Cloudflare D1), all while preserving the privacy and control of a self-hosted solution.
 
 This release represents a major breakthrough, with a complete REST API that integrates with `blog.deadlight`. This allows for real-time proxy management, status monitoring, and email-based federation, all controlled from a web interface you can deploy anywhere in the world.
+
+![Proxy integrated with deployed blog](assets/interactive_proxy_dash.gif)
 
 ### Architecture
 
