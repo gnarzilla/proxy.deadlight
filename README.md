@@ -2,7 +2,7 @@
 
 **A modular, protocol-agnostic, and high-performance proxy server written in C using the GLib ecosystem, designed for deep inspection and extensibility.**
 
-![Deadlight Proxy with local UI](assets/proxy_ui.gif)
+![Deadlight Proxy with local web interface](assets/proxy_ui.gif)
 
 ---
 
