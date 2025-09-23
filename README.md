@@ -249,11 +249,9 @@ For TLS interception to work, you must instruct your client to trust the proxy's
 
 ```bash
 # The --cacert flag tells curl to trust our custom CA for this one request.
-curl --cacert ssl/ca.crt -x http://localhost:8080 https://example.com
+curl --cacert ~/.deadlight/ca/ca.crt -x http://localhost:8080 https://example.com
 ```
 
-### Extending Deadlight
-The `DeadlightProtocolHandler` interface and modular design make extending the proxy simple and powerful. To add a new protocol, you simply implement a few functions, and the core handles everything else.
 ## Extending Deadlight
 
 The DeadlightProtocolHandler interface and table-driven detection system make extending the proxy simple and powerful. To add a new protocol, you implement a few functions and add detection rules - the core handles everything else.
