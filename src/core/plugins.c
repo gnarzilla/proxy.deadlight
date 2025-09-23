@@ -9,13 +9,7 @@
 #include <gmodule.h>
 
 #include "deadlight.h"
-
-// Plugin manager structure
-struct _DeadlightPluginManager {
-    GHashTable *plugins;        // Loaded plugins
-    gchar *plugin_dir;          // Plugin directory
-    gboolean initialized;
-};
+#include "plugins.h"
 
 // Forward declarations
 static gboolean load_plugin_from_file(DeadlightContext *context, const gchar *filepath, GError **error);
@@ -277,6 +271,32 @@ gchar **deadlight_config_get_string_list(DeadlightContext *context,
     return default_value;
 }
 
+
+/**
+ * Returns a new list containing the names of all loaded plugins.
+ * The caller is responsible for freeing the list and its string elements
+ * using g_list_free_full(list, g_free).
+ */
+GList* deadlight_plugins_get_all_names(DeadlightContext *context)
+{
+    GList *names = NULL;
+    if (!context || !context->plugins || !context->plugins->plugins) {
+        return NULL;
+    }
+
+    GHashTableIter iter;
+    gpointer key, value; // 'key' will be the plugin name string
+
+    g_hash_table_iter_init(&iter, context->plugins->plugins);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        // The key in your hash table is already the duplicated string name
+        names = g_list_prepend(names, g_strdup((gchar *)key));
+    }
+    
+    // g_list_prepend adds to the front, so reverse to get a more natural order
+    return g_list_reverse(names);
+}
+
 // Helper function to iterate and call a hook, stopping if any plugin returns FALSE
 typedef gboolean (*PluginHookCaller)(DeadlightPlugin *plugin, DeadlightContext *context, gpointer user_data);
 
@@ -328,7 +348,7 @@ static gboolean on_request_headers_caller(DeadlightPlugin *plugin, DeadlightCont
     return TRUE;
 }
 
-// --- on_request_body --- (You were missing this one!)
+// --- on_request_body
 static gboolean on_request_body_caller(DeadlightPlugin *plugin, DeadlightContext *context, gpointer user_data) {
     (void)context; // Suppress unused warning
     if (plugin->on_request_body) {
@@ -378,8 +398,6 @@ static gboolean on_config_change_caller(DeadlightPlugin *plugin, DeadlightContex
     }
     return TRUE;
 }
-
-// Add the public functions that will be called from other parts of the code:
 
 gboolean deadlight_plugins_call_on_connection_accept(DeadlightContext *context, DeadlightConnection *conn) {
     return call_plugin_hook_internal(context, on_connection_accept_caller, conn);

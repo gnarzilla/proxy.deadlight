@@ -1,17 +1,17 @@
 /**
- * Deadlight Proxy v4.0 - Protocol Manager
+ * Deadlight Proxy v1.0 - Protocol Manager
  *
  * Manages registration and detection of protocol handlers.
  */
 #include "deadlight.h"
 
 // For registering protocol handlers
+#include "protocols/api.h"
 #include "protocols/http.h"
 #include "protocols/imap.h" 
 #include "protocols/imaps.h"
 #include "protocols/socks.h"
 #include "protocols/smtp.h"
-#include "protocols/api.h"
 #include "protocols/websocket.h"
 #include "protocols/ftp.h"
 

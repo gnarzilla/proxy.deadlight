@@ -1,5 +1,0 @@
-# Test Commands for Proxy Protocols
-
-SOCKS5
-curl --socks5-basic --proxy-user testuser:testpass --socks5 localhost:8080 http://example.com
-curl --socks5 localhost:8080 http://example.com

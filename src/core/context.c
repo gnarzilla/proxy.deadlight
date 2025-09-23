@@ -26,6 +26,8 @@ DeadlightContext *deadlight_context_new(void) {
     ctx->bytes_transferred = 0;
     ctx->uptime_timer = g_timer_new();
     
+    g_mutex_init(&ctx->stats_mutex);
+
     // Set defaults
     ctx->shutdown_requested = FALSE;
     
@@ -69,6 +71,8 @@ void deadlight_context_free(DeadlightContext *ctx) {
     if (ctx->uptime_timer) {
         g_timer_destroy(ctx->uptime_timer);
     }
+
+    g_mutex_clear(&ctx->stats_mutex);
     
     // Free cached strings
     g_free(ctx->listen_address);

@@ -59,6 +59,7 @@ typedef struct _DeadlightNetworkManager DeadlightNetworkManager;
 typedef struct _DeadlightSSLManager DeadlightSSLManager;
 typedef struct _DeadlightPluginManager DeadlightPluginManager;
 typedef struct _ConnectionPool ConnectionPool;
+typedef struct _DeadlightConnInfo DeadlightConnInfo;
 
 //===[ PROTOCOL HANDLER DEFINITION ]===
 typedef struct _DeadlightProtocolHandler {
@@ -103,6 +104,7 @@ struct _DeadlightContext {
     gchar *auth_endpoint;
     gchar *auth_secret;
     gboolean shutdown_requested;
+    GMutex stats_mutex;
 };
 
 struct _DeadlightConnection {
@@ -186,7 +188,6 @@ struct _DeadlightPlugin {
     gint ref_count;
 };
 
-
 //===[ API FUNCTION PROTOTYPES ]===
 
 // Context API
@@ -246,6 +247,7 @@ gboolean deadlight_plugins_call_on_response_headers(DeadlightContext *context, D
 gboolean deadlight_plugins_call_on_response_body(DeadlightContext *context, DeadlightResponse *response);
 gboolean deadlight_plugins_call_on_connection_close(DeadlightContext *context, DeadlightConnection *conn);
 void deadlight_plugins_call_on_config_change(DeadlightContext *context, const gchar *section, const gchar *key);
+GList* deadlight_plugins_get_all_names(DeadlightContext *context);
 
 // Request/Response API
 DeadlightRequest *deadlight_request_new(DeadlightConnection *connection);
