@@ -360,4 +360,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ### Support
 
-☕  [Support is greatly appreciated! Buy me a coffee](coff.ee/gnarzillah)
+[Support is greatly appreciated! - ko-fi/gnarzilla](https://ko-fi.com/gnarzilla)
