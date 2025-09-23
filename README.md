@@ -77,7 +77,7 @@ This is all managed by a set of distinct managers:
 - `POST /api/federation/send` - Federated blog post distribution via email
 
 ### Roadmap
-#### v5.0 (Current):
+#### v1.0 (Current):
 
 + **Stateless Protocol Bridge:** Complete integration with blog.deadlight via HTTP API endpoints.
 
@@ -89,9 +89,10 @@ This is all managed by a set of distinct managers:
 
 + **Plugin Ecosystem:** API for creating and sharing ad-blocking, analytics, and other plugins.
 
++ **Local Web Interface:** A minimalist web server within the proxy for easy, direct configuration and debugging.
+
 #### Future Considerations:
 
-➡ **Local Web Interface:** A minimalist web server within the proxy for easy, direct configuration and debugging.
 
 ➡ **Mobile & Desktop Clients:** Publish an API specification to enable the development of native clients.
 
@@ -245,7 +246,7 @@ curl -x http://localhost:8080 http://example.com
 ```
 
 #### Proxying & Intercepting HTTPS
-For TLS interception to work, you must instruct your client to trust the proxy's Certificate Authority. The CA certificate is generated automatically (e.g., in `ssl/ca.crt`).
+For TLS interception to work, you must instruct your client to trust the proxy's Certificate Authority. The CA certificate is generated automatically (e.g., in `~/.deadlight/ca/ca.crt`).
 
 ```bash
 # The --cacert flag tells curl to trust our custom CA for this one request.
