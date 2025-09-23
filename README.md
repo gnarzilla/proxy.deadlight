@@ -111,7 +111,7 @@ This is all managed by a set of distinct managers:
 On Debian/Ubuntu, install all prerequisites with:
 ```bash
 sudo apt-get update
-sudo apt-get install build-essential pkg-config libglib2.0-dev libssl-dev glib-networking
+sudo apt-get install build-essential pkg-config libglib2.0-dev libssl-dev glib-networking libmicrohttpd-dev
 ```
 - `build-essential`: Provides gcc, make, etc.
 - `libglib2.0-dev`: The GLib core libraries and development headers.
