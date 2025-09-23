@@ -62,7 +62,7 @@ This is all managed by a set of distinct managers:
 
 - **High-Performance C Foundation:** Built with the robust and efficient GLib ecosystem for high-throughput, low-latency network I/O and multi-threaded connection handling.
 
-- **Multi-Protocol Support:** A single binary can act as a bridge for HTTP/HTTPS, SOCKS, SMTP, IMAP/S, and a custom API.
+- **Multi-Protocol Support:** A single binary can act as a bridge for HTTP/HTTPS, SOCKS, SMTP, IMAP/S, Websocket, FTP and a custom API.
 
 - **API-First Design:** Complete REST API for external integration, enabling real-time status monitoring, email sending, and federation from any web application.
 
