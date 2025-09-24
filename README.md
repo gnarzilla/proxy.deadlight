@@ -98,8 +98,6 @@ This is all managed by a set of distinct managers:
 
 ### Getting Started
 
-![Deadlight Proxy](assets/proxy.deadlight_test_commands.png)
-
 #### Prerequisites
 
 -   A C99 compliant compiler (GCC or Clang)
@@ -177,8 +175,6 @@ sudo cp ~/.deadlight/ca/ca.crt /usr/local/share/ca-certificates/
 sudo update-ca-certificates
 ```
 
-![Deadlight Proxy Side-by-Side](assets/proxy_live_dual.png)
-
 ### Usage
 
 #### Example 1: HTTP/HTTPS Web Proxy
@@ -192,6 +188,8 @@ curl -x http://localhost:8080 http://example.com
 # Proxy an HTTPS request (using the CONNECT method)
 curl -x http://localhost:8080 https://example.com
 ```
+![Deadlight Proxy](assets/proxy.deadlight_test_commands.png)
+
 #### Example 2: SOCKS4 Privacy Proxy
 
 Use `curl` to route a request through the SOCKS4 handler:
