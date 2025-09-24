@@ -96,6 +96,8 @@ This is all managed by a set of distinct managers:
 
 ➡ **Mobile & Desktop Clients:** Publish an API specification to enable the development of native clients.
 
+---
+
 ![Deadlight Proxy](assets/proxy.deadlight_test_commands.png)
 
 ### Getting Started
