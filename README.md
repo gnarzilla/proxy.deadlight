@@ -19,9 +19,6 @@
 11. [Support](#support) 
 
 
-
-![Deadlight Proxy Side-by-Side](assets/proxy_live_dual.png)
-
 ### Overview
 
 `proxy.deadlight` is a high-performance network proxy that serves as a stateless protocol bridge. It connects mature, stateful TCP protocols (SMTP, IMAP, SOCKS) to the modern, stateless, and globally distributed serverless ecosystem.
@@ -180,6 +177,7 @@ sudo cp ~/.deadlight/ca/ca.crt /usr/local/share/ca-certificates/
 sudo update-ca-certificates
 ```
 
+![Deadlight Proxy Side-by-Side](assets/proxy_live_dual.png)
 
 ### Usage
 
