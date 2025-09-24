@@ -4,7 +4,7 @@
 
 ![Deadlight Proxy with local web interface](assets/proxy_ui.gif)
 
----
+
 
 ### Table of Contents
 1.  [Overview](#overview)
@@ -18,7 +18,7 @@
 10. [License](#license)
 11. [Support](#support) 
 
----
+
 
 ![Deadlight Proxy Side-by-Side](assets/proxy_live_dual.png)
 
