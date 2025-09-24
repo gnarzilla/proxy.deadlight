@@ -63,7 +63,7 @@ This is all managed by a set of distinct managers:
 
 - **API-First Design:** Complete REST API for external integration, enabling real-time status monitoring, email sending, and federation from any web application.
 
-- **Email-based Federation:** A simplified, or revolutionary, approach to decentralized social media that uses proven email protocols for instance-to-instance communication, eliminating the need to invent a new protocol.
+- **Email-based Federation:** A simplified approach to decentralized social media that uses proven email protocols for instance-to-instance communication, eliminating the need to invent a new protocol.
 
 - **Advanced Security:** Features include on-the-fly TLS interception (for development/analysis), robust certificate validation, and a secure deployment model that leverages outbound-only connections.
 
