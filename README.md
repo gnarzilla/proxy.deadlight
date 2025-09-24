@@ -98,9 +98,10 @@ This is all managed by a set of distinct managers:
 
 ---
 
-![Deadlight Proxy](assets/proxy.deadlight_test_commands.png)
 
 ### Getting Started
+
+![Deadlight Proxy](assets/proxy.deadlight_test_commands.png)
 
 #### Prerequisites
 
