@@ -1,5 +1,5 @@
 /**
- * Deadlight Proxy v4.0 - Configuration Management
+ * Deadlight Proxy v1.0 - Configuration Management
  *
  * GKeyFile-based configuration system with caching, validation,
  * and automatic file monitoring for live reload
@@ -19,7 +19,7 @@ static void config_file_changed(GFileMonitor *monitor, GFile *file, GFile *other
 static gboolean validate_config_section(DeadlightConfig *config, const gchar *section, GError **error);
 static gboolean create_default_config_file(const gchar *config_path, GError **error);
 static void config_cache_clear(DeadlightConfig *config);
-
+static void config_update_context_values(DeadlightContext *context);
 
 // Default configuration values
 static const struct {
@@ -142,6 +142,9 @@ gboolean deadlight_config_load(DeadlightContext *context, const gchar *config_fi
         g_free(context->config->config_path);
         g_free(context->config);
     }
+    // [FIX] Address potential memory leak from previous load
+    g_free(context->listen_address);
+    context->listen_address = NULL;
     
     // Create new config structure
     context->config = g_new0(DeadlightConfig, 1);
@@ -197,12 +200,7 @@ gboolean deadlight_config_load(DeadlightContext *context, const gchar *config_fi
             g_clear_error(error);
         }
     }
-    
-    // Cache commonly used values for performance
-    context->listen_port = deadlight_config_get_int(context, "core", "port", DEADLIGHT_DEFAULT_PORT);
-    context->listen_address = deadlight_config_get_string(context, "core", "bind_address", "0.0.0.0");
-    context->max_connections = deadlight_config_get_int(context, "core", "max_connections", DEADLIGHT_DEFAULT_MAX_CONNECTIONS);
-    
+
     // Set log level
     gchar *log_level = deadlight_config_get_string(context, "core", "log_level", DEADLIGHT_DEFAULT_LOG_LEVEL);
     if (g_strcmp0(log_level, "error") == 0) {
@@ -220,6 +218,8 @@ gboolean deadlight_config_load(DeadlightContext *context, const gchar *config_fi
     
     // SSL interception setting
     context->ssl_intercept_enabled = deadlight_config_get_bool(context, "ssl", "enabled", TRUE);
+    
+    config_update_context_values(context);
     
     g_info("Configuration loaded successfully from %s", config_path);
     return TRUE;
@@ -394,10 +394,6 @@ void deadlight_config_set_bool(DeadlightContext *context, const gchar *section,
 /**
  * Configuration file change callback
  */
-
- /**
- * Configuration file change callback
- */
 static void config_file_changed(GFileMonitor *monitor, GFile *file, GFile *other_file,
                                GFileMonitorEvent event_type, gpointer user_data) {
     (void)monitor; 
@@ -411,9 +407,6 @@ static void config_file_changed(GFileMonitor *monitor, GFile *file, GFile *other
 
         g_info("Configuration file changed, reloading...");
 
-        // Clear caches
-        config_cache_clear(context->config);
-
         // Reload keyfile
         GError *error = NULL;
         if (!g_key_file_load_from_file(context->config->keyfile, context->config->config_path,
@@ -421,28 +414,16 @@ static void config_file_changed(GFileMonitor *monitor, GFile *file, GFile *other
                                       &error)) {
             g_warning("Failed to reload configuration file: %s", error->message);
             g_error_free(error);
+            // Clear caches even on failure to force re-read on next access
+            config_cache_clear(context->config);
             return;
         }
 
-        // Update cached values
-        context->listen_port = deadlight_config_get_int(context, "core", "port", DEADLIGHT_DEFAULT_PORT);
-        g_free(context->listen_address);
-        context->listen_address = deadlight_config_get_string(context, "core", "bind_address", "0.0.0.0");
-        context->max_connections = deadlight_config_get_int(context, "core", "max_connections", DEADLIGHT_DEFAULT_MAX_CONNECTIONS);
+        // Clear caches before updating
+        config_cache_clear(context->config);
 
-        gchar *log_level = deadlight_config_get_string(context, "core", "log_level", DEADLIGHT_DEFAULT_LOG_LEVEL);
-        if (g_strcmp0(log_level, "error") == 0) {
-            context->log_level = DEADLIGHT_LOG_ERROR;
-        } else if (g_strcmp0(log_level, "warning") == 0) {
-            context->log_level = DEADLIGHT_LOG_WARNING;
-        } else if (g_strcmp0(log_level, "info") == 0) {
-            context->log_level = DEADLIGHT_LOG_INFO;
-        } else if (g_strcmp0(log_level, "debug") == 0) {
-            context->log_level = DEADLIGHT_LOG_DEBUG;
-        }
-        g_free(log_level);
-
-        context->ssl_intercept_enabled = deadlight_config_get_bool(context, "ssl", "enabled", TRUE);
+        // [REFACTOR] Update context values using the new helper function
+        config_update_context_values(context);
 
         // Notify plugins of configuration change
         if (context->plugins) {
@@ -453,6 +434,7 @@ static void config_file_changed(GFileMonitor *monitor, GFile *file, GFile *other
         g_info("Configuration reloaded successfully");
     }
 }
+
 /**
  * Validate configuration section
  */
@@ -520,19 +502,42 @@ static gboolean create_default_config_file(const gchar *config_path, GError **er
 }
 
 /**
+ * Updates the 'hot' cached configuration values directly on the context
+ * after a load or reload.
+ */
+static void config_update_context_values(DeadlightContext *context) {
+    context->listen_port = deadlight_config_get_int(context, "core", "port", DEADLIGHT_DEFAULT_PORT);
+    
+    // Free any existing string before assigning the new one
+    g_free(context->listen_address);
+    context->listen_address = deadlight_config_get_string(context, "core", "bind_address", "0.0.0.0");
+    
+    context->max_connections = deadlight_config_get_int(context, "core", "max_connections", DEADLIGHT_DEFAULT_MAX_CONNECTIONS);
+    
+    // Set log level
+    gchar *log_level = deadlight_config_get_string(context, "core", "log_level", DEADLIGHT_DEFAULT_LOG_LEVEL);
+    if (g_strcmp0(log_level, "error") == 0) {
+        context->log_level = DEADLIGHT_LOG_ERROR;
+    } else if (g_strcmp0(log_level, "warning") == 0) {
+        context->log_level = DEADLIGHT_LOG_WARNING;
+    } else if (g_strcmp0(log_level, "info") == 0) {
+        context->log_level = DEADLIGHT_LOG_INFO;
+    } else if (g_strcmp0(log_level, "debug") == 0) {
+        context->log_level = DEADLIGHT_LOG_DEBUG;
+    } else {
+        context->log_level = DEADLIGHT_LOG_INFO;
+    }
+    g_free(log_level);
+    
+    // SSL interception setting
+    context->ssl_intercept_enabled = deadlight_config_get_bool(context, "ssl", "enabled", TRUE);
+}
+
+/**
  * Clear configuration cache
  */
 static void config_cache_clear(DeadlightConfig *config) {
     g_hash_table_remove_all(config->string_cache);
     g_hash_table_remove_all(config->int_cache);
     g_hash_table_remove_all(config->bool_cache);
-}
-
-/**
- * Update configuration cache
- */
-static void config_cache_update(DeadlightConfig *config, const gchar *section, 
-                               const gchar *key, const gchar *value) {
-    gchar *cache_key = g_strdup_printf("%s.%s", section, key);
-    g_hash_table_insert(config->string_cache, cache_key, g_strdup(value));
 }

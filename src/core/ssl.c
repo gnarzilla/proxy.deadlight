@@ -1,7 +1,7 @@
 // in src/core/ssl.c
 
 /**
- * Deadlight Proxy v4.0 - SSL/TLS Module
+ * Deadlight Proxy v1.0 - SSL/TLS Module
  *
  * SSL interception and certificate management
  */
@@ -308,9 +308,7 @@ static void copy_relevant_extensions(X509 *cert, X509 *upstream_cert, X509 *ca_c
     // Copy key usage if present in upstream
     int ext_loc = X509_get_ext_by_NID(upstream_cert, NID_key_usage, -1);
     if (ext_loc >= 0) {
-        X509_EXTENSION *upstream_ext = X509_get_ext(upstream_cert, ext_loc);
-        ASN1_OCTET_STRING *ext_data = X509_EXTENSION_get_data(upstream_ext);
-        
+        X509_EXTENSION *ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_key_usage, "digitalSignature,keyEncipherment");
         // For key usage, we typically want: digitalSignature, keyEncipherment
         ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_key_usage, "digitalSignature,keyEncipherment");
         if (ext) {
@@ -372,104 +370,6 @@ static void add_default_extensions(X509 *cert, X509 *ca_cert, const char *hostna
         X509_add_ext(cert, ext, -1);
         X509_EXTENSION_free(ext);
     }
-}
-
-/**
- * Generate a certificate for the given hostname, signed by our CA
- */
-static X509* generate_host_certificate(DeadlightSSLManager *ssl_mgr, 
-                                      const gchar *hostname,
-                                      EVP_PKEY **out_key,
-                                      GError **error,
-                                      DeadlightConnection *conn) {
-    X509 *cert = NULL;
-    EVP_PKEY *pkey = NULL;
-    X509 *upstream_x509 = NULL;
-    EVP_PKEY_CTX *pctx = NULL;  // Declare pctx here
-    
-    // Generate key using modern EVP API
-    pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
-    if (!pctx) {
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to create key context");
-        goto cleanup;
-    }
-    
-    if (EVP_PKEY_keygen_init(pctx) <= 0) {
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to initialize key generation");
-        goto cleanup;
-    }
-    
-    if (EVP_PKEY_CTX_set_rsa_keygen_bits(pctx, 2048) <= 0) {
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to set key size");
-        goto cleanup;
-    }
-    
-    if (EVP_PKEY_keygen(pctx, &pkey) <= 0) {
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to generate key");
-        goto cleanup;
-    }
-    
-    // Extract upstream certificate if available
-    if (conn && conn->upstream_peer_cert) {
-        upstream_x509 = extract_x509_from_gtls_certificate(conn->upstream_peer_cert);
-    }
-    
-    // Create certificate
-    cert = X509_new();
-    if (!cert) {
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to create certificate");
-        goto cleanup;
-    }
-    
-    X509_set_version(cert, 2);  // X509v3
-    
-    // Set serial number
-    ASN1_INTEGER_set(X509_get_serialNumber(cert), g_get_real_time() / 1000000);
-    
-    // Set validity period
-    X509_gmtime_adj(X509_get_notBefore(cert), 0);
-    X509_gmtime_adj(X509_get_notAfter(cert), 31536000L);  // 1 year
-    
-    // Set subject
-    X509_NAME *subject = X509_NAME_new();
-    X509_NAME_add_entry_by_txt(subject, "C", MBSTRING_ASC, (unsigned char *)"US", -1, -1, 0);
-    X509_NAME_add_entry_by_txt(subject, "O", MBSTRING_ASC, (unsigned char *)"Deadlight Proxy", -1, -1, 0);
-    X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_ASC, (unsigned char *)hostname, -1, -1, 0);
-    X509_set_subject_name(cert, subject);
-    X509_NAME_free(subject);
-    
-    // Set issuer to our CA
-    X509_set_issuer_name(cert, X509_get_subject_name(ssl_mgr->ca_cert));
-    
-    // Set public key
-    X509_set_pubkey(cert, pkey);
-    
-    // Add extensions
-    if (upstream_x509) {
-        copy_relevant_extensions(cert, upstream_x509, ssl_mgr->ca_cert, hostname);
-    } else {
-        add_default_extensions(cert, ssl_mgr->ca_cert, hostname);
-    }
-    
-    // Sign the certificate
-    if (!X509_sign(cert, ssl_mgr->ca_key, EVP_sha256())) {
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, 
-                   "Failed to sign certificate: %s", 
-                   ERR_error_string(ERR_get_error(), NULL));
-        X509_free(cert);
-        cert = NULL;
-        goto cleanup;
-    }
-    
-    *out_key = pkey;
-    pkey = NULL;  // Transfer ownership
-    
-cleanup:
-    if (upstream_x509) X509_free(upstream_x509);
-    if (pkey) EVP_PKEY_free(pkey);
-    if (pctx) EVP_PKEY_CTX_free(pctx);
-    
-    return cert;
 }
 
 // Updated generate_host_pem with certificate mimicry

@@ -6,7 +6,6 @@
 #include <gio/gio.h>
 
 // Helper function forward declarations
-static gboolean parse_http_request_line(const gchar *line, gchar **method, gchar **uri, gchar **version);
 static gboolean parse_host_port(const gchar *host_port, gchar **host, guint16 *port);
 
 // Protocol handler forward declarations - These now match the header (http.h)
@@ -128,37 +127,51 @@ static DeadlightHandlerResult handle_plain_http(DeadlightConnection *conn, GErro
         return HANDLER_ERROR;
     }
 }
-
-// Changed return type from gboolean to DeadlightHandlerResult
 static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError **error) {
-    gchar *request_line = g_strndup((gchar *)conn->client_buffer->data, conn->client_buffer->len);
-    gchar **parts = g_strsplit(request_line, "\r\n", 2);
-    gchar **req_parts = g_strsplit(parts[0], " ", 3);
-    g_free(request_line);
-    g_strfreev(parts);
+    // --- REFACTORED: More robust and efficient CONNECT line parsing ---
 
-    if (g_strv_length(req_parts) < 2) {
-        g_strfreev(req_parts);
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Invalid CONNECT request line");
+    // 1. Get a pointer to the start of the buffer and find the end of the first line.
+    const gchar *data = (const gchar *)conn->client_buffer->data;
+    const gchar *end_of_line = strstr(data, "\r\n");
+
+    // If we can't even find a newline, the request is malformed.
+    if (!end_of_line) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Malformed CONNECT request: missing newline");
         return HANDLER_ERROR;
     }
 
+    // 2. Copy *only* the first line, avoiding a large allocation if the buffer is big.
+    gchar *request_line = g_strndup(data, end_of_line - data);
+    
+    // 3. Split the request line into its three expected parts.
+    gchar **req_parts = g_strsplit(request_line, " ", 3);
+    g_free(request_line); // The temporary line is no longer needed.
+
+    // 4. Stricter validation: We need exactly 3 parts, and the first must be "CONNECT".
+    if (g_strv_length(req_parts) < 3 || g_strcmp0(req_parts[0], "CONNECT") != 0) {
+        g_strfreev(req_parts);
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Invalid CONNECT request line format");
+        return HANDLER_ERROR;
+    }
+
+    // --- End of refactoring. The rest of the logic uses the parsed parts. ---
+
     gchar *host = NULL;
-    guint16 port = 443;
-    if (!parse_host_port(req_parts[1], &host, &port)) {
+    guint16 port = 443; // Default port for CONNECT
+    if (!parse_host_port(req_parts[1], &host, &port)) { // req_parts[1] is the "host:port" string
         g_strfreev(req_parts);
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Invalid host:port in CONNECT request");
         return HANDLER_ERROR;
     }
 
+    // Populate the request object for logging and plugins
     conn->current_request = deadlight_request_new(conn);
     conn->current_request->method = g_strdup("CONNECT");
-    conn->current_request->uri = g_strdup(req_parts[1]); // host:port
-    conn->current_request->host = g_strdup(host);
+    conn->current_request->uri = g_strdup(req_parts[1]); // e.g., "example.com:443"
+    conn->current_request->host = g_strdup(host); // e.g., "example.com"
 
-    g_strfreev(req_parts);
+    g_strfreev(req_parts); // We're done with the split parts, so free the array.
 
-    // ADD DEBUG LOGGING:
     g_debug("Connection %lu: Calling plugin hook for CONNECT to %s", conn->id, host);
 
     // Call plugin hook for CONNECT requests
@@ -168,7 +181,7 @@ static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError *
         return HANDLER_SUCCESS_CLEANUP_NOW;
     }
     
-    // Proxy loop prevention is perfect, keep it.
+    // Proxy loop prevention (your existing code is perfect)
     if ((g_strcmp0(host, conn->context->listen_address) == 0 || g_strcmp0(host, "localhost") == 0 || g_strcmp0(host, "127.0.0.1") == 0) && port == conn->context->listen_port) {
         g_warning("Connection %lu: Detected proxy loop to %s:%d. Denying request.", conn->id, host, port);
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "Proxy loop detected");
@@ -184,7 +197,7 @@ static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError *
         g_free(host);
         return HANDLER_ERROR;
     }
-    g_free(host);
+    g_free(host); // The host string is no longer needed after this point.
 
     const gchar *response = "HTTP/1.1 200 Connection Established\r\n\r\n";
     GOutputStream *client_output = g_io_stream_get_output_stream(G_IO_STREAM(conn->client_connection));
@@ -192,12 +205,14 @@ static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError *
         return HANDLER_ERROR;
     }
 
+    // The rest of the tunneling logic...
     if (conn->context->ssl_intercept_enabled) {
         if (deadlight_ssl_intercept_connection(conn, error)) {
             g_info("Connection %lu: Tunneling with intercepted client TLS.", conn->id);
             g_info("Connection %lu: Tunneling with upstream TLS.", conn->id);
             
-            if (deadlight_tls_tunnel_data(conn, error)) {
+            // [FIX] Corrected function call syntax
+            if (start_ssl_tunnel_blocking(conn, error)) {
                 return HANDLER_SUCCESS_CLEANUP_NOW;
             } else {
                 return HANDLER_ERROR;
@@ -215,39 +230,54 @@ static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError *
         }
     }
 }
-// --- Helper Functions ---
 
-static gboolean parse_http_request_line(const gchar *line, gchar **method, gchar **uri, gchar **version) {
-    gchar **parts = g_strsplit(line, " ", 3);
-    if (g_strv_length(parts) < 3) {
-        g_strfreev(parts);
-        return FALSE;
-    }
-    *method = g_strdup(parts[0]);
-    *uri = g_strdup(parts[1]);
-    *version = g_strdup(parts[2]);
-    g_strfreev(parts);
-    return TRUE;
-}
+// --- Helper Functions ---
 
 static gboolean parse_host_port(const gchar *host_port, gchar **host, guint16 *port) {
     if (!host_port || !host || !port) return FALSE;
 
-    if (host_port[0] == '[') { // IPv6
+    // Initialize host to NULL. We will check this at the end to determine success.
+    *host = NULL;
+
+    if (host_port[0] == '[') { // IPv6 address like [::1]:8080
+        // 'end' is declared here, so it's only visible inside this 'if' block.
         const gchar *end = strchr(host_port, ']');
-        if (!end) return FALSE;
+        if (!end) return FALSE; // Malformed, no closing bracket
+
         *host = g_strndup(host_port + 1, end - (host_port + 1));
+
+        // Check for a port after the ']'
         if (*(end + 1) == ':') {
-            *port = (guint16)strtoul(end + 2, NULL, 10);
+            gulong p = strtoul(end + 2, NULL, 10);
+            // [FIX] Validate the parsed port is in the valid range
+            if (p > 0 && p <= 65535) {
+                *port = (guint16)p;
+            } else {
+                // Invalid port, so we fail parsing.
+                g_free(*host);
+                *host = NULL;
+            }
         }
-    } else { // IPv4 or hostname
+        // If no port is specified, we just keep the default value that was passed in.
+
+    } else { // IPv4 or hostname like 127.0.0.1:8080 or example.com
         const gchar *colon = strrchr(host_port, ':');
-        if (colon) {
+        if (colon) { // A port is specified
             *host = g_strndup(host_port, colon - host_port);
-            *port = (guint16)strtoul(colon + 1, NULL, 10);
-        } else {
+
+            gulong p = strtoul(colon + 1, NULL, 10);
+            // [FIX] Validate the parsed port for this case as well
+            if (p > 0 && p <= 65535) {
+                *port = (guint16)p;
+            } else {
+                g_free(*host);
+                *host = NULL;
+            }
+        } else { // No port is specified
             *host = g_strdup(host_port);
         }
     }
-    return (*host != NULL && *port > 0);
+
+    // The function is successful if we managed to allocate a non-empty host string.
+    return (*host != NULL && strlen(*host) > 0);
 }
