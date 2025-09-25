@@ -67,14 +67,14 @@ This is all managed by a set of distinct managers:
 
 - **Advanced Security:** Features include on-the-fly TLS interception (for development/analysis), robust certificate validation, and a secure deployment model that leverages outbound-only connections.
 
-+ **Advanced Multi-Protocol Support:**
-+   - **HTTP/1.1 & HTTPS:** Full proxying with a robust `CONNECT` tunnel implementation.
-+   - **SSL/TLS Interception (MITM):** Full Man-in-the-Middle capability with on-the-fly certificate generation for deep traffic analysis.
-+   - **WebSocket (Terminating Proxy):** Acts as a true WebSocket endpoint, enabling frame-by-frame inspection, logging, and manipulation.
-+   - **FTP (Intelligent Proxying):** Full command inspection and dynamic rewriting of `PASV` responses to transparently proxy passive mode data connections.
-+   - **SOCKS4/4a & SOCKS5:** Standardized support for versatile TCP-level proxying.
-+   - **IMAP/S & SMTP:** Basic support for email protocols, including `STARTTLS`.
-+   - **Custom API:** A built-in API for management and integration.
+ **Advanced Multi-Protocol Support:**
+   - **HTTP/1.1 & HTTPS:** Full proxying with a robust `CONNECT` tunnel implementation.
+   - **SSL/TLS Interception (MITM):** Full Man-in-the-Middle capability with on-the-fly certificate generation for deep traffic analysis.
+   - **WebSocket (Terminating Proxy):** Acts as a true WebSocket endpoint, enabling frame-by-frame inspection, logging, and manipulation.
+   - **FTP (Intelligent Proxying):** Full command inspection and dynamic rewriting of `PASV` responses to transparently proxy passive mode data connections.
+   - **SOCKS4/4a & SOCKS5:** Standardized support for versatile TCP-level proxying.
+   - **IMAP/S & SMTP:** Basic support for email protocols, including `STARTTLS`.
+   - **Custom API:** A built-in API for management and integration.
 
 **API Endpoints:**
 - `GET /api/blog/status` - Blog service health and version info
