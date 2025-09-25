@@ -67,6 +67,15 @@ This is all managed by a set of distinct managers:
 
 - **Advanced Security:** Features include on-the-fly TLS interception (for development/analysis), robust certificate validation, and a secure deployment model that leverages outbound-only connections.
 
++ **Advanced Multi-Protocol Support:**
++   - **HTTP/1.1 & HTTPS:** Full proxying with a robust `CONNECT` tunnel implementation.
++   - **SSL/TLS Interception (MITM):** Full Man-in-the-Middle capability with on-the-fly certificate generation for deep traffic analysis.
++   - **WebSocket (Terminating Proxy):** Acts as a true WebSocket endpoint, enabling frame-by-frame inspection, logging, and manipulation.
++   - **FTP (Intelligent Proxying):** Full command inspection and dynamic rewriting of `PASV` responses to transparently proxy passive mode data connections.
++   - **SOCKS4/4a & SOCKS5:** Standardized support for versatile TCP-level proxying.
++   - **IMAP/S & SMTP:** Basic support for email protocols, including `STARTTLS`.
++   - **Custom API:** A built-in API for management and integration.
+
 **API Endpoints:**
 - `GET /api/blog/status` - Blog service health and version info
 - `GET /api/email/status` - Email queue status and processing metrics
@@ -77,21 +86,21 @@ This is all managed by a set of distinct managers:
 #### v1.0 (Current):
 
 + **Stateless Protocol Bridge:** Complete integration with blog.deadlight via HTTP API endpoints.
-
 + **API-First:** Full REST API for real-time status and management.
-
 + **Email Federation:** Working email-based social media federation.
-
 + **Cloudflare Tunnel Integration:** Production-ready deployment using Cloudflare Tunnel.
-
++ **Tailscale Mesh Deployment** Better tailored for private access to remote servers. 
 + **Plugin Ecosystem:** API for creating and sharing ad-blocking, analytics, and other plugins.
-
 + **Local Web Interface:** A minimalist web server within the proxy for easy, direct configuration and debugging.
 
-#### Future Considerations:
+#### Next Steps
+- **Complete WebSocket Frame Relay:** The MITM handshake is implemented. The next step is to build out the `g_poll()`-based relay loop in `websocket_frame_relay_loop` to handle the bidirectional, frame-by-frame forwarding of data.
+- **Enhance FTP Handler:** Add support for `PORT` (active) mode to complement the existing `PASV` implementation. Improve data channel error reporting back to the control channel.
+- **Refine Protocol Detection:** The detection system is functional, but could be enhanced with a more explicit priority system to prevent conflicts (e.g., the initial HTTP vs. WebSocket issue).
+- **Expand Unit Testing:** With a stable and clean codebase, now is a great time to begin adding unit tests for core utility functions and protocol parsers.
 
+- **Mobile & Desktop Clients:** Publish an API specification to enable the development of native clients.
 
-➡ **Mobile & Desktop Clients:** Publish an API specification to enable the development of native clients.
 
 ---
 
@@ -122,7 +131,7 @@ Clone the repository and use the provided Makefile:
 ```bash
 git clone https://github.com/gnarzilla/proxy.deadlight
 cd proxy.deadlight
-make
+make clean && make UI=1
 ```
 The executable will be located at `bin/deadlight`.
 
@@ -162,6 +171,11 @@ upstream_port = 143
 # This uses SSL/TLS on port 993.
 upstream_host = imap.gmail.com
 upstream_port = 993
+
+[ftp]
+# The upstream FTP server to proxy connections to when none is specified.
+upstream_host = ftp.gnu.org
+upstream_port = 21
 
 ```
 
@@ -209,7 +223,19 @@ a001 NOOP
 ```
 The proxy will establish a secure TLS connection to the upstream IMAP server and tunnel the data.
 
-#### Example 4. Web Dashboard Management
+#### Example 3: IMAPS Secure Tunnel
+...
+The proxy will establish a secure TLS connection to the upstream IMAP server and tunnel the data.
+
+#### Example 4: FTP Passive Mode Proxying
+Connect to the proxy with a full-featured FTP client like FileZilla or `lftp`, using `localhost` as the host and `8080` as the port. The proxy will handle the `PASV` command and correctly rewrite the data connection address.
+
+Alternatively, for a quick command-line test:
+```bash
+printf "USER anonymous\r\nPASV\r\n" | nc localhost 8080
+```
+
+#### Example 5. Web Dashboard Management
 
 ![Deadlight Proxy - thatch-dt](assets/thatch-dt_proxy.png)
 
