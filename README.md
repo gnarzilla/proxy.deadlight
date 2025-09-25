@@ -82,6 +82,8 @@ This is all managed by a set of distinct managers:
 - `POST /api/email/send` - Send emails through proxy SMTP bridge
 - `POST /api/federation/send` - Federated blog post distribution via email
 
+---
+
 ### Roadmap
 #### v1.0 (Current):
 
@@ -89,7 +91,7 @@ This is all managed by a set of distinct managers:
 + **API-First:** Full REST API for real-time status and management.
 + **Email Federation:** Working email-based social media federation.
 + **Cloudflare Tunnel Integration:** Production-ready deployment using Cloudflare Tunnel.
-+ **Tailscale Mesh Deployment** Better tailored for private access to remote servers. 
++ **Tailscale Mesh Deployment:** Better tailored for private access to remote servers. 
 + **Plugin Ecosystem:** API for creating and sharing ad-blocking, analytics, and other plugins.
 + **Local Web Interface:** A minimalist web server within the proxy for easy, direct configuration and debugging.
 
