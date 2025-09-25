@@ -225,10 +225,6 @@ a001 NOOP
 ```
 The proxy will establish a secure TLS connection to the upstream IMAP server and tunnel the data.
 
-#### Example 3: IMAPS Secure Tunnel
-...
-The proxy will establish a secure TLS connection to the upstream IMAP server and tunnel the data.
-
 #### Example 4: FTP Passive Mode Proxying
 Connect to the proxy with a full-featured FTP client like FileZilla or `lftp`, using `localhost` as the host and `8080` as the port. The proxy will handle the `PASV` command and correctly rewrite the data connection address.
 
@@ -253,6 +249,7 @@ wrangler dev
 # Or to deploy to your live site
 wrangler deploy
 ```
+
 Access `http://localhost:8787/admin/proxy` for real-time proxy management including:
 - Live connection monitoring
 - API endpoint testing
