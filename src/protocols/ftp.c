@@ -18,10 +18,18 @@ typedef struct {
     gboolean passive_mode;
     gchar *data_host;
     guint16 data_port;
+    gchar *upstream_data_host;
+    guint16 upstream_data_port;
     GSocketConnection *data_connection;
     GSocketService *data_listener;  // For active mode
     guint16 proxy_data_port;        // Port we listen on for data
+    GThread *data_tunnel_thread;
 } FTPProtocolData;
+
+typedef struct {
+    GSocketConnection *client_data_conn;
+    GSocketConnection *upstream_data_conn;
+} FTPDataTunnelArgs;
 
 // Forward declarations
 static gsize ftp_detect(const guint8 *data, gsize len);
@@ -32,6 +40,8 @@ static gboolean parse_pasv_response(const gchar *response, gchar **host, guint16
 static gchar* rewrite_pasv_response(const gchar *original, const gchar *proxy_ip, guint16 proxy_port);
 static gboolean handle_data_connection(DeadlightConnection *conn, const gchar *cmd);
 static gboolean parse_ftp_target(DeadlightConnection *conn, gchar **host, guint16 *port);
+static gboolean on_data_connection_incoming(GSocketService *service, GSocketConnection *client_conn,
+                                           GObject *source_object, gpointer user_data);
 
 static const DeadlightProtocolHandler ftp_protocol_handler = {
     .name = "FTP",
@@ -167,6 +177,23 @@ static gboolean handle_data_connection(DeadlightConnection *conn, const gchar *c
     return TRUE;
 }
 
+// This function will be run in a new thread to handle the data transfer.
+static gpointer ftp_data_tunnel_thread(gpointer data) {
+    FTPDataTunnelArgs *args = (FTPDataTunnelArgs *)data;
+    
+    deadlight_network_tunnel_socket_connections(args->client_data_conn, args->upstream_data_conn);
+
+    // Cleanup after tunnel finishes
+    g_io_stream_close(G_IO_STREAM(args->client_data_conn), NULL, NULL);
+    g_io_stream_close(G_IO_STREAM(args->upstream_data_conn), NULL, NULL);
+    g_object_unref(args->client_data_conn);
+    g_object_unref(args->upstream_data_conn);
+    g_free(args);
+
+    g_debug("FTP data tunnel thread finished.");
+    return NULL;
+}
+
 // FTP-aware tunneling that inspects commands
 static gboolean ftp_tunnel_with_inspection(DeadlightConnection *conn, GError **error) {
     FTPProtocolData *ftp_data = (FTPProtocolData*)conn->protocol_data;
@@ -238,32 +265,74 @@ static gboolean ftp_tunnel_with_inspection(DeadlightConnection *conn, GError **e
                 running = FALSE;
             }
         }
-        
+
         // Upstream -> Client (inspect responses)
         if (fds[1].revents & G_IO_IN) {
             gssize bytes = g_input_stream_read(upstream_is, buffer, sizeof(buffer) - 1, NULL, error);
             if (bytes > 0) {
                 buffer[bytes] = '\0';
-                
+                gboolean forward_original = TRUE;
+
                 // Check for PASV response
-                if (ftp_data->state == FTP_STATE_PASSIVE_REQUESTED && 
-                    g_str_has_prefix(buffer, "227 ")) {
-                    g_info("Connection %lu: FTP PASV response detected, rewriting", conn->id);
-                    
-                    // Parse the PASV response
-                    gchar *host = NULL;
-                    guint16 port = 0;
-                    if (parse_pasv_response(buffer, &host, &port)) {
-                        // Set up data proxy
-                        // Set up data proxy connection
-                        // For now, just forward the original response
-                        // In a full implementation, we'd set up our own listener
-                        g_info("Connection %lu: FTP data connection will be to %s:%d", 
-                               conn->id, host, port);
-                        g_free(host);
+                if (ftp_data->state == FTP_STATE_PASSIVE_REQUESTED && g_str_has_prefix(buffer, "227 ")) {
+                    g_info("Connection %lu: FTP PASV response detected, attempting to rewrite.", conn->id);
+                    forward_original = FALSE; // We will handle the response from here.
+
+                    // 1. Parse the server's response to get the real destination
+                    if (parse_pasv_response(buffer, &ftp_data->upstream_data_host, &ftp_data->upstream_data_port)) {
+                        g_info("Connection %lu: Upstream wants data connection to %s:%d", conn->id, ftp_data->upstream_data_host, ftp_data->upstream_data_port);
+
+                        // 2. Manually create and bind a socket to get a free port from the OS.
+                        GSocket *listen_socket = g_socket_new(G_SOCKET_FAMILY_IPV4, G_SOCKET_TYPE_STREAM, G_SOCKET_PROTOCOL_TCP, error);
+                        if (listen_socket) {
+                            GInetAddress *proxy_addr = g_inet_address_new_from_string("0.0.0.0");
+                            GSocketAddress *bind_addr = g_inet_socket_address_new(proxy_addr, 0); // Port 0 asks for a free port
+                            
+                            // Bind the socket
+                            if (g_socket_bind(listen_socket, bind_addr, TRUE, error)) {
+                                // Now that it's bound, get the address to see what port we got
+                                GSocketAddress *effective_addr = g_socket_get_local_address(listen_socket, error);
+                                if (effective_addr) {
+                                    GInetAddress *proxy_inet_addr = g_inet_socket_address_get_address(G_INET_SOCKET_ADDRESS(effective_addr));
+                                    gchar *proxy_ip_str = g_inet_address_to_string(proxy_inet_addr);
+                                    guint16 proxy_port = g_inet_socket_address_get_port(G_INET_SOCKET_ADDRESS(effective_addr));
+
+                                    // 3. Use our function to rewrite the PASV response string
+                                    gchar *rewritten_response = rewrite_pasv_response(buffer, "127.0.0.1", proxy_port); // Using 127.0.0.1 for local testing
+                                    
+                                    g_info("Connection %lu: Rewriting PASV response to point to %s:%d", conn->id, "127.0.0.1", proxy_port);
+
+                                    // 4. Create the service and add our *already bound* socket to it
+                                    ftp_data->data_listener = g_socket_service_new();
+                                    g_socket_listener_add_socket(G_SOCKET_LISTENER(ftp_data->data_listener), listen_socket, NULL, error);
+                                    g_signal_connect(ftp_data->data_listener, "incoming", G_CALLBACK(on_data_connection_incoming), conn);
+                                    g_socket_service_start(ftp_data->data_listener);
+
+                                    // 5. Send the rewritten response to the client
+                                    if (!g_output_stream_write_all(client_os, rewritten_response, strlen(rewritten_response), NULL, NULL, error)) {
+                                        running = FALSE;
+                                    }
+
+                                    // Cleanup from this block
+                                    g_free(rewritten_response);
+                                    g_free(proxy_ip_str);
+                                    g_object_unref(proxy_inet_addr);
+                                    g_object_unref(effective_addr);
+                                }
+                            }
+                            g_object_unref(bind_addr);
+                            g_object_unref(proxy_addr);
+                            g_object_unref(listen_socket); // The listener now owns a ref
+                        }
+
+                        if (*error) {
+                            g_warning("Connection %lu: Failed during PASV rewrite setup: %s", conn->id, (*error)->message);
+                            forward_original = TRUE; // Fallback to forwarding the original broken response
+                        }
                     }
                     ftp_data->state = FTP_STATE_DATA_PENDING;
                 }
+
                 
                 // Check for successful login
                 if (g_str_has_prefix(buffer, "230 ")) {
@@ -271,9 +340,11 @@ static gboolean ftp_tunnel_with_inspection(DeadlightConnection *conn, GError **e
                     g_info("Connection %lu: FTP authentication successful", conn->id);
                 }
                 
-                // Forward to client
-                if (!g_output_stream_write_all(client_os, buffer, bytes, NULL, NULL, error)) {
-                    running = FALSE;
+                // Forward to client if we haven't already sent a rewritten response
+                if (forward_original) {
+                    if (!g_output_stream_write_all(client_os, buffer, bytes, NULL, NULL, error)) {
+                        running = FALSE;
+                    }
                 }
                 conn->bytes_upstream_to_client += bytes;
             } else {
@@ -291,6 +362,49 @@ static gboolean ftp_tunnel_with_inspection(DeadlightConnection *conn, GError **e
            conn->id, conn->bytes_client_to_upstream, conn->bytes_upstream_to_client);
     
     return TRUE;
+}
+
+static gboolean on_data_connection_incoming(GSocketService *service, GSocketConnection *client_conn,
+                                           GObject *source_object, gpointer user_data) {
+    (void)source_object;
+    DeadlightConnection *conn = (DeadlightConnection *)user_data;
+    FTPProtocolData *ftp_data = (FTPProtocolData *)conn->protocol_data;
+    GError *error = NULL;
+
+    g_info("Connection %lu: Accepted incoming FTP data connection from client.", conn->id);
+    
+    // We have the client's data connection. Now, connect to the upstream server's data port.
+    GSocketConnection *upstream_conn = deadlight_network_connect_tcp(
+        conn->context,
+        ftp_data->upstream_data_host,
+        ftp_data->upstream_data_port,
+        &error
+    );
+
+    if (!upstream_conn) {
+        g_warning("Connection %lu: Failed to connect to upstream FTP data port %s:%d: %s", 
+                  conn->id, ftp_data->upstream_data_host, ftp_data->upstream_data_port, error->message);
+        g_io_stream_close(G_IO_STREAM(client_conn), NULL, NULL); // Close the client side
+        g_error_free(error);
+        return TRUE; // Stop further processing for this connection
+    }
+
+    g_info("Connection %lu: Connected to upstream FTP data port. Starting tunnel.", conn->id);
+
+    // Prepare arguments for the tunnel thread
+    FTPDataTunnelArgs *args = g_new0(FTPDataTunnelArgs, 1);
+    args->client_data_conn = g_object_ref(client_conn);
+    args->upstream_data_conn = upstream_conn; // no ref needed, we own it
+
+    // Launch the tunnel in a new thread
+    ftp_data->data_tunnel_thread = g_thread_new("ftp-data-tunnel", ftp_data_tunnel_thread, args);
+
+    // Stop listening, we only need one data connection for this command.
+    g_socket_service_stop(service);
+    g_object_unref(ftp_data->data_listener);
+    ftp_data->data_listener = NULL;
+
+    return TRUE; // We handled it.
 }
 
 static DeadlightHandlerResult ftp_handle(DeadlightConnection *conn, GError **error) {
@@ -378,16 +492,17 @@ static void ftp_cleanup(DeadlightConnection *conn) {
         FTPProtocolData *ftp_data = (FTPProtocolData*)conn->protocol_data;
         
         g_free(ftp_data->username);
-        g_free(ftp_data->data_host);
+        g_free(ftp_data->upstream_data_host);
         
-        if (ftp_data->data_connection) {
-            g_io_stream_close(G_IO_STREAM(ftp_data->data_connection), NULL, NULL);
-            g_object_unref(ftp_data->data_connection);
-        }
-        
+        // Stop the listener if it's still running
         if (ftp_data->data_listener) {
             g_socket_service_stop(ftp_data->data_listener);
             g_object_unref(ftp_data->data_listener);
+        }
+        
+        // If a thread was created, we just let it finish.
+        if (ftp_data->data_tunnel_thread) {
+            g_thread_unref(ftp_data->data_tunnel_thread);
         }
         
         g_free(ftp_data);

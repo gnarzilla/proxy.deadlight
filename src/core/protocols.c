@@ -7,12 +7,12 @@
 
 // For registering protocol handlers
 #include "protocols/api.h"
+#include "protocols/websocket.h"
 #include "protocols/http.h"
 #include "protocols/imap.h" 
 #include "protocols/imaps.h"
 #include "protocols/socks.h"
 #include "protocols/smtp.h"
-#include "protocols/websocket.h"
 #include "protocols/ftp.h"
 
 static GList *protocol_handlers = NULL;
@@ -33,12 +33,12 @@ void deadlight_protocols_init(DeadlightContext *context) {
 
     // Register your handlers here
     deadlight_register_api_handler();
+    deadlight_register_websocket_handler();
     deadlight_register_http_handler();
     deadlight_register_imap_handler();
     deadlight_register_imaps_handler();
     deadlight_register_socks_handler();
     deadlight_register_smtp_handler();
-    deadlight_register_websocket_handler();
     deadlight_register_ftp_handler();
 
     g_info("%d protocol handlers registered.", g_list_length(protocol_handlers));

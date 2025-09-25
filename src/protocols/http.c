@@ -1,12 +1,12 @@
 #include "http.h"
 #include "core/ssl_tunnel.h"
-#include "core/deadlight.h" // Ensure this is included for DeadlightHandlerResult
+#include "core/deadlight.h"
+#include "core/utils.h"
 #include <string.h>
 #include <glib.h>
 #include <gio/gio.h>
 
 // Helper function forward declarations
-static gboolean parse_host_port(const gchar *host_port, gchar **host, guint16 *port);
 
 // Protocol handler forward declarations - These now match the header (http.h)
 static gsize http_detect(const guint8 *data, gsize len);
@@ -32,11 +32,30 @@ void deadlight_register_http_handler(void) {
 // --- Protocol Handler Implementation ---
 
 static gsize http_detect(const guint8 *data, gsize len) {
+    // --- NEW LOGIC: Check if it's a WebSocket upgrade first ---
+    gchar *request_lower = NULL;
+    if (len > 20) { // A reasonable length to check headers
+        gchar *request = g_strndup((const gchar*)data, len);
+        request_lower = g_ascii_strdown(request, -1);
+        
+        // If it has WebSocket headers, it's NOT for the plain HTTP handler.
+        if (strstr(request_lower, "upgrade: websocket") && strstr(request_lower, "sec-websocket-key:")) {
+            g_free(request_lower);
+            g_free(request);
+            return 0; // Yield to the WebSocket handler
+        }
+    }
+
+    // Free the temp string if we allocated it
+    if (request_lower) g_free(request_lower);
+
+    // --- ORIGINAL LOGIC: If it's not WebSocket, check for standard HTTP ---
     const gchar *http_methods[] = {"GET ", "POST ", "PUT ", "DELETE ", "HEAD ", "OPTIONS ", "TRACE ", "CONNECT ", "PATCH ", NULL};
     for (int i = 0; http_methods[i]; i++) {
         gsize method_len = strlen(http_methods[i]);
         if (len >= method_len && memcmp(data, http_methods[i], method_len) == 0) {
-            return method_len;
+            // Return a medium priority, lower than WebSocket's 20.
+            return 8; 
         }
     }
     return 0;
@@ -92,7 +111,7 @@ static DeadlightHandlerResult handle_plain_http(DeadlightConnection *conn, GErro
 
     gchar *host = NULL;
     guint16 port = 80;
-    if (!parse_host_port(host_header, &host, &port)) {
+    if (!deadlight_parse_host_port(host_header, &host, &port)) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Invalid Host header");
         return HANDLER_ERROR; // Changed from FALSE
     }
@@ -158,7 +177,7 @@ static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError *
 
     gchar *host = NULL;
     guint16 port = 443; // Default port for CONNECT
-    if (!parse_host_port(req_parts[1], &host, &port)) { // req_parts[1] is the "host:port" string
+    if (!deadlight_parse_host_port(req_parts[1], &host, &port)) { // req_parts[1] is the "host:port" string
         g_strfreev(req_parts);
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Invalid host:port in CONNECT request");
         return HANDLER_ERROR;
@@ -229,55 +248,4 @@ static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError *
             return HANDLER_ERROR;
         }
     }
-}
-
-// --- Helper Functions ---
-
-static gboolean parse_host_port(const gchar *host_port, gchar **host, guint16 *port) {
-    if (!host_port || !host || !port) return FALSE;
-
-    // Initialize host to NULL. We will check this at the end to determine success.
-    *host = NULL;
-
-    if (host_port[0] == '[') { // IPv6 address like [::1]:8080
-        // 'end' is declared here, so it's only visible inside this 'if' block.
-        const gchar *end = strchr(host_port, ']');
-        if (!end) return FALSE; // Malformed, no closing bracket
-
-        *host = g_strndup(host_port + 1, end - (host_port + 1));
-
-        // Check for a port after the ']'
-        if (*(end + 1) == ':') {
-            gulong p = strtoul(end + 2, NULL, 10);
-            // [FIX] Validate the parsed port is in the valid range
-            if (p > 0 && p <= 65535) {
-                *port = (guint16)p;
-            } else {
-                // Invalid port, so we fail parsing.
-                g_free(*host);
-                *host = NULL;
-            }
-        }
-        // If no port is specified, we just keep the default value that was passed in.
-
-    } else { // IPv4 or hostname like 127.0.0.1:8080 or example.com
-        const gchar *colon = strrchr(host_port, ':');
-        if (colon) { // A port is specified
-            *host = g_strndup(host_port, colon - host_port);
-
-            gulong p = strtoul(colon + 1, NULL, 10);
-            // [FIX] Validate the parsed port for this case as well
-            if (p > 0 && p <= 65535) {
-                *port = (guint16)p;
-            } else {
-                g_free(*host);
-                *host = NULL;
-            }
-        } else { // No port is specified
-            *host = g_strdup(host_port);
-        }
-    }
-
-    // The function is successful if we managed to allocate a non-empty host string.
-    return (*host != NULL && strlen(*host) > 0);
 }

@@ -218,6 +218,8 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, const gch
 gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error);
 gboolean deadlight_tls_tunnel_data(DeadlightConnection *conn, GError **error);
 void deadlight_connection_free(DeadlightConnection *conn);
+GSocketConnection* deadlight_network_connect_tcp(DeadlightContext *context, const gchar *host, guint16 port, GError **error);
+void deadlight_network_tunnel_socket_connections(GSocketConnection *conn1, GSocketConnection *conn2);
 
 // Protocol API
 gboolean deadlight_protocol_handle_response(DeadlightConnection *connection, GError **error);
@@ -273,8 +275,8 @@ gboolean deadlight_test_module(const gchar *module_name);
 
 // Utility API
 const gchar *deadlight_protocol_to_string(DeadlightProtocol protocol);
-gchar *deadlight_format_bytes(guint64 bytes); // Restored
-gchar* get_external_ip(void);
+gchar *deadlight_format_bytes(guint64 bytes);
+
 
 #ifdef __cplusplus
 }

@@ -1,5 +1,5 @@
 /**
- * Deadlight Proxy v4.0 - Connection Pool Implementation
+ * Deadlight Proxy v1.0 - Connection Pool Implementation
  */
 
 #include <glib.h>

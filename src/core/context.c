@@ -1,5 +1,5 @@
 /**
- * Deadlight Proxy v4.0 - Context Management
+ * Deadlight Proxy v1.0 - Context Management
  *
  * Core context creation and lifecycle management
  */

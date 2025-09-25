@@ -2,6 +2,7 @@
 #include <string.h>
 #include <json-glib/json-glib.h>
 #include <time.h>
+#include "core/utils.h"
 
 static gsize api_detect(const guint8 *data, gsize len);
 static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **error);

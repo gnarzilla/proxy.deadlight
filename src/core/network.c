@@ -1,5 +1,5 @@
 /**
- * Deadlight Proxy v4.0 - Network Module
+ * Deadlight Proxy v1.0 - Network Module
  *
  * Socket management, connection handling, and data transfer
  */
@@ -11,6 +11,7 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h> 
 #include "deadlight.h"
+#include "utils.h"
 
 // Network manager structure
 struct _DeadlightNetworkManager {
@@ -34,6 +35,8 @@ static gboolean on_incoming_connection(GSocketService *service,
                                       gpointer user_data);
 static void connection_thread_func(gpointer data, gpointer user_data);
 static void cleanup_connection(DeadlightConnection *conn);
+GSocketConnection* deadlight_network_connect_tcp(DeadlightContext *context, const gchar *host, guint16 port, GError **error);
+void deadlight_network_tunnel_socket_connections(GSocketConnection *conn1, GSocketConnection *conn2);
 
 /**
  * Initialize network module
@@ -305,7 +308,6 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
 
     conn->state = DEADLIGHT_STATE_DETECTING;
 
-    // --- Your existing socket setup and initial read logic is perfect and stays here ---
     GSocket *socket = g_socket_connection_get_socket(conn->client_connection);
     g_socket_set_blocking(socket, FALSE);
     guint8 peek_buffer[2048];
@@ -356,7 +358,7 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
     }
 
     // ==========================================================
-    // ===== THE NEW, SIMPLIFIED PROTOCOL HANDLING LOGIC ========
+    // ===== PROTOCOL HANDLING LOGIC ========
     // ==========================================================
 
 
@@ -761,6 +763,64 @@ gboolean deadlight_tls_tunnel_data(DeadlightConnection *conn, GError **error) {
     
     (void)error; // Suppress unused parameter warning
     return TRUE;
+}
+/**
+ * A simple, blocking TCP connection function.
+ */
+GSocketConnection* deadlight_network_connect_tcp(DeadlightContext *context, const gchar *host, guint16 port, GError **error) {
+    // We now have the context if we need it for config values.
+    // Since we aren't using it yet, we can mark it to prevent new warnings.
+    (void)context;
+
+    GSocketClient *client = g_socket_client_new();
+
+    // FUTURE USE: g_socket_client_set_timeout(client, deadlight_config_get_int(context, "network", "upstream_timeout", 30));
+
+    GSocketConnection *connection = g_socket_client_connect_to_host(client, host, port, NULL, error);
+    g_object_unref(client);
+
+    return connection;
+}
+
+/**
+ * Tunnels data between two GSocketConnections using a g_poll loop.
+ * This is a generic version of the SSL tunnel logic.
+ */
+void deadlight_network_tunnel_socket_connections(GSocketConnection *conn1, GSocketConnection *conn2) {
+    // This logic is nearly identical to the refactored start_ssl_tunnel_blocking
+    
+    GPollFD fds[2];
+    fds[0].fd = g_socket_get_fd(g_socket_connection_get_socket(conn1));
+    fds[0].events = G_IO_IN;
+    fds[1].fd = g_socket_get_fd(g_socket_connection_get_socket(conn2));
+    fds[1].events = G_IO_IN;
+    
+    GInputStream *in1 = g_io_stream_get_input_stream(G_IO_STREAM(conn1));
+    GOutputStream *out1 = g_io_stream_get_output_stream(G_IO_STREAM(conn1));
+    GInputStream *in2 = g_io_stream_get_input_stream(G_IO_STREAM(conn2));
+    GOutputStream *out2 = g_io_stream_get_output_stream(G_IO_STREAM(conn2));
+
+    guchar buffer[16384];
+    gboolean running = TRUE;
+
+    while (running) {
+        int ret = g_poll(fds, 2, 30000); // 30 second timeout
+        if (ret <= 0) break; // Error or timeout
+
+        if (fds[0].revents & (G_IO_IN | G_IO_HUP | G_IO_ERR)) {
+            gssize bytes = g_input_stream_read(in1, buffer, sizeof(buffer), NULL, NULL);
+            if (bytes <= 0 || !g_output_stream_write_all(out2, buffer, bytes, NULL, NULL, NULL)) {
+                running = FALSE;
+            }
+        }
+
+        if (running && (fds[1].revents & (G_IO_IN | G_IO_HUP | G_IO_ERR))) {
+            gssize bytes = g_input_stream_read(in2, buffer, sizeof(buffer), NULL, NULL);
+            if (bytes <= 0 || !g_output_stream_write_all(out1, buffer, bytes, NULL, NULL, NULL)) {
+                running = FALSE;
+            }
+        }
+    }
 }
 /**
  * Transfer data between client and upstream
