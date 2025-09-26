@@ -213,7 +213,11 @@ void deadlight_logging_cleanup(DeadlightContext *context);
 gboolean deadlight_network_init(DeadlightContext *context, GError **error);
 gboolean deadlight_network_start_listener(DeadlightContext *context, gint port, GError **error);
 void deadlight_network_stop(DeadlightContext *context);
-DeadlightConnection *deadlight_connection_new(DeadlightContext *context, GSocketConnection *client_connection);
+// In deadlight.h (or a private header if you prefer)
+DeadlightConnection *deadlight_connection_new(DeadlightContext *context, 
+                                             GSocketConnection *client_connection,
+                                             gchar *client_address_str);
+
 gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, const gchar *host, guint16 port, GError **error);
 gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error);
 gboolean deadlight_tls_tunnel_data(DeadlightConnection *conn, GError **error);

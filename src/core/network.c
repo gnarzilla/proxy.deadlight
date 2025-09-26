@@ -167,13 +167,12 @@ void deadlight_network_stop(DeadlightContext *context) {
 void deadlight_connection_free(DeadlightConnection *conn) {
     if (!conn) return;
 
-    // Remove from the master list first.
-    g_mutex_lock(&conn->context->network->connection_mutex);
-    g_hash_table_remove(conn->context->connections, &conn->id);
-    conn->context->active_connections--;
-    g_mutex_unlock(&conn->context->network->connection_mutex);
+    // This API function should now delegate the full cleanup logic
+    // and rely on the state machine to be clean.
+    // Given its current use in on_incoming_connection for a *rejected* conn:
+    cleanup_connection(conn); // <-- Call full cleanup/free
+    // The cleanup_connection will handle the context removal and g_free(conn).
 }
-
 /**
  * Handle incoming connection
  */
@@ -226,8 +225,7 @@ static gboolean on_incoming_connection(GSocketService *service,
     g_info("New connection from %s", client_str ? client_str : "unknown");
     
     // Create connection object
-    DeadlightConnection *conn = deadlight_connection_new(context, connection);
-    conn->client_address = client_str;
+    DeadlightConnection *conn = deadlight_connection_new(context, connection, client_str); 
 
     // Call plugin hook for new connection
     if (!deadlight_plugins_call_on_connection_accept(context, conn)) {
@@ -267,8 +265,10 @@ static gboolean on_incoming_connection(GSocketService *service,
  * Create new connection object
  */
 DeadlightConnection *deadlight_connection_new(DeadlightContext *context,
-                                            GSocketConnection *client_connection) {
+                                            GSocketConnection *client_connection,
+                                             gchar *client_address_str) {
     DeadlightConnection *conn = g_new0(DeadlightConnection, 1);
+
     
     // Set ID
     g_mutex_lock(&context->network->connection_mutex);
@@ -279,7 +279,9 @@ DeadlightConnection *deadlight_connection_new(DeadlightContext *context,
     conn->context = context;
     conn->client_connection = g_object_ref(client_connection);
     conn->state = DEADLIGHT_STATE_INIT;
+    conn->client_address = client_address_str;
     conn->protocol = DEADLIGHT_PROTOCOL_UNKNOWN;
+    
     
     // Create buffers
     conn->client_buffer = g_byte_array_new();
@@ -370,7 +372,7 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
             g_info("Connection %lu: Synchronous handler for '%s' completed.", 
                 conn->id, deadlight_protocol_to_string(conn->protocol));
             cleanup_connection(conn);
-            break;
+            return;
             
         case HANDLER_SUCCESS_ASYNC:
             g_debug("Connection %lu: Asynchronous handler for '%s' started; worker thread exiting without cleanup.", 
@@ -398,11 +400,7 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
     if (conn->handler && conn->handler->cleanup) {
         conn->handler->cleanup(conn);
     }
-    
-    g_mutex_lock(&context->network->connection_mutex);
-    g_hash_table_remove(context->connections, &conn->id);
-    context->active_connections--;
-    g_mutex_unlock(&context->network->connection_mutex);
+    deadlight_connection_free(conn);
 }
 
 /**
@@ -534,22 +532,20 @@ static void cleanup_connection(DeadlightConnection *conn) {
 
     // Now close the underlying socket connections
     if (conn->client_connection) {
-        if (G_IS_IO_STREAM(conn->client_connection)) {
-            g_io_stream_close(G_IO_STREAM(conn->client_connection), NULL, NULL);
-        }
-        if (G_IS_OBJECT(conn->client_connection)) {
-            g_object_unref(conn->client_connection);
-        }
+        // Attempt graceful close if it hasn't been closed by the TLS wrapper.
+        g_io_stream_close(G_IO_STREAM(conn->client_connection), NULL, NULL); 
+        
+        // Always unref the object to free its memory.
+        g_object_unref(conn->client_connection);
         conn->client_connection = NULL;
     }
     
     if (conn->upstream_connection) {
-        if (G_IS_IO_STREAM(conn->upstream_connection)) {
-            g_io_stream_close(G_IO_STREAM(conn->upstream_connection), NULL, NULL);
-        }
-        if (G_IS_OBJECT(conn->upstream_connection)) {
-            g_object_unref(conn->upstream_connection);
-        }
+        // Attempt graceful close if it hasn't been closed by the TLS wrapper.
+        g_io_stream_close(G_IO_STREAM(conn->upstream_connection), NULL, NULL); 
+        
+        // Always unref the object to free its memory.
+        g_object_unref(conn->upstream_connection);
         conn->upstream_connection = NULL;
     }
     
@@ -597,6 +593,14 @@ static void cleanup_connection(DeadlightConnection *conn) {
     if (conn->context) {
         conn->context->bytes_transferred += conn->bytes_client_to_upstream + 
                                            conn->bytes_upstream_to_client;
+    }
+
+    // --- CRITICAL FIX: Remove from master list and final free ---
+    if (conn->context && conn->context->network) {
+        g_mutex_lock(&conn->context->network->connection_mutex);
+        g_hash_table_remove(conn->context->connections, &conn->id);
+        conn->context->active_connections--;
+        g_mutex_unlock(&conn->context->network->connection_mutex);
     }
     
     g_free(conn);
