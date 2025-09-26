@@ -63,8 +63,30 @@ void connection_pool_free(ConnectionPool *pool) {
     }
     g_queue_free(pool->idle_connections);
     
-    // Clean up active connections
+    // --- START OF FIX: Clean up active connections ---
+    // The active_connections table holds PooledConnection structs as values,
+    // which must be manually freed, and the GSocketConnection keys unref'd.
+    GHashTableIter iter;
+    gpointer key, value;
+    
+    g_hash_table_iter_init(&iter, pool->active_connections);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        PooledConnection *pc_active = (PooledConnection *)value;
+        
+        // Unref the GSocketConnection object (the key)
+        g_object_unref(pc_active->connection); 
+        
+        // Free the allocated host string
+        g_free(pc_active->host);
+        
+        // Free the PooledConnection struct (the value)
+        g_free(pc_active);
+    }
+    
+    // The table is now empty of its content, so we can destroy the table structure.
     g_hash_table_destroy(pool->active_connections);
+    // --- END OF FIX ---
+
     
     g_mutex_clear(&pool->mutex);
     g_free(pool);
@@ -116,14 +138,25 @@ GSocketConnection* connection_pool_get(ConnectionPool *pool,
 }
 
 void connection_pool_release(ConnectionPool *pool, 
-                           GSocketConnection *connection,
-                           const gchar *host,
-                           guint16 port,
-                           gboolean is_ssl) {
+                            GSocketConnection *connection,
+                            const gchar *host,
+                            guint16 port,
+                            gboolean is_ssl) {
     g_mutex_lock(&pool->mutex);
     
     // Remove from active
     g_hash_table_remove(pool->active_connections, connection);
+    
+    // Check if adding this connection would exceed the maximum limit
+    // Note: The pool size is implicitly limited by max_per_host for simplicity here,
+    // though ideally this would be a separate config variable (e.g., max_pool_size).
+    if (pool->idle_connections->length >= (guint)pool->max_per_host) {
+        g_info("Pool limit reached (%d). Closing connection to %s:%d.", 
+               pool->max_per_host, host, port);
+        g_object_unref(connection);
+        g_mutex_unlock(&pool->mutex);
+        return;
+    }
     
     // Create pooled connection
     PooledConnection *pc = g_new0(PooledConnection, 1);
