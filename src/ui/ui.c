@@ -22,30 +22,6 @@ static int json_response(struct MHD_Connection *conn, const char *json)
     return ret;
 }
 
-/* Utility to get IP:Port string from a GSocketConnection */
-static gchar *get_remote_addr_string(GSocketConnection *conn)
-{
-    if (!conn) {
-        return g_strdup("N/A");
-    }
-    
-    // Get the GSocketAddress object for the remote peer
-    GSocketAddress *remote_address = g_socket_connection_get_remote_address(
-        conn, NULL // GError
-    );
-
-    if (!remote_address) {
-        return g_strdup("Unknown Address");
-    }
-
-    // Convert the GSocketAddress to a string (e.g., "192.168.1.1:12345")
-    gchar *addr_str = g_socket_address_to_string(remote_address);
-    
-    g_object_unref(remote_address); // Free the GSocketAddress object
-    
-    return addr_str; // Caller must free this string
-}
-
 /* ---------- API: /api/status ---------- */
 static enum MHD_Result
 handle_api_status(DeadlightContext *context, struct MHD_Connection *conn, const char *method)
