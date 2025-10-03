@@ -4,8 +4,6 @@
 
 ![Deadlight Proxy with local web interface](assets/proxy_ui.gif)
 
-
-
 ### Table of Contents
 1.  [Overview](#overview)
 2.  [Architecture](#architecture)
