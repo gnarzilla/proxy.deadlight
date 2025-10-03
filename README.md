@@ -1,21 +1,21 @@
 # Deadlight Proxy
 
 A high-performance, multi-protocol proxy server written in C using GLib. 
-Designed for deep packet inspection, protocol analysis, and extensibility.
+Designed for deep packet inspection, protocol analysis, and plugin extensibility.
 
 ---
 
 ### Table of Contents
-1.  [Architecture](#architecture)
-2.  [Features](#features)
-3.  [Roadmap](#roadmap)
-4.  [Getting Started](#getting-started)
-5.  [Usage](#usage)
-6.  [Extending Deadlight](#extending-deadlight)
+1.  
+2.  
+3.  
+4.  
+5. 
+6.  
 7.  [Project Structure](#project-structure)
-8.  [License](#license)
-9.  [Support](#support) 
 
+Quick Links
+[Features](#features) ·  [Usage](#usage)) · [Getting Started](#getting-started) · [Configuration](#configuration) · [Extending Deadlight](#extending-deadlight) · [Architecture](#architecture) · [Roadmap](#roadmap)
 ---
 
 **Use Cases:**
