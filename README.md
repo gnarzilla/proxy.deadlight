@@ -45,6 +45,7 @@ Deadlight’s core innovation is its decoupling of the protocol from the service
 
 **Secure Connectivity with Tailscale:** The proxy leverages Tailscale for secure mesh network connections, allowing seamless VPN-like gateway services. for secure, outbound-only connectivity. This means your home IP address is never exposed, your firewall can remain closed, and you don’t need to worry about dynamic IPs or complex NAT configurations. Your home machine becomes a trusted network gateway, not a public server.
 
+```
 STANDALONE MODE:
 Client → Deadlight Proxy → Internet Services
 
@@ -54,6 +55,7 @@ Cloudflare Worker → Tailscale → Deadlight Proxy → Local Services
                                   API Bridge
                                       ↓
                             (SMTP/IMAP/Federation)
+```
 
 Deadlight is built on a modular design managed by a central `DeadlightContext`. A connection flows through the system as follows:
 1.  The **Main Thread** runs a `GSocketService`, accepting new connections.
