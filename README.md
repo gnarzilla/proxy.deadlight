@@ -1,26 +1,5 @@
 # Deadlight Proxy
 
-**A modular, protocol-agnostic, and high-performance proxy server written in C using the GLib ecosystem, designed for deep inspection and extensibility.**
-
-![Deadlight Proxy with local web interface](assets/proxy_ui.gif)
-
-### Table of Contents
-1.  [Overview](#overview)
-2.  [Architecture](#architecture)
-3.  [Features](#features)
-4.  [Roadmap](#roadmap)
-5.  [Getting Started](#getting-started)
-6.  [Usage](#usage)
-7.  [Extending Deadlight](#extending-deadlight)
-9.  [Project Structure](#project-structure)
-10. [License](#license)
-11. [Support](#support) 
-
-
-### Overview
-
-# Deadlight Proxy
-
 A high-performance, multi-protocol proxy server written in C using GLib. 
 Designed for deep packet inspection, protocol analysis, and extensibility.
 
@@ -30,6 +9,20 @@ Designed for deep packet inspection, protocol analysis, and extensibility.
 - Protocol bridge for legacy systems
 - Building block for larger network applications
 - Learning tool for protocol implementation
+
+![Deadlight Proxy with local web interface](assets/proxy_ui.gif)
+
+### Table of Contents
+1.  [Architecture](#architecture)
+2.  [Features](#features)
+3.  [Roadmap](#roadmap)
+4.  [Getting Started](#getting-started)
+5.  [Usage](#usage)
+6.  [Extending Deadlight](#extending-deadlight)
+7.  [Project Structure](#project-structure)
+8.  [License](#license)
+9.  [Support](#support) 
+
 
 ### Architecture
 
@@ -97,21 +90,15 @@ Deadlight Proxy can be embedded in larger systems:
 ### Roadmap
 #### v1.0 (Current):
 
-+ **Stateless Protocol Bridge:** Complete integration with blog.deadlight via HTTP API endpoints.
 + **API-First:** Full REST API for real-time status and management.
-+ **Email Federation:** Working email-based social media federation.
 + **Tailscale Mesh Deployment:** Simplified private access to remote servers leveraging Tailscale's network.
 + **Plugin Ecosystem:** API for creating and sharing ad-blocking, analytics, and other plugins.
 + **Local Web Interface:** A minimalist web server within the proxy for easy, direct configuration and debugging.
 
 #### Next Steps
-- **Complete WebSocket Frame Relay:** The MITM handshake is implemented. The next step is to build out the `g_poll()`-based relay loop in `websocket_frame_relay_loop` to handle the bidirectional, frame-by-frame forwarding of data.
 - **Enhance FTP Handler:** Add support for `PORT` (active) mode to complement the existing `PASV` implementation. Improve data channel error reporting back to the control channel.
 - **Refine Protocol Detection:** The detection system is functional, but could be enhanced with a more explicit priority system to prevent conflicts (e.g., the initial HTTP vs. WebSocket issue).
-- **Expand Unit Testing:** With a stable and clean codebase, now is a great time to begin adding unit tests for core utility functions and protocol parsers.
-
-- **Mobile & Desktop Clients:** Publish an API specification to enable the development of native clients.
-
+- **Mobile & Desktop Clients:** Publish an API specification for the development of native clients.
 
 ---
 
