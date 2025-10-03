@@ -12,6 +12,8 @@ Designed for deep packet inspection, protocol analysis, and extensibility.
 
 ![Deadlight Proxy with local web interface](assets/proxy_ui.gif)
 
+---
+
 ### Table of Contents
 1.  [Architecture](#architecture)
 2.  [Features](#features)
@@ -23,6 +25,7 @@ Designed for deep packet inspection, protocol analysis, and extensibility.
 8.  [License](#license)
 9.  [Support](#support) 
 
+---
 
 ### Architecture
 
