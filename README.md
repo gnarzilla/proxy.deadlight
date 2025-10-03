@@ -19,13 +19,17 @@
 
 ### Overview
 
-- **Multi-Protocol Support**: HTTP/S, SOCKS4/5, FTP, IMAP/S, SMTP, WebSocket
-- **TLS Interception**: On-the-fly certificate generation for traffic analysis
-- **Protocol Detection**: Automatic handler selection based on traffic patterns
-- **High Performance**: Async I/O, connection pooling, worker threads
-- **Extensible**: Plugin system and simple protocol handler interface
-- **REST API**: Optional API for monitoring and control
-- **Secure Deployment**: Tailscale integration for mesh networking
+# Deadlight Proxy
+
+A high-performance, multi-protocol proxy server written in C using GLib. 
+Designed for deep packet inspection, protocol analysis, and extensibility.
+
+**Use Cases:**
+- Development proxy for debugging HTTPS traffic
+- SOCKS gateway for routing application traffic  
+- Protocol bridge for legacy systems
+- Building block for larger network applications
+- Learning tool for protocol implementation
 
 ### Architecture
 
