@@ -25,11 +25,11 @@ see [edge.deadlight](https://github.com/gnarzilla/edge.deadlight).
 
 #### What sets Deadlight apart:
 
-True Multi-Protocol: One binary handles HTTP/S, SOCKS4/5, SMTP, IMAP/S, FTP, WebSocket, and custom protocols
-Intelligent TLS Interception: Mimics upstream certificates for transparent HTTPS inspection [Security Considerations](#security-considerations)
-Plugin Architecture: Extend functionality without recompiling (ad-blocking, rate limiting, custom filters)
-Zero-Config Protocol Detection: Automatically identifies protocols from connection patterns
-Built-to-scale: Connection pooling, worker threads, async I/O, graceful error handling
+- **True Multi-Protocol:** One binary handles HTTP/S, SOCKS4/5, SMTP, IMAP/S, FTP, WebSocket, and custom protocols
+- **Intelligent TLS Interception:** Mimics upstream certificates for transparent HTTPS inspection [Security Considerations](#security-considerations)
+- **Plugin Architecture:** Extend functionality without recompiling (ad-blocking, rate limiting, custom filters)
+- **Zero-Config Protocol Detection:** Automatically identifies protocols from connection patterns
+- **Built-to-scale:** Connection pooling, worker threads, async I/O, graceful error handling
 
 ![Deadlight Proxy with local web interface](assets/proxy_ui.gif)
 
