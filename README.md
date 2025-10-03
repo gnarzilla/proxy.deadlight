@@ -37,7 +37,7 @@ Deadlight’s core innovation is its decoupling of the protocol from the service
 
 **Protocol Agnostic:** The proxy is not an "email server" or a "SOCKS proxy"—it’s a platform for handling any TCP-based protocol. Its modular architecture means you can add new protocol handlers (e.g., for XMPP or Matrix) as simple, self-contained C files without changing the core application.
 
-**Eliminating the "Always-On" Server:** The proxy's design leverages **Cloudflare Tunnel** for secure, outbound-only connectivity. This means your home IP address is never exposed, your firewall can remain closed, and you don’t need to worry about dynamic IPs or complex NAT configurations. Your home machine becomes a trusted network gateway, not a public server.
+**Secure Connectivity with Tailscale:** The proxy leverages Tailscale for secure mesh network connections, allowing seamless VPN-like gateway services. for secure, outbound-only connectivity. This means your home IP address is never exposed, your firewall can remain closed, and you don’t need to worry about dynamic IPs or complex NAT configurations. Your home machine becomes a trusted network gateway, not a public server.
 
 ![Deadlight Proxy/Blog Integration](assets/thatch-dt_proxy_browser_dual.png)
 
@@ -90,8 +90,7 @@ This is all managed by a set of distinct managers:
 + **Stateless Protocol Bridge:** Complete integration with blog.deadlight via HTTP API endpoints.
 + **API-First:** Full REST API for real-time status and management.
 + **Email Federation:** Working email-based social media federation.
-+ **Cloudflare Tunnel Integration:** Production-ready deployment using Cloudflare Tunnel.
-+ **Tailscale Mesh Deployment:** Better tailored for private access to remote servers. 
++ **Tailscale Mesh Deployment:** Simplified private access to remote servers leveraging Tailscale's network.
 + **Plugin Ecosystem:** API for creating and sharing ad-blocking, analytics, and other plugins.
 + **Local Web Interface:** A minimalist web server within the proxy for easy, direct configuration and debugging.
 
