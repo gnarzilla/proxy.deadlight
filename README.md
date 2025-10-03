@@ -3,29 +3,112 @@
 A high-performance, multi-protocol proxy server written in C using GLib. 
 Designed for deep packet inspection, protocol analysis, and plugin extensibility.
 
+### Quick Links
+[Features](#features) ·  [Usage](#usage) · [Getting Started](#getting-started) · [Configuration](#configuration) · [Extending Deadlight](#extending-deadlight) · [Architecture](#architecture) · [Roadmap](#roadmap)
+
 ---
 
-### Table of Contents
-1.  
-2.  
-3.  
-4.  
-5. 
-6.  
-7.  [Project Structure](#project-structure)
+### Overview
+Deadlight is a C-based proxy server built on GLib that handles multiple network protocols through a unified, extensible architecture. It features automatic protocol detection, TLS interception with certificate mimicry, plugin support, and a built-in web UI for monitoring and control.
 
-Quick Links
-[Features](#features) ·  [Usage](#usage)) · [Getting Started](#getting-started) · [Configuration](#configuration) · [Extending Deadlight](#extending-deadlight) · [Architecture](#architecture) · [Roadmap](#roadmap)
----
+#### What sets Deadlight apart:
 
-**Use Cases:**
-- Development proxy for debugging HTTPS traffic
-- SOCKS gateway for routing application traffic  
-- Protocol bridge for legacy systems
-- Building block for larger network applications
-- Learning tool for protocol implementation
+True Multi-Protocol: One binary handles HTTP/S, SOCKS4/5, SMTP, IMAP/S, FTP, WebSocket, and custom protocols
+Intelligent TLS Interception: Mimics upstream certificates for transparent HTTPS inspection
+Plugin Architecture: Extend functionality without recompiling (ad-blocking, rate limiting, custom filters)
+Zero-Config Protocol Detection: Automatically identifies protocols from connection patterns
+Production-Ready: Connection pooling, worker threads, async I/O, graceful error handling
 
 ![Deadlight Proxy with local web interface](assets/proxy_ui.gif)
+
+### Use Cases
+
+#### Network Security & Privacy
+
+**DNS-Level Ad Blocking (Pi-hole Inspired)**
+
+Block ads, trackers, and malware domains at the network level
+Configure your router/devices to use Deadlight as HTTP/HTTPS proxy
+The AdBlocker plugin intercepts requests to known ad domains
+Blocks 21+ ad/tracker domains by default (easily extensible)
+Works across all devices on your network
+Logs blocked requests for monitoring
+No DNS configuration needed—works at the HTTP layer
+
+**Privacy-Focused VPN Alternative**
+
+Route all traffic through Deadlight + Tailscale mesh network
+Encrypts traffic without trusting a third-party VPN provider
+Self-hosted, you control the exit nodes
+Integrates with Tailscale for secure mesh networking
+No logging (unless you explicitly enable it)
+Works with any protocol, not just HTTP
+Corporate Network Gateway
+
+Deploy as a security layer for remote workers
+Inspect encrypted traffic for compliance/DLP
+Rate limit API endpoints per-client
+Block malicious domains in real-time
+
+#### Development & Testing
+
+**HTTPS Debugging Without Charles/Burp**
+
+Intercept and inspect HTTPS traffic from any application
+```bash
+./bin/deadlight -c deadlight.conf -v
+curl --cacert ~/.deadlight/ca/ca.crt -x http://localhost:8080 https://api.example.com
+```
+
+Automatic certificate generation with upstream mimicry
+Full request/response logging
+No application modification needed
+Works with mobile apps, desktop software, CLI tools
+
+**API Gateway for Legacy Protocols**
+
+Bridge old protocols (SMTP, IMAP, FTP) to modern REST APIs
+Use the plugin system to translate protocol commands to HTTP
+Perfect for modernizing legacy infrastructure
+Add webhooks to decades-old systems
+Monitor and log previously opaque protocols
+
+**Protocol Testing & Fuzzing**
+
+Test how clients handle malformed responses
+Inject delays or errors for chaos testing
+Analyze protocol handshakes in detail
+
+#### Self-Hosted Infrastructure
+
+Email Server Bridge
+
+Access your Gmail/IMAP from anywhere without exposing ports
+Deadlight acts as a secure tunnel over Tailscale
+
+```bash
+telnet localhost 8080  # Connects to imap.gmail.com:993 via TLS tunnel
+A001 NOOP
+```
+
+No open firewall ports needed
+Works from any device on your Tailscale network
+Centralizes authentication and logging
+Secure Home Network Gateway
+
+**Single entry point for all home services**
+
+Deploy on a Raspberry Pi or VPS
+Route traffic through Tailscale mesh
+Monitor all network activity from web dashboard
+Multi-Site Proxy Network
+
+Deploy Deadlight at multiple locations
+Manage all instances from a central dashboard
+Implement consistent security policies
+Aggregate logs and metrics
+
+---
 
 ### Architecture
 
