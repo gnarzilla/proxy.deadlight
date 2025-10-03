@@ -66,7 +66,6 @@ This is all managed by a set of distinct managers:
    - **Custom API:** A built-in API for management and integration.
 
 **API Endpoints:**
-- `GET /api/blog/status` - Blog service health and version info
 - `GET /api/email/status` - Email queue status and processing metrics
 - `POST /api/email/send` - Send emails through proxy SMTP bridge
 
