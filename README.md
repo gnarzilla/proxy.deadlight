@@ -16,7 +16,7 @@ True Multi-Protocol: One binary handles HTTP/S, SOCKS4/5, SMTP, IMAP/S, FTP, Web
 Intelligent TLS Interception: Mimics upstream certificates for transparent HTTPS inspection
 Plugin Architecture: Extend functionality without recompiling (ad-blocking, rate limiting, custom filters)
 Zero-Config Protocol Detection: Automatically identifies protocols from connection patterns
-Production-Ready: Connection pooling, worker threads, async I/O, graceful error handling
+Testing-Ready: Connection pooling, worker threads, async I/O, graceful error handling
 
 ![Deadlight Proxy with local web interface](assets/proxy_ui.gif)
 
@@ -69,7 +69,6 @@ This is all managed by a set of distinct managers:
 - `GET /api/blog/status` - Blog service health and version info
 - `GET /api/email/status` - Email queue status and processing metrics
 - `POST /api/email/send` - Send emails through proxy SMTP bridge
-- `POST /api/federation/send` - Federated blog post distribution via email
 
 ## Using as a Component
 
