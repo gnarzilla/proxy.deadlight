@@ -3,15 +3,6 @@
 A high-performance, multi-protocol proxy server written in C using GLib. 
 Designed for deep packet inspection, protocol analysis, and extensibility.
 
-**Use Cases:**
-- Development proxy for debugging HTTPS traffic
-- SOCKS gateway for routing application traffic  
-- Protocol bridge for legacy systems
-- Building block for larger network applications
-- Learning tool for protocol implementation
-
-![Deadlight Proxy with local web interface](assets/proxy_ui.gif)
-
 ---
 
 ### Table of Contents
@@ -26,6 +17,15 @@ Designed for deep packet inspection, protocol analysis, and extensibility.
 9.  [Support](#support) 
 
 ---
+
+**Use Cases:**
+- Development proxy for debugging HTTPS traffic
+- SOCKS gateway for routing application traffic  
+- Protocol bridge for legacy systems
+- Building block for larger network applications
+- Learning tool for protocol implementation
+
+![Deadlight Proxy with local web interface](assets/proxy_ui.gif)
 
 ### Architecture
 
