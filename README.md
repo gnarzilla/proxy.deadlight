@@ -3,7 +3,6 @@
 A high-performance, multi-protocol proxy server written in C using GLib. 
 Designed for deep packet inspection, protocol analysis, and plugin extensibility.
 
-### Quick Links
 [Features](#features) ·  [Usage](#usage) · [Getting Started](#getting-started) · [Configuration](#configuration) · [Extending Deadlight](#extending-deadlight) · [Architecture](#architecture) · [Roadmap](#roadmap)
 
 ---
