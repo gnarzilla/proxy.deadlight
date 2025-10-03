@@ -26,10 +26,10 @@ see [edge.deadlight](https://github.com/gnarzilla/edge.deadlight).
 #### What sets Deadlight apart:
 
 True Multi-Protocol: One binary handles HTTP/S, SOCKS4/5, SMTP, IMAP/S, FTP, WebSocket, and custom protocols
-Intelligent TLS Interception: Mimics upstream certificates for transparent HTTPS inspection
+Intelligent TLS Interception: Mimics upstream certificates for transparent HTTPS inspection [Security Considerations](#security-considerations)
 Plugin Architecture: Extend functionality without recompiling (ad-blocking, rate limiting, custom filters)
 Zero-Config Protocol Detection: Automatically identifies protocols from connection patterns
-Production-Ready: Connection pooling, worker threads, async I/O, graceful error handling
+Built-to-scale: Connection pooling, worker threads, async I/O, graceful error handling
 
 ![Deadlight Proxy with local web interface](assets/proxy_ui.gif)
 
@@ -118,6 +118,21 @@ Cloudflare Worker → Tailscale → Deadlight Proxy → Local Services
                                       ↓
                             (SMTP/IMAP/Federation)
 ```
+
+## Security Considerations
+
+### TLS Interception
+TLS interception (MITM) is powerful. With great power, comes great responsibility.
+- **Development use only** - Never use on production traffic you don't control
+- **Local Regulations** - Intercepting traffic may be illegal in some jurisdictions.
+- **Secure your CA key** - Anyone with your CA can impersonate any site
+- **Browser warnings** - Users will see certificate warnings unless they trust your CA
+
+### Platform Deployment
+When using with edge.deadlight:
+- Secure your `X-API-Key` - This authenticates the Cloudflare Worker
+- Use Tailscale ACLs - Restrict which devices can reach the proxy
+- Monitor logs - Watch for unauthorized access attempts
 
 ---
 
