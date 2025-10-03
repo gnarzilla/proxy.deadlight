@@ -21,6 +21,71 @@ Production-Ready: Connection pooling, worker threads, async I/O, graceful error 
 
 ![Deadlight Proxy with local web interface](assets/proxy_ui.gif)
 
+---
+
+### Architecture
+
+Deadlight’s core innovation is its decoupling of the protocol from the service.
+
+**Stateless by Design:** Instead of maintaining a local database or a mail queue, the proxy translates TCP traffic into clean HTTP API calls. This offloads all state management to a globally available database, allowing the proxy to remain lightweight and stateless. It can be turned off without losing any data.
+
+**Protocol Agnostic:** The proxy is not an "email server" or a "SOCKS proxy"—it’s a platform for handling any TCP-based protocol. Its modular architecture means you can add new protocol handlers (e.g., for XMPP or Matrix) as simple, self-contained C files without changing the core application.
+
+**Secure Connectivity with Tailscale:** The proxy leverages Tailscale for secure mesh network connections, allowing seamless VPN-like gateway services. for secure, outbound-only connectivity. This means your home IP address is never exposed, your firewall can remain closed, and you don’t need to worry about dynamic IPs or complex NAT configurations. Your home machine becomes a trusted network gateway, not a public server.
+
+Deadlight is built on a modular design managed by a central `DeadlightContext`. A connection flows through the system as follows:
+1.  The **Main Thread** runs a `GSocketService`, accepting new connections.
+2.  Incoming connections are passed to a **Worker Thread** from a `GThreadPool`.
+3.  The worker thread performs **Protocol Detection** by peeking at the initial bytes of the connection.
+4.  The appropriate registered `DeadlightProtocolHandler` is invoked to handle the connection.
+5.  The handler processes the request. It can either complete the request synchronously or, for long-lived tunnels, hand off control to **asynchronous I/O watchers** on its own thread's event loop. This prevents the worker thread from blocking.
+
+This is all managed by a set of distinct managers:
+-   **Network Manager**: Handles listener sockets, the worker pool, and connection state.
+-   **SSL Manager**: Manages GIO/gnutls contexts, CA certificates, and performs SSL interception.
+-   **Protocol System**: Manages the registration and detection of protocol handlers.
+-   **Configuration Manager**: Parses INI-style configuration files.
+-   **Connection Pool**: Manages and reuses upstream server connections.
+
+### Features
+
+- **High-Performance C Foundation:** Built with the robust and efficient GLib ecosystem for high-throughput, low-latency network I/O and multi-threaded connection handling.
+
+- **Multi-Protocol Support:** A single binary can act as a bridge for HTTP/HTTPS, SOCKS, SMTP, IMAP/S, Websocket, FTP (with command inspection) and a custom API.
+
+- **API-First Design:** Complete REST API for external integration, enabling real-time status monitoring, email sending, and federation from any web application.
+
+- **Email-based Federation:** A simplified approach to decentralized social media that uses proven email protocols for instance-to-instance communication, eliminating the need to invent a new protocol.
+
+- **Advanced Security:** Features include on-the-fly TLS interception (for development/analysis), robust certificate validation, and a secure deployment model that leverages outbound-only connections.
+
+ **Advanced Multi-Protocol Support:**
+   - **HTTP/1.1 & HTTPS:** Full proxying with a robust `CONNECT` tunnel implementation.
+   - **SSL/TLS Interception (MITM):** Full Man-in-the-Middle capability with on-the-fly certificate generation for deep traffic analysis.
+   - **WebSocket (Terminating Proxy):** Acts as a true WebSocket endpoint, enabling frame-by-frame inspection, logging, and manipulation.
+   - **FTP (Intelligent Proxying):** Full command inspection and dynamic rewriting of `PASV` responses to transparently proxy passive mode data connections.
+   - **SOCKS4/4a & SOCKS5:** Standardized support for versatile TCP-level proxying.
+   - **IMAP/S & SMTP:** Basic support for email protocols, including `STARTTLS`.
+   - **Custom API:** A built-in API for management and integration.
+
+**API Endpoints:**
+- `GET /api/blog/status` - Blog service health and version info
+- `GET /api/email/status` - Email queue status and processing metrics
+- `POST /api/email/send` - Send emails through proxy SMTP bridge
+- `POST /api/federation/send` - Federated blog post distribution via email
+
+## Using as a Component
+
+Deadlight Proxy can be embedded in larger systems:
+
+- **REST API Integration**: Control the proxy programmatically
+- **Custom Protocol Handlers**: Add application-specific protocols
+- **Tailscale Mesh**: Deploy as a secure network gateway
+- **Example**: See [edge.deadlight](https://github.com/gnarzilla/edge.deadlight) 
+  for a full platform implementation using this proxy as a component
+
+---
+
 ### Use Cases
 
 #### Network Security & Privacy
@@ -110,68 +175,7 @@ Aggregate logs and metrics
 
 ---
 
-### Architecture
 
-Deadlight’s core innovation is its decoupling of the protocol from the service.
-
-**Stateless by Design:** Instead of maintaining a local database or a mail queue, the proxy translates TCP traffic into clean HTTP API calls. This offloads all state management to a globally available database, allowing the proxy to remain lightweight and stateless. It can be turned off without losing any data.
-
-**Protocol Agnostic:** The proxy is not an "email server" or a "SOCKS proxy"—it’s a platform for handling any TCP-based protocol. Its modular architecture means you can add new protocol handlers (e.g., for XMPP or Matrix) as simple, self-contained C files without changing the core application.
-
-**Secure Connectivity with Tailscale:** The proxy leverages Tailscale for secure mesh network connections, allowing seamless VPN-like gateway services. for secure, outbound-only connectivity. This means your home IP address is never exposed, your firewall can remain closed, and you don’t need to worry about dynamic IPs or complex NAT configurations. Your home machine becomes a trusted network gateway, not a public server.
-
-Deadlight is built on a modular design managed by a central `DeadlightContext`. A connection flows through the system as follows:
-1.  The **Main Thread** runs a `GSocketService`, accepting new connections.
-2.  Incoming connections are passed to a **Worker Thread** from a `GThreadPool`.
-3.  The worker thread performs **Protocol Detection** by peeking at the initial bytes of the connection.
-4.  The appropriate registered `DeadlightProtocolHandler` is invoked to handle the connection.
-5.  The handler processes the request. It can either complete the request synchronously or, for long-lived tunnels, hand off control to **asynchronous I/O watchers** on its own thread's event loop. This prevents the worker thread from blocking.
-
-This is all managed by a set of distinct managers:
--   **Network Manager**: Handles listener sockets, the worker pool, and connection state.
--   **SSL Manager**: Manages GIO/gnutls contexts, CA certificates, and performs SSL interception.
--   **Protocol System**: Manages the registration and detection of protocol handlers.
--   **Configuration Manager**: Parses INI-style configuration files.
--   **Connection Pool**: Manages and reuses upstream server connections.
-
-### Features
-
-- **High-Performance C Foundation:** Built with the robust and efficient GLib ecosystem for high-throughput, low-latency network I/O and multi-threaded connection handling.
-
-- **Multi-Protocol Support:** A single binary can act as a bridge for HTTP/HTTPS, SOCKS, SMTP, IMAP/S, Websocket, FTP (with command inspection) and a custom API.
-
-- **API-First Design:** Complete REST API for external integration, enabling real-time status monitoring, email sending, and federation from any web application.
-
-- **Email-based Federation:** A simplified approach to decentralized social media that uses proven email protocols for instance-to-instance communication, eliminating the need to invent a new protocol.
-
-- **Advanced Security:** Features include on-the-fly TLS interception (for development/analysis), robust certificate validation, and a secure deployment model that leverages outbound-only connections.
-
- **Advanced Multi-Protocol Support:**
-   - **HTTP/1.1 & HTTPS:** Full proxying with a robust `CONNECT` tunnel implementation.
-   - **SSL/TLS Interception (MITM):** Full Man-in-the-Middle capability with on-the-fly certificate generation for deep traffic analysis.
-   - **WebSocket (Terminating Proxy):** Acts as a true WebSocket endpoint, enabling frame-by-frame inspection, logging, and manipulation.
-   - **FTP (Intelligent Proxying):** Full command inspection and dynamic rewriting of `PASV` responses to transparently proxy passive mode data connections.
-   - **SOCKS4/4a & SOCKS5:** Standardized support for versatile TCP-level proxying.
-   - **IMAP/S & SMTP:** Basic support for email protocols, including `STARTTLS`.
-   - **Custom API:** A built-in API for management and integration.
-
-**API Endpoints:**
-- `GET /api/blog/status` - Blog service health and version info
-- `GET /api/email/status` - Email queue status and processing metrics
-- `POST /api/email/send` - Send emails through proxy SMTP bridge
-- `POST /api/federation/send` - Federated blog post distribution via email
-
-## Using as a Component
-
-Deadlight Proxy can be embedded in larger systems:
-
-- **REST API Integration**: Control the proxy programmatically
-- **Custom Protocol Handlers**: Add application-specific protocols
-- **Tailscale Mesh**: Deploy as a secure network gateway
-- **Example**: See [edge.deadlight](https://github.com/gnarzilla/edge.deadlight) 
-  for a full platform implementation using this proxy as a component
-
----
 
 ### Roadmap
 #### v1.0 (Current):
