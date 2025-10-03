@@ -450,8 +450,7 @@ deadlight/
 ├── src/
 │   ├── core/               # Core modules (main, context, config, network, etc.)
 │   ├── plugins/            # Built-in plugin implementations
-│   ├── vpn/            # vpn gateway modules implementations
-
+│   ├── vpn/                # vpn gateway module
 │   └── protocols/          # Protocol handler implementations
 ├── deadlight.conf.example  # Example configuration file
 ├── Makefile                # Build configuration
