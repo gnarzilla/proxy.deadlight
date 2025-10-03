@@ -81,12 +81,19 @@ This is all managed by a set of distinct managers:
    - **IMAP/S & SMTP:** Basic support for email protocols, including `STARTTLS`.
    - **Custom API:** A built-in API for management and integration.
 
-**API Endpoints:**
-- `GET /api/blog/status` - Blog service health and version info
-- `GET /api/email/status` - Email queue status and processing metrics
-- `POST /api/email/send` - Send emails through proxy SMTP bridge
-- `POST /api/federation/send` - Federated blog post distribution via email
+## API Endpoints (Platform Integration)
 
+When used with edge.deadlight, the proxy exposes these endpoints:
+
+- `GET /api/blog/status` - Blog service health check
+- `POST /api/email/send` - Send email via local SMTP
+- `POST /api/federation/send` - Federate content to other instances
+- `GET /api/email/status` - Email queue status and processing metrics
+
+These endpoints translate web requests into native protocol operations.
+
+Example: `/api/email/send` receives JSON, translates it to SMTP 
+commands, and sends via your configured SMTP server.
 
 ### Using as a Component
 
