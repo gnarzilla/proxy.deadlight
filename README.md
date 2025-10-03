@@ -16,7 +16,7 @@ Deadlight Proxy is a standalone, multi-protocol proxy server that can be used:
 
 1. **Standalone**: As a traditional HTTP/SOCKS proxy with TLS interception
 2. **As part of the Deadlight Edge Platform**: As a protocol bridge between 
-   Cloudflare Workers and local services (email, federation, etc.)
+   Cloudflare Workers and local services (email, federation, etc.). [Using as a component](#using-as-a-component)
 
 This README focuses on standalone usage. For platform integration, 
 see [edge.deadlight](https://github.com/gnarzilla/edge.deadlight).
@@ -87,7 +87,7 @@ This is all managed by a set of distinct managers:
 - `POST /api/federation/send` - Federated blog post distribution via email
 
 
-## Using as a Component
+### Using as a Component
 
 Deadlight Proxy can be embedded in larger systems:
 
