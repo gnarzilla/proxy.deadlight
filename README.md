@@ -10,13 +10,26 @@ Designed for deep packet inspection, protocol analysis, and plugin extensibility
 ### Overview
 Deadlight is a C-based proxy server built on GLib that handles multiple network protocols through a unified, extensible architecture. It features automatic protocol detection, TLS interception with certificate mimicry, plugin support, and a built-in web UI for monitoring and control.
 
+## What is Deadlight Proxy?
+
+Deadlight Proxy is a standalone, multi-protocol proxy server that can be used:
+
+1. **Standalone**: As a traditional HTTP/SOCKS proxy with TLS interception
+2. **As part of the Deadlight Edge Platform**: As a protocol bridge between 
+   Cloudflare Workers and local services (email, federation, etc.)
+
+This README focuses on standalone usage. For platform integration, 
+see [edge.deadlight](https://github.com/gnarzilla/edge.deadlight).
+
+---
+
 #### What sets Deadlight apart:
 
 True Multi-Protocol: One binary handles HTTP/S, SOCKS4/5, SMTP, IMAP/S, FTP, WebSocket, and custom protocols
 Intelligent TLS Interception: Mimics upstream certificates for transparent HTTPS inspection
 Plugin Architecture: Extend functionality without recompiling (ad-blocking, rate limiting, custom filters)
 Zero-Config Protocol Detection: Automatically identifies protocols from connection patterns
-Testing-Ready: Connection pooling, worker threads, async I/O, graceful error handling
+Production-Ready: Connection pooling, worker threads, async I/O, graceful error handling
 
 ![Deadlight Proxy with local web interface](assets/proxy_ui.gif)
 
@@ -54,6 +67,8 @@ This is all managed by a set of distinct managers:
 
 - **API-First Design:** Complete REST API for external integration, enabling real-time status monitoring, email sending, and federation from any web application.
 
+- **Email-based Federation:** A simplified approach to decentralized social media that uses proven email protocols for instance-to-instance communication, eliminating the need to invent a new protocol.
+
 - **Advanced Security:** Features include on-the-fly TLS interception (for development/analysis), robust certificate validation, and a secure deployment model that leverages outbound-only connections.
 
  **Advanced Multi-Protocol Support:**
@@ -66,8 +81,11 @@ This is all managed by a set of distinct managers:
    - **Custom API:** A built-in API for management and integration.
 
 **API Endpoints:**
+- `GET /api/blog/status` - Blog service health and version info
 - `GET /api/email/status` - Email queue status and processing metrics
 - `POST /api/email/send` - Send emails through proxy SMTP bridge
+- `POST /api/federation/send` - Federated blog post distribution via email
+
 
 ## Using as a Component
 
