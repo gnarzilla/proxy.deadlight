@@ -59,6 +59,7 @@ This is all managed by a set of distinct managers:
 -   **Configuration Manager**: Parses INI-style configuration files.
 -   **Connection Pool**: Manages and reuses upstream server connections.
 
+
 ### Features
 
 - **High-Performance C Foundation:** Built with the robust and efficient GLib ecosystem for high-throughput, low-latency network I/O and multi-threaded connection handling.
@@ -96,6 +97,7 @@ Deadlight Proxy can be embedded in larger systems:
 - **Tailscale Mesh**: Deploy as a secure network gateway
 - **Example**: See [edge.deadlight](https://github.com/gnarzilla/edge.deadlight) 
   for a full platform implementation using this proxy as a component
+
 
 
 ```
