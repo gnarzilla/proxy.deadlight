@@ -19,13 +19,13 @@
 
 ### Overview
 
-`proxy.deadlight` is a high-performance network proxy that serves as a stateless protocol bridge. It connects mature, stateful TCP protocols (SMTP, IMAP, SOCKS) to the modern, stateless, and globally distributed serverless ecosystem.
-
-By bridging these two worlds, the Deadlight Proxy enables a powerful new form of self-sovereign infrastructure. It eliminates the need for an "always-on" home server by delegating state management to a serverless database (Cloudflare D1), all while preserving the privacy and control of a self-hosted solution.
-
-This release represents a major breakthrough, with a complete REST API that integrates with `blog.deadlight`. This allows for real-time proxy management, status monitoring, and email-based federation, all controlled from a web interface you can deploy anywhere in the world.
-
-![Proxy integrated with deployed blog](assets/interactive_proxy_dash.gif)
+- **Multi-Protocol Support**: HTTP/S, SOCKS4/5, FTP, IMAP/S, SMTP, WebSocket
+- **TLS Interception**: On-the-fly certificate generation for traffic analysis
+- **Protocol Detection**: Automatic handler selection based on traffic patterns
+- **High Performance**: Async I/O, connection pooling, worker threads
+- **Extensible**: Plugin system and simple protocol handler interface
+- **REST API**: Optional API for monitoring and control
+- **Secure Deployment**: Tailscale integration for mesh networking
 
 ### Architecture
 
@@ -36,8 +36,6 @@ Deadlight’s core innovation is its decoupling of the protocol from the service
 **Protocol Agnostic:** The proxy is not an "email server" or a "SOCKS proxy"—it’s a platform for handling any TCP-based protocol. Its modular architecture means you can add new protocol handlers (e.g., for XMPP or Matrix) as simple, self-contained C files without changing the core application.
 
 **Secure Connectivity with Tailscale:** The proxy leverages Tailscale for secure mesh network connections, allowing seamless VPN-like gateway services. for secure, outbound-only connectivity. This means your home IP address is never exposed, your firewall can remain closed, and you don’t need to worry about dynamic IPs or complex NAT configurations. Your home machine becomes a trusted network gateway, not a public server.
-
-![Deadlight Proxy/Blog Integration](assets/thatch-dt_proxy_browser_dual.png)
 
 Deadlight is built on a modular design managed by a central `DeadlightContext`. A connection flows through the system as follows:
 1.  The **Main Thread** runs a `GSocketService`, accepting new connections.
@@ -79,6 +77,16 @@ This is all managed by a set of distinct managers:
 - `GET /api/email/status` - Email queue status and processing metrics
 - `POST /api/email/send` - Send emails through proxy SMTP bridge
 - `POST /api/federation/send` - Federated blog post distribution via email
+
+## Using as a Component
+
+Deadlight Proxy can be embedded in larger systems:
+
+- **REST API Integration**: Control the proxy programmatically
+- **Custom Protocol Handlers**: Add application-specific protocols
+- **Tailscale Mesh**: Deploy as a secure network gateway
+- **Example**: See [edge.deadlight](https://github.com/gnarzilla/edge.deadlight) 
+  for a full platform implementation using this proxy as a component
 
 ---
 
@@ -210,7 +218,17 @@ Use `curl` to route a request through the SOCKS4 handler:
 curl --socks4 localhost:8080 http://example.com
 ```
 
-#### Example 3: IMAPS Secure Tunnel
+#### Example 3: Status API
+```bash
+curl http://localhost:8080/api/status
+```
+
+#### Example 4: Connection stats
+```bash
+curl http://localhost:8080/api/connections
+```
+
+#### Example 5: IMAPS Secure Tunnel
 
 Test the secure IMAP tunnel using `telnet` (this proves the TLS handshake and tunneling):
 ```bash
@@ -222,36 +240,13 @@ a001 NOOP
 ```
 The proxy will establish a secure TLS connection to the upstream IMAP server and tunnel the data.
 
-#### Example 4: FTP Passive Mode Proxying
+#### Example 6: FTP Passive Mode Proxying
 Connect to the proxy with a full-featured FTP client like FileZilla or `lftp`, using `localhost` as the host and `8080` as the port. The proxy will handle the `PASV` command and correctly rewrite the data connection address.
 
 Alternatively, for a quick command-line test:
 ```bash
 printf "USER anonymous\r\nPASV\r\n" | nc localhost 8080
 ```
-
-#### Example 5. Web Dashboard Management
-
-![Deadlight Proxy - thatch-dt](assets/thatch-dt_proxy.png)
-
-Deploy the integrated blog.deadlight dashboard
-```bash
-# Terminal 1: Start the proxy server
-./bin/deadlight -c deadlight.conf.example
-
-# Terminal 2: Start the blog with proxy integration
-cd ../deadlight
-wrangler dev
-
-# Or to deploy to your live site
-wrangler deploy
-```
-
-Access `http://localhost:8787/admin/proxy` for real-time proxy management including:
-- Live connection monitoring
-- API endpoint testing
-- Federation testing
-- Email system management
 
 #### Command Line Options
 
