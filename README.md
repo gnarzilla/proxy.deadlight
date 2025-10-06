@@ -3,7 +3,7 @@
 A high-performance, multi-protocol proxy server written in C using GLib.
 Features kernel-integrated VPN gateway, deep packet inspection, protocol analysis and plugin extensibility.
 
-[Features](#features) ·  [Usage](#usage) · [Getting Started](#getting-started) · [Configuration](#configuration) · [Extending Deadlight](#extending-deadlight) · [Architecture](#architecture) · [Roadmap](#roadmap)
+[Features](#features) ·  [Usage](#usage) · [Getting Started](#getting-started) · [Configuration](#configuration) · [Extending Deadlight](#extending-deadlight) · [Architecture](#architecture) · [Use Cases](#use-cases) · [Roadmap](#roadmap)
 
 ---
 
