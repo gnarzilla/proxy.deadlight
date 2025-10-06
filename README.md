@@ -261,6 +261,8 @@ Aggregate logs and metrics
 -   `pkg-config`
 -   GLib 2.0+ & GIO development libraries (`libglib2.0-dev`)
 -   gnutls development libraries (`gnutls`)
+-   libmicrohttpd (for web UI)
+-   Root/CAP_NET_ADMIN (for VPN mode run as sudo)
 
 On Debian/Ubuntu, install all prerequisites with:
 ```bash
@@ -328,8 +330,13 @@ upstream_port = 21
 
 ## Running
 ```bash
+# Proxy only
 ./bin/deadlight -c deadlight.conf.example
+
+# VPN Gateway (requires root)
+sudo ./bin/deadlight -deadlight.conf.example
 ```
+
 Add deadlight certificate to the trust store. If using Firefox you will also need to add via firefox's settings.
 ```bash
 sudo cp ~/.deadlight/ca/ca.crt /usr/local/share/ca-certificates/
@@ -338,9 +345,33 @@ sudo update-ca-certificates
 
 ## Usage
 
-### Example 1: HTTP/HTTPS Web Proxy
+### VPN Gateway Mode
+
+```bash
+# Configure client to use VPN
+sudo ip route add default via 10.8.0.1 dev tun0
+
+# All traffic now goes through Deadlight
+ping google.com          # Proxied through VPN
+curl http://example.com  # Automatically intercepted
+ssh remote-server        # TCP traffic proxied
+```
+
+### HTTP/HTTPS Web Proxy
 
 Configure your browser or system to use `http://localhost:8080` as its proxy. Or, use `curl`:
+
+```bash
+# HTTP/HTTPS
+curl -x http://localhost:8080 http://example.com
+curl --cacert ~/.deadlight/ca/ca.crt -x http://localhost:8080 https://example.com
+
+# SOCKS5
+curl --socks5 localhost:8080 http://example.com
+
+# WebSocket
+curl --proxy http://localhost:8080 -H "Upgrade: websocket" http://ws.ifelse.io/
+```
 
 ```bash
 # Proxy a standard HTTP request
@@ -351,24 +382,34 @@ curl -x http://localhost:8080 https://example.com
 ```
 ![Deadlight Proxy](assets/proxy.deadlight_test_commands.png)
 
-### Example 2: SOCKS4 Privacy Proxy
+### Proxying & Intercepting HTTPS
+For TLS interception to work, you must instruct your client to trust the proxy's Certificate Authority. The CA certificate is generated automatically (e.g., in `~/.deadlight/ca/ca.crt`).
+
+```bash
+# The --cacert flag tells curl to trust our custom CA for this one request.
+curl --cacert ~/.deadlight/ca/ca.crt -x http://localhost:8080 https://example.com
+```
+
+### SOCKS4 Privacy Proxy
 
 Use `curl` to route a request through the SOCKS4 handler:
 ```bash
 curl --socks4 localhost:8080 http://example.com
 ```
 
-### Example 3: Status API
+### Status API
+
 ```bash
 curl http://localhost:8080/api/status
 ```
 
-### Example 4: Connection stats
+### Connection stats
+
 ```bash
 curl http://localhost:8080/api/connections
 ```
 
-### Example 5: IMAPS Secure Tunnel
+### IMAPS Secure Tunnel
 
 Test the secure IMAP tunnel using `telnet` (this proves the TLS handshake and tunneling):
 ```bash
@@ -380,7 +421,8 @@ a001 NOOP
 ```
 The proxy will establish a secure TLS connection to the upstream IMAP server and tunnel the data.
 
-### Example 6: FTP Passive Mode Proxying
+### FTP Passive Mode Proxying
+
 Connect to the proxy with a full-featured FTP client like FileZilla or `lftp`, using `localhost` as the host and `8080` as the port. The proxy will handle the `PASV` command and correctly rewrite the data connection address.
 
 Alternatively, for a quick command-line test:
@@ -396,18 +438,6 @@ printf "USER anonymous\r\nPASV\r\n" | nc localhost 8080
 -   `-v, --verbose`: Enable verbose (debug) logging.
 -   `-h, --help`: Show help message.
 
-### Proxying HTTP
-```bash
-curl -x http://localhost:8080 http://example.com
-```
-
-### Proxying & Intercepting HTTPS
-For TLS interception to work, you must instruct your client to trust the proxy's Certificate Authority. The CA certificate is generated automatically (e.g., in `~/.deadlight/ca/ca.crt`).
-
-```bash
-# The --cacert flag tells curl to trust our custom CA for this one request.
-curl --cacert ~/.deadlight/ca/ca.crt -x http://localhost:8080 https://example.com
-```
 
 ## Extending Deadlight
 
