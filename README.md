@@ -241,6 +241,7 @@ Aggregate logs and metrics
 
 + **API-First:** Full REST API for real-time status and management.
 + **Tailscale Mesh Deployment:** Simplified private access to remote servers leveraging Tailscale's network.
++ **VPN Gateway:**  Kernel-integrated Layer 3 tunneling with transparent TCP proxying through TUN devices.
 + **Plugin Ecosystem:** API for creating and sharing ad-blocking, analytics, and other plugins.
 + **Local Web Interface:** A minimalist web server within the proxy for easy, direct configuration and debugging.
 
