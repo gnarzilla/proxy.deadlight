@@ -31,8 +31,12 @@ DeadlightContext *deadlight_context_new(void) {
     // Set defaults
     ctx->shutdown_requested = FALSE;
     
+    // VPN will be allocated when enabled
+    ctx->vpn = NULL;
+    
     return ctx;
 }
+
 /**
  * Free Deadlight context
  */
@@ -81,6 +85,12 @@ void deadlight_context_free(DeadlightContext *ctx) {
     g_free(ctx->network);
     g_free(ctx->ssl);
     g_free(ctx->plugins);
+    
+    // Free VPN manager
+    if (ctx->vpn) {
+        g_free(ctx->vpn);
+        ctx->vpn = NULL;
+    }
     
     // Free config
     if (ctx->config) {

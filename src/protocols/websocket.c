@@ -275,6 +275,8 @@ static gboolean websocket_frame_relay_loop(DeadlightConnection *conn, GError **e
         return FALSE;
     }
 
+    g_info("WebSocket [%lu]: Starting frame relay loop", conn->id);  // Add this
+
     GInputStream *client_is = g_io_stream_get_input_stream(G_IO_STREAM(conn->client_connection));
     GOutputStream *client_os = g_io_stream_get_output_stream(G_IO_STREAM(conn->client_connection));
     GInputStream *upstream_is = g_io_stream_get_input_stream(G_IO_STREAM(conn->upstream_connection));
@@ -321,36 +323,34 @@ static gboolean websocket_frame_relay_loop(DeadlightConnection *conn, GError **e
                 
                 switch (frame.opcode) {
                     case WS_OPCODE_TEXT:
-                        g_info("WebSocket [%lu] C->S: opcode=%s, fin=%d, len=%lu, payload_preview=%.50s", 
-                               conn->id, websocket_opcode_to_string(frame.opcode), frame.fin, 
-                               frame.payload_len, (char*)frame.payload);
+                        g_info("WebSocket [%lu] C->S: TEXT frame, fin=%d, len=%lu", 
+                            conn->id, frame.fin, frame.payload_len);
                         write_ws_frame(upstream_os, &frame, NULL);
                         ws_data->messages_sent++;
+                        conn->bytes_client_to_upstream += frame.payload_len;
                         break;
                         
                     case WS_OPCODE_BINARY:
-                        g_info("WebSocket [%lu] C->S: opcode=%s, fin=%d, len=%lu, payload=[binary]", 
-                               conn->id, websocket_opcode_to_string(frame.opcode), frame.fin, 
-                               frame.payload_len);
+                        g_info("WebSocket [%lu] C->S: BINARY, len=%lu", 
+                            conn->id, frame.payload_len);
                         write_ws_frame(upstream_os, &frame, NULL);
                         ws_data->messages_sent++;
+                        conn->bytes_client_to_upstream += frame.payload_len;
                         break;
                         
                     case WS_OPCODE_PING:
-                        g_info("WebSocket [%lu] C->S: %s", conn->id, websocket_opcode_to_string(frame.opcode));
-                        // Respond with pong to client
+                        g_info("WebSocket [%lu] C->S: PING", conn->id);
                         websocket_send_pong(client_os, frame.payload, frame.payload_len, NULL);
-                        // Forward ping to upstream
                         write_ws_frame(upstream_os, &frame, NULL);
                         break;
                         
                     case WS_OPCODE_PONG:
-                        g_info("WebSocket [%lu] C->S: %s", conn->id, websocket_opcode_to_string(frame.opcode));
+                        g_info("WebSocket [%lu] C->S: PONG", conn->id);
                         write_ws_frame(upstream_os, &frame, NULL);
                         break;
                         
                     case WS_OPCODE_CLOSE:
-                        g_info("WebSocket [%lu] C->S: %s", conn->id, websocket_opcode_to_string(frame.opcode));
+                        g_info("WebSocket [%lu] C->S: CLOSE", conn->id);
                         ws_data->close_received = TRUE;
                         write_ws_frame(upstream_os, &frame, NULL);
                         break;
@@ -367,10 +367,10 @@ static gboolean websocket_frame_relay_loop(DeadlightConnection *conn, GError **e
                     g_debug("Client read error: %s", local_error->message);
                     g_error_free(local_error);
                 }
-                break; // Connection closed or error
+                break;
             }
         }
-        
+
         // Handle upstream -> client
         if (polls[1].revents & G_IO_IN) {
             WebSocketFrame frame = {0};
@@ -381,32 +381,34 @@ static gboolean websocket_frame_relay_loop(DeadlightConnection *conn, GError **e
                 
                 switch (frame.opcode) {
                     case WS_OPCODE_TEXT:
-                        g_info("S->C [%lu]: %.*s", conn->id, (int)frame.payload_len, (char*)frame.payload);
+                        g_info("WebSocket [%lu] S->C: TEXT frame, len=%lu", 
+                            conn->id, frame.payload_len);
                         write_ws_frame(client_os, &frame, NULL);
                         ws_data->messages_received++;
+                        conn->bytes_upstream_to_client += frame.payload_len;
                         break;
                         
                     case WS_OPCODE_BINARY:
-                        g_info("S->C [%lu]: Binary frame (%lu bytes)", conn->id, frame.payload_len);
+                        g_info("WebSocket [%lu] S->C: BINARY, len=%lu", 
+                            conn->id, frame.payload_len);
                         write_ws_frame(client_os, &frame, NULL);
                         ws_data->messages_received++;
+                        conn->bytes_upstream_to_client += frame.payload_len;
                         break;
                         
                     case WS_OPCODE_PING:
-                        g_info("S->C [%lu]: Ping", conn->id);
-                        // Respond with pong to upstream
+                        g_info("WebSocket [%lu] S->C: PING", conn->id);
                         websocket_send_pong(upstream_os, frame.payload, frame.payload_len, NULL);
-                        // Forward ping to client
                         write_ws_frame(client_os, &frame, NULL);
                         break;
                         
                     case WS_OPCODE_PONG:
-                        g_info("S->C [%lu]: Pong", conn->id);
+                        g_info("WebSocket [%lu] S->C: PONG", conn->id);
                         write_ws_frame(client_os, &frame, NULL);
                         break;
                         
                     case WS_OPCODE_CLOSE:
-                        g_info("S->C [%lu]: Close", conn->id);
+                        g_info("WebSocket [%lu] S->C: CLOSE", conn->id);
                         ws_data->close_received = TRUE;
                         write_ws_frame(client_os, &frame, NULL);
                         break;
@@ -423,7 +425,7 @@ static gboolean websocket_frame_relay_loop(DeadlightConnection *conn, GError **e
                     g_debug("Upstream read error: %s", local_error->message);
                     g_error_free(local_error);
                 }
-                break; // Connection closed or error
+                break;
             }
         }
         

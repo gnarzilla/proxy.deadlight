@@ -12,7 +12,7 @@
 extern "C" {
 #endif
 
-//===[ MACROS AND DEFINES (RESTORED) ]===
+//===[ MACROS AND DEFINES ]===
 #define DEADLIGHT_VERSION_MAJOR 1
 #define DEADLIGHT_VERSION_MINOR 0
 #define DEADLIGHT_VERSION_PATCH 0
@@ -48,6 +48,7 @@ typedef enum {
     HANDLER_SUCCESS_ASYNC = 2        // The handler started an async process. The caller MUST NOT clean up.
 } DeadlightHandlerResult;
 
+
 //===[ FORWARD DECLARATIONS ]===
 typedef struct _DeadlightContext DeadlightContext;
 typedef struct _DeadlightConnection DeadlightConnection;
@@ -60,6 +61,7 @@ typedef struct _DeadlightSSLManager DeadlightSSLManager;
 typedef struct _DeadlightPluginManager DeadlightPluginManager;
 typedef struct _ConnectionPool ConnectionPool;
 typedef struct _DeadlightConnInfo DeadlightConnInfo;
+typedef struct _DeadlightVPNManager DeadlightVPNManager;
 
 //===[ PROTOCOL HANDLER DEFINITION ]===
 typedef struct _DeadlightProtocolHandler {
@@ -87,6 +89,7 @@ struct _DeadlightContext {
     DeadlightNetworkManager *network;
     DeadlightSSLManager *ssl;
     DeadlightPluginManager *plugins;
+    DeadlightVPNManager *vpn; 
     GHashTable *plugins_data;
     GHashTable *connections;
     GHashTable *certificates;

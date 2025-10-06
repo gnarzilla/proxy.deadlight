@@ -2,46 +2,22 @@
 port = 8080
 bind_address = 0.0.0.0
 max_connections = 5000
+log_level = info
 worker_threads = 4
+
+[core]
 log_level = debug
-
-[vpn]
-# Enable VPN gateway (requires root privileges)
-enabled=true
-tun_device=tun0
-gateway_ip=10.8.0.1
-client_subnet=10.8.0.0/24
-
-# TUN device configuration
-device = tun0
-address = 10.8.0.1
-netmask = 255.255.255.0
-
-# Client IP range
-client_network = 10.8.0.0/24
-
-# DNS servers to provide to clients (optional)
-dns_servers = 8.8.8.8,8.8.4.4
-
-[network]
-upstream_timeout=30
-tcp_nodelay=true
-ipv6_enabled=true
-connection_pool_size=10
-connection_pool_timeout=300
-
-[protocols]
-http_enabled=true
-https_enabled=true
-socks_enabled=true
-protocol_detection_timeout=5
 
 [ssl]
 enabled = true
 ca_cert_file = /home/thatch/.deadlight/ca.crt
 ca_key_file = /home/thatch/.deadlight/ca.key
 cert_cache_dir = /tmp/deadlight_certs
-intercept_enable = true
+
+[protocols]
+http_enabled = true
+https_enabled = true
+# connect_enabled = true
 
 [plugins]
 enabled = true

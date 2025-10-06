@@ -23,6 +23,8 @@
 #include "ui/ui.h"
 #endif
 
+#include "vpn/vpn_gateway.h"
+
 // Global context - managed carefully
 static DeadlightContext *g_context = NULL;
 
@@ -176,6 +178,7 @@ static void remove_pid_file(void) {
     }
 }
 
+
 /**
  * Daemon mode - detach from terminal
  */
@@ -285,6 +288,32 @@ static int run_interactive_mode(void) {
         return 1;
     }
 
+    gboolean vpn_enabled = deadlight_config_get_bool(g_context, "vpn", "enabled", FALSE);
+    if (vpn_enabled) {
+        g_info("VPN gateway is enabled in configuration");
+        
+        // Allocate VPN manager structure
+        g_context->vpn = g_new0(DeadlightVPNManager, 1);
+        g_context->vpn->context = g_context;
+        g_context->vpn->tun_fd = -1;
+        g_context->vpn->total_connections = 0;
+        g_context->vpn->active_connections = 0;
+        g_context->vpn->bytes_sent = 0;
+        g_context->vpn->bytes_received = 0;
+        
+        if (!deadlight_vpn_gateway_init(g_context, &error)) {
+            g_warning("Failed to initialize VPN gateway: %s", error->message);
+            g_warning("Continuing without VPN functionality");
+            g_clear_error(&error);
+            
+            g_free(g_context->vpn);
+            g_context->vpn = NULL;
+        } else {
+            g_info("VPN initialized successfully");
+        }
+    } else {
+        g_debug("VPN gateway is disabled (set vpn.enabled=true to enable)");
+    }
 #ifdef ENABLE_UI
     g_info("Starting UI server...");
     start_ui_server(g_context);
@@ -358,6 +387,14 @@ static int run_interactive_mode(void) {
         g_print("  # FTP with netcat:\n");
         g_print("  printf \"USER anonymous\\r\\n\" | nc localhost 8080\n\n");
 
+        // VPN
+        if (g_context->vpn) {
+            g_print("  # VPN Gateway (requires root/CAP_NET_ADMIN):\n");
+            g_print("  # Configure client to use 10.8.0.1 as gateway\n");
+            g_print("  sudo ip route add default via 10.8.0.1 dev tun0\n");
+            g_print("  curl http://example.com  # Traffic goes through proxy!\n\n");
+        }
+
         g_print("\nPress Ctrl+C to stop\n\n");
     }
 
@@ -367,6 +404,12 @@ static int run_interactive_mode(void) {
 
     // Cleanup
     g_info("Shutting down...");
+    
+    // Cleanup VPN if active
+    if (g_context->vpn) {
+        deadlight_vpn_gateway_cleanup(g_context);
+    }
+    
     deadlight_network_stop(g_context);
     deadlight_plugins_cleanup(g_context);
     deadlight_ssl_cleanup(g_context);
@@ -378,8 +421,7 @@ static int run_interactive_mode(void) {
 
     g_info("Deadlight proxy stopped");
     return 0;
-}
-
+} 
 /**
  * Print startup banner
  */

@@ -32,7 +32,7 @@ PLUGINDIR = src/plugins
 TESTDIR = src/tests
 BINDIR = bin
 PLUGIN_BINDIR = $(BINDIR)/plugins
-VPATH = src/core:src/protocols:src/plugins:src/ui
+VPATH = src/core:src/protocols:src/plugins:src/ui:src/vpn
 
 # Installation directories
 LIBDIR = $(PREFIX)/lib
@@ -49,8 +49,10 @@ CORE_SOURCES = main.c config.c context.c logging.c network.c ssl.c \
 
 PROTOCOL_SOURCES = http.c imap.c imaps.c socks.c smtp.c websocket.c ftp.c api.c
 
+VPN_SOURCES = vpn_gateway.c
+
 # Combine all sources into one list
-ALL_SOURCES = $(CORE_SOURCES) $(PROTOCOL_SOURCES)
+ALL_SOURCES = $(CORE_SOURCES) $(PROTOCOL_SOURCES) $(VPN_SOURCES)
 
 # ==== UI configuration ====
 UI ?= 0
@@ -93,8 +95,9 @@ $(MAIN_TARGET): $(ALL_OBJECTS)
 # === THIS IS THE ONLY RULE YOU NEED FOR COMPILING .o FILES ===
 # 'make' will use VPATH to find the .c file in the correct subdirectory.
 $(OBJDIR)/%.o: %.c
-	@echo "Compiling $<..."
-	@$(CC) $(ALL_CFLAGS) -c $< -o $@
+		@echo "Compiling $<..."
+		@mkdir -p $(dir $@)
+		@$(CC) $(ALL_CFLAGS) -c $< -o $@
 
 # Let's make this dependency more specific so it only runs when needed.
 # This says that assets.o depends on assets.c, which in turn depends on index.html
@@ -131,10 +134,15 @@ clean:
 	@rm -f src/ui/assets.c   # remove generated UI assets
 	@echo "Clean complete"
 
-# Run the built executable
+# Run the built executable (requires root for VPN)
 run: $(MAIN_TARGET)
 	@echo "Running $(PROJECT)..."
 	@./$(MAIN_TARGET) -v
+
+# Run with VPN enabled (requires root)
+run-vpn: $(MAIN_TARGET)
+	@echo "Running $(PROJECT) with VPN gateway (requires root)..."
+	@sudo ./$(MAIN_TARGET) -v
 
 # Development build with debug symbols
 dev: CFLAGS += -DDEBUG -g3 -O0
@@ -157,6 +165,9 @@ install: all
 	@install -m 755 $(MAIN_TARGET) $(DESTDIR)$(PREFIX)/bin/
 	@install -m 644 $(PLUGIN_TARGETS) $(DESTDIR)$(LIBDIR)/$(PROJECT)/plugins/
 	@echo "Installation complete"
+	@echo ""
+	@echo "Note: VPN gateway requires root/CAP_NET_ADMIN capabilities"
+	@echo "To enable VPN, set vpn.enabled=true in $(CONFDIR)/deadlight.conf"
 
 # Uninstall target
 uninstall:
@@ -171,6 +182,7 @@ help:
 	@echo "  all          - Build everything (default)"
 	@echo "  clean        - Remove build artifacts"
 	@echo "  run          - Build and run the proxy"
+	@echo "  run-vpn      - Build and run with VPN (requires sudo)"
 	@echo "  dev          - Build with debug flags and run"
 	@echo "  plugins      - Build all plugins"
 	@echo "  plugins-only - Build only plugins (no main executable)"
@@ -180,9 +192,14 @@ help:
 	@echo ""
 	@echo "UI options (set UI=1 to enable the embedded web UI):"
 	@echo "  make UI=1           - Build with UI support (requires libmicrohttpd)"
-	@echo "  make clean UI=1    - Clean with UI assets"
+	@echo "  make clean UI=1     - Clean with UI assets"
+	@echo ""
+	@echo "VPN Gateway:"
+	@echo "  - Automatically included in build"
+	@echo "  - Requires root to run: sudo ./bin/deadlight"
+	@echo "  - Enable in config: [vpn] enabled=true"
 
 #=============================================================================
 # Special Targets
 #=============================================================================
-.PHONY: all dirs clean run dev plugins plugins-only install uninstall help
+.PHONY: all dirs clean run run-vpn dev plugins plugins-only install uninstall help
