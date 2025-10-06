@@ -1,21 +1,26 @@
 # Deadlight Proxy
 
-A high-performance, multi-protocol proxy server written in C using GLib. 
-Designed for deep packet inspection, protocol analysis, and plugin extensibility.
+A high-performance, multi-protocol proxy server written in C using GLib.
+Features kernel-integrated VPN gateway, deep packet inspection, protocol analysis and plugin extensibility.
 
 [Features](#features) ·  [Usage](#usage) · [Getting Started](#getting-started) · [Configuration](#configuration) · [Extending Deadlight](#extending-deadlight) · [Architecture](#architecture) · [Roadmap](#roadmap)
 
 ---
 
-### Overview
-Deadlight is a C-based proxy server built on GLib that handles multiple network protocols through a unified, extensible architecture. It features automatic protocol detection, TLS interception with certificate mimicry, plugin support, and a built-in web UI for monitoring and control.
+## Overview
+Deadlight is a C-based proxy server built on GLib that handles multiple network protocols through a unified, extensible architecture. It features automatic protocol detection, TLS interception with certificate mimicry, plugin support, a VPN gateway mode, and a built-in web UI for monitoring and control.
 
-## What is Deadlight Proxy?
+
+### What is Deadlight Proxy?
 
 Deadlight Proxy is a standalone, multi-protocol proxy server that can be used:
 
-1. **Standalone**: As a traditional HTTP/SOCKS proxy with TLS interception
-2. **As part of the Deadlight Edge Platform**: As a protocol bridge between 
+1. **Standalone**:
+   - **Traditional Proxy**: HTTP/HTTPS/SOCKS proxy with TLS interception
+   - **VPN Gateway**: Layer 3 tunneling with kernel-level TCP/IP stack integration
+   - **Protocol Bridge**: API-based translation between web and native protocols (SMTP, IMAP, etc.)
+   - **Network Security Tool**: Ad blocking, rate limiting, and traffic inspection
+3. **As part of the Deadlight Edge Platform**: As a protocol bridge between
    Cloudflare Workers and local services (email, federation, etc.). [Using as a component](#using-as-a-component)
 
 This README focuses on standalone usage. For platform integration, 
@@ -23,9 +28,10 @@ see [edge.deadlight](https://github.com/gnarzilla/edge.deadlight).
 
 ---
 
-#### What sets Deadlight apart:
+### What sets Deadlight apart:
 
-- **True Multi-Protocol:** One binary handles HTTP/S, SOCKS4/5, SMTP, IMAP/S, FTP, WebSocket, and custom protocols
+- **Kernel-Integrated VPN**: True Layer 3 VPN gateway using Linux TUN devices
+- **True Multi-Protocol:** One binary handles HTTP/S, SOCKS4/5, SMTP, IMAP/S, FTP, WebSocket, VPN, and custom protocols
 - **Intelligent TLS Interception:** Mimics upstream certificates for transparent HTTPS inspection [Security Considerations](#security-considerations)
 - **Plugin Architecture:** Extend functionality without recompiling (ad-blocking, rate limiting, custom filters)
 - **Zero-Config Protocol Detection:** Automatically identifies protocols from connection patterns
@@ -35,7 +41,7 @@ see [edge.deadlight](https://github.com/gnarzilla/edge.deadlight).
 
 ---
 
-### Architecture
+## Architecture
 
 Deadlight’s core innovation is its decoupling of the protocol from the service.
 
@@ -52,34 +58,37 @@ Deadlight is built on a modular design managed by a central `DeadlightContext`. 
 4.  The appropriate registered `DeadlightProtocolHandler` is invoked to handle the connection.
 5.  The handler processes the request. It can either complete the request synchronously or, for long-lived tunnels, hand off control to **asynchronous I/O watchers** on its own thread's event loop. This prevents the worker thread from blocking.
 
-This is all managed by a set of distinct managers:
--   **Network Manager**: Handles listener sockets, the worker pool, and connection state.
--   **SSL Manager**: Manages GIO/gnutls contexts, CA certificates, and performs SSL interception.
--   **Protocol System**: Manages the registration and detection of protocol handlers.
--   **Configuration Manager**: Parses INI-style configuration files.
--   **Connection Pool**: Manages and reuses upstream server connections.
+**VPN Gateway Mode:** Unlike traditional proxies that work at Layer 7 (Application), Deadlight can operate at Layer 3 (Network) using Linux TUN devices. This allows it to:
+- Route all system traffic transparently
+- Handle any TCP/IP protocol without application configuration
+- Maintain kernel-level TCP state for optimal performance
+- Integrate with existing connection pooling for upstream efficiency
 
+**Modular Design:** The system is organized around these core managers:
+- **Network Manager**: Handles listener sockets, worker pool, and connection state
+- **SSL Manager**: Manages TLS contexts, CA certificates, and performs interception
+- **Protocol System**: Manages registration and detection of protocol handlers
+- **VPN Manager**: Handles TUN device creation, packet routing, and TCP state
+- **Connection Pool**: Reuses upstream connections for efficiency
+- **Plugin System**: Dynamically loads and manages extension modules
 
-### Features
+**Connection Flow:**
+1. **Proxy Mode**: Connections → Protocol Detection → Handler → Upstream
+2. **VPN Mode**: Packets → TUN Device → TCP State Machine → Proxy Pipeline → Upstream
 
-- **High-Performance C Foundation:** Built with the robust and efficient GLib ecosystem for high-throughput, low-latency network I/O and multi-threaded connection handling.
+## Features
 
-- **Multi-Protocol Support:** A single binary can act as a bridge for HTTP/HTTPS, SOCKS, SMTP, IMAP/S, Websocket, FTP (with command inspection) and a custom API.
+- **VPN Gateway (New):** Kernel-integrated Layer 3 tunneling with transparent TCP proxying through TUN devices
 
-- **API-First Design:** Complete REST API for external integration, enabling real-time status monitoring, email sending, and federation from any web application.
+- **High-Performance C Foundation:** Built with GLib for efficient async I/O and multi-threading
 
-- **Email-based Federation:** A simplified approach to decentralized social media that uses proven email protocols for instance-to-instance communication, eliminating the need to invent a new protocol.
+- **Multi-Protocol Support:** HTTP/HTTPS, SOCKS4/5, SMTP, IMAP/S, WebSocket, FTP, and custom protocols
 
-- **Advanced Security:** Features include on-the-fly TLS interception (for development/analysis), robust certificate validation, and a secure deployment model that leverages outbound-only connections.
+- **Advanced Security:** TLS interception, certificate validation, plugin-based filtering
 
- **Advanced Multi-Protocol Support:**
-   - **HTTP/1.1 & HTTPS:** Full proxying with a robust `CONNECT` tunnel implementation.
-   - **SSL/TLS Interception (MITM):** Full Man-in-the-Middle capability with on-the-fly certificate generation for deep traffic analysis.
-   - **WebSocket (Terminating Proxy):** Acts as a true WebSocket endpoint, enabling frame-by-frame inspection, logging, and manipulation.
-   - **FTP (Intelligent Proxying):** Full command inspection and dynamic rewriting of `PASV` responses to transparently proxy passive mode data connections.
-   - **SOCKS4/4a & SOCKS5:** Standardized support for versatile TCP-level proxying.
-   - **IMAP/S & SMTP:** Basic support for email protocols, including `STARTTLS`.
-   - **Custom API:** A built-in API for management and integration.
+- **Connection Pooling:** Efficient upstream connection reuse across VPN and proxy modes
+
+- **Real-time Monitoring:** Built-in web UI for traffic inspection and statistics
 
 ## API Endpoints (Platform Integration)
 
@@ -95,7 +104,7 @@ These endpoints translate web requests into native protocol operations.
 Example: `/api/email/send` receives JSON, translates it to SMTP 
 commands, and sends via your configured SMTP server.
 
-### Using as a Component
+## Using as a Component
 
 Deadlight Proxy can be embedded in larger systems:
 
@@ -136,9 +145,9 @@ When using with edge.deadlight:
 
 ---
 
-### Use Cases
+## Use Cases
 
-#### Network Security & Privacy
+### Network Security & Privacy
 
 **DNS-Level Ad Blocking (Pi-hole Inspired)**
 
@@ -165,7 +174,7 @@ Inspect encrypted traffic for compliance/DLP
 Rate limit API endpoints per-client
 Block malicious domains in real-time
 
-#### Development & Testing
+### Development & Testing
 
 **HTTPS Debugging Without Charles/Burp**
 
@@ -194,7 +203,7 @@ Test how clients handle malformed responses
 Inject delays or errors for chaos testing
 Analyze protocol handshakes in detail
 
-#### Self-Hosted Infrastructure
+### Self-Hosted Infrastructure
 
 Email Server Bridge
 
@@ -227,8 +236,8 @@ Aggregate logs and metrics
 
 
 
-### Roadmap
-#### v1.0 (Current):
+## Roadmap
+### v1.0 (Current):
 
 + **API-First:** Full REST API for real-time status and management.
 + **Tailscale Mesh Deployment:** Simplified private access to remote servers leveraging Tailscale's network.
@@ -243,9 +252,9 @@ Aggregate logs and metrics
 ---
 
 
-### Getting Started
+## Getting Started
 
-#### Prerequisites
+### Prerequisites
 
 -   A C99 compliant compiler (GCC or Clang)
 -   `make`
@@ -263,7 +272,7 @@ sudo apt-get install build-essential pkg-config libglib2.0-dev libssl-dev glib-n
 - `gnutls`: GNU TLS functions.
 - `glib-networking`: The essential backend for GIO's TLS functionality.
 
-#### Building
+### Building
 
 Clone the repository and use the provided Makefile:
 ```bash
@@ -273,7 +282,7 @@ make clean && make UI=1
 ```
 The executable will be located at `bin/deadlight`.
 
-#### Configuration
+## Configuration
 
 The proxy uses an INI-style configuration file. A sample is provided at `deadlight.conf.example`.
 
@@ -317,7 +326,7 @@ upstream_port = 21
 
 ```
 
-#### Running
+## Running
 ```bash
 ./bin/deadlight -c deadlight.conf.example
 ```
@@ -327,9 +336,9 @@ sudo cp ~/.deadlight/ca/ca.crt /usr/local/share/ca-certificates/
 sudo update-ca-certificates
 ```
 
-### Usage
+## Usage
 
-#### Example 1: HTTP/HTTPS Web Proxy
+### Example 1: HTTP/HTTPS Web Proxy
 
 Configure your browser or system to use `http://localhost:8080` as its proxy. Or, use `curl`:
 
@@ -342,24 +351,24 @@ curl -x http://localhost:8080 https://example.com
 ```
 ![Deadlight Proxy](assets/proxy.deadlight_test_commands.png)
 
-#### Example 2: SOCKS4 Privacy Proxy
+### Example 2: SOCKS4 Privacy Proxy
 
 Use `curl` to route a request through the SOCKS4 handler:
 ```bash
 curl --socks4 localhost:8080 http://example.com
 ```
 
-#### Example 3: Status API
+### Example 3: Status API
 ```bash
 curl http://localhost:8080/api/status
 ```
 
-#### Example 4: Connection stats
+### Example 4: Connection stats
 ```bash
 curl http://localhost:8080/api/connections
 ```
 
-#### Example 5: IMAPS Secure Tunnel
+### Example 5: IMAPS Secure Tunnel
 
 Test the secure IMAP tunnel using `telnet` (this proves the TLS handshake and tunneling):
 ```bash
@@ -371,7 +380,7 @@ a001 NOOP
 ```
 The proxy will establish a secure TLS connection to the upstream IMAP server and tunnel the data.
 
-#### Example 6: FTP Passive Mode Proxying
+### Example 6: FTP Passive Mode Proxying
 Connect to the proxy with a full-featured FTP client like FileZilla or `lftp`, using `localhost` as the host and `8080` as the port. The proxy will handle the `PASV` command and correctly rewrite the data connection address.
 
 Alternatively, for a quick command-line test:
@@ -379,7 +388,7 @@ Alternatively, for a quick command-line test:
 printf "USER anonymous\r\nPASV\r\n" | nc localhost 8080
 ```
 
-#### Command Line Options
+### Command Line Options
 
 -   `-c, --config FILE`: Path to configuration file.
 -   `-p, --port PORT`: Port to listen on (overrides config).
@@ -387,12 +396,12 @@ printf "USER anonymous\r\nPASV\r\n" | nc localhost 8080
 -   `-v, --verbose`: Enable verbose (debug) logging.
 -   `-h, --help`: Show help message.
 
-#### Proxying HTTP
+### Proxying HTTP
 ```bash
 curl -x http://localhost:8080 http://example.com
 ```
 
-#### Proxying & Intercepting HTTPS
+### Proxying & Intercepting HTTPS
 For TLS interception to work, you must instruct your client to trust the proxy's Certificate Authority. The CA certificate is generated automatically (e.g., in `~/.deadlight/ca/ca.crt`).
 
 ```bash
@@ -441,7 +450,7 @@ To add support for a new protocol:
 
 The table-driven detection system supports multiple matching types (exact, prefix, contains, custom) and compound rules (AND/OR), making it easy to handle complex protocol signatures.
 
-### Project Structure
+## Project Structure
 ```
 deadlight/
 ├── bin/                    # Compiled binaries
@@ -457,11 +466,11 @@ deadlight/
 └── README.md               # This file
 ```
 
-### License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 
-### Support
+## Support
 
 [Support is greatly appreciated! - ko-fi/gnarzilla](https://ko-fi.com/gnarzilla)
