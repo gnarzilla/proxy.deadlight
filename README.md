@@ -365,7 +365,7 @@ upstream_port = 21
 ./bin/deadlight -c deadlight.conf.example
 
 # VPN Gateway (requires root)
-sudo ./bin/deadlight -deadlight.conf.example
+sudo ./bin/deadlight -c deadlight.conf.vpn
 ```
 
 Add deadlight certificate to the trust store. If using Firefox you will also need to add via firefox's settings.
