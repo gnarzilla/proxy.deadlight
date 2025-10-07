@@ -3,7 +3,7 @@
 A high-performance, multi-protocol proxy server written in C using GLib.
 Features kernel-integrated VPN gateway, deep packet inspection, protocol analysis and plugin extensibility.
 
-[Features](#features) ·  [Usage](#usage) · [Getting Started](#getting-started) · [Configuration](#configuration) · [Extending Deadlight](#extending-deadlight) · [Architecture](#architecture) · [Use Cases](#use-cases) · [Roadmap](#roadmap)
+[Features](#features) ·  [Usage](#usage) · [Getting Started](#getting-started) · [Architecture](#architecture)· [Extending Deadlight](#extending-deadlight) · [Use Cases](#use-cases) · [Roadmap](#roadmap) · [Configuration](#configuration) 
 
 ---
 
@@ -365,7 +365,7 @@ upstream_port = 21
 ./bin/deadlight -c deadlight.conf.example
 
 # VPN Gateway (requires root)
-sudo ./bin/deadlight -deadlight.conf.example
+sudo ./bin/deadlight -c deadlight.conf.vpn
 ```
 
 Add deadlight certificate to the trust store. If using Firefox you will also need to add via firefox's settings.
