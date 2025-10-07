@@ -51,6 +51,16 @@ struct _VPNSession {
     
     // Back reference
     DeadlightVPNManager *vpn;
+
+    // Retransmission support
+    struct {
+        guint8 *data;
+        gsize len;
+        guint8 flags;
+        gint64 sent_at;
+        guint retries;
+    } last_packet;
+    guint retrans_timer_id;
 };
 
 // VPN Manager
@@ -64,7 +74,8 @@ struct _DeadlightVPNManager {
     gchar *tun_device_name;
     
     // Session tracking
-    GHashTable *sessions;  // session_key -> VPNSession
+    GHashTable *sessions;      // TCP sessions
+    GHashTable *udp_sessions;  // UDP sessions
     GMutex sessions_mutex;
     
     // Configuration
@@ -77,8 +88,6 @@ struct _DeadlightVPNManager {
     guint64 active_connections;
     guint64 bytes_sent;
     guint64 bytes_received;
-
-    guint watch_id;
 };
 
 // Public API

@@ -37,6 +37,8 @@ see [edge.deadlight](https://github.com/gnarzilla/edge.deadlight).
 - **Zero-Config Protocol Detection:** Automatically identifies protocols from connection patterns
 - **Built-to-scale:** Connection pooling, worker threads, async I/O, graceful error handling
 
+---
+
 ![Deadlight Proxy with local web interface](assets/proxy_ui.gif)
 
 ---
@@ -76,19 +78,47 @@ Deadlight is built on a modular design managed by a central `DeadlightContext`. 
 1. **Proxy Mode**: Connections → Protocol Detection → Handler → Upstream
 2. **VPN Mode**: Packets → TUN Device → TCP State Machine → Proxy Pipeline → Upstream
 
-## Features
+### Features
 
-- **VPN Gateway (New):** Kernel-integrated Layer 3 tunneling with transparent TCP proxying through TUN devices
+- **High-Performance C Foundation:** Built with the robust and efficient GLib ecosystem for high-throughput, low-latency network I/O and multi-threaded connection handling.
 
-- **High-Performance C Foundation:** Built with GLib for efficient async I/O and multi-threading
+- **VPN Gateway Mode:** Kernel-integrated Layer 3 tunneling with transparent TCP proxying through TUN devices
 
-- **Multi-Protocol Support:** HTTP/HTTPS, SOCKS4/5, SMTP, IMAP/S, WebSocket, FTP, and custom protocols
+- **Multi-Protocol Support:** A single binary can act as a bridge for HTTP/HTTPS, SOCKS, SMTP, IMAP/S, Websocket, FTP (with command inspection) and a custom API.
 
-- **Advanced Security:** TLS interception, certificate validation, plugin-based filtering
+- **API-First Design:** Complete REST API for external integration, enabling real-time status monitoring, email sending, and federation from any web application.
 
-- **Connection Pooling:** Efficient upstream connection reuse across VPN and proxy modes
+- **Email-based Federation:** A simplified approach to decentralized social media that uses proven email protocols for instance-to-instance communication, eliminating the need to invent a new protocol.
 
-- **Real-time Monitoring:** Built-in web UI for traffic inspection and statistics
+- **Advanced Security:** Features include on-the-fly TLS interception (for development/analysis), robust certificate validation, and a secure deployment model that leverages outbound-only connections.
+
+**Advanced Multi-Protocol Support:**
+- **HTTP/1.1 & HTTPS:** Full proxying with a robust `CONNECT` tunnel implementation
+- **SSL/TLS Interception (MITM):** Full Man-in-the-Middle capability with on-the-fly certificate generation for deep traffic analysis
+- **VPN Gateway:** Kernel-level TCP/IP stack integration for transparent system-wide proxying
+- **WebSocket (Terminating Proxy):** Acts as a true WebSocket endpoint, enabling frame-by-frame inspection, logging, and manipulation
+- **FTP (Intelligent Proxying):** Full command inspection and dynamic rewriting of `PASV` responses to transparently proxy passive mode data connections
+- **SOCKS4/4a & SOCKS5:** Standardized support for versatile TCP-level proxying
+- **IMAP/S & SMTP:** Basic support for email protocols, including `STARTTLS`
+- **Custom API:** A built-in API for management and integration
+
+**Connection Management:**
+- **Connection Pool:** Efficient reuse of upstream connections across VPN and proxy modes
+- **Worker Thread Pool:** Configurable thread pool for handling concurrent connections
+- **Async I/O:** Non-blocking operations using GLib's event loop
+- **Session Management:** Intelligent TCP state tracking in VPN mode with automatic cleanup
+
+**Plugin System:**
+- **Dynamic Loading:** Load plugins at runtime without recompiling
+- **AdBlocker Plugin:** Block ads and trackers at the network level (21+ domains by default)
+- **RateLimiter Plugin:** Configurable rate limiting per client (60 req/min default, 10 req/min for auth endpoints)
+- **Plugin API:** Simple interface for creating custom plugins in C
+
+**Monitoring & Control:**
+- **Built-in Web UI:** Real-time monitoring dashboard (port 8081 by default)
+- **REST API:** Complete API for status, statistics, and control
+- **VPN Statistics:** Track active connections, total connections, bytes sent/received
+- **Live Logging:** Real-time log viewing through web interface
 
 ## API Endpoints (Platform Integration)
 
