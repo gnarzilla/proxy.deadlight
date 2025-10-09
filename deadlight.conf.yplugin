@@ -1,26 +1,50 @@
 [core]
 port = 8080
 bind_address = 0.0.0.0
-max_connections = 500
-log_level = info
+max_connections = 5000
 worker_threads = 4
-
-[core]
 log_level = debug
+
+[vpn]
+# Enable VPN gateway (requires root privileges)
+enabled=true
+tun_device=tun0
+gateway_ip=10.8.0.1
+client_subnet=10.8.0.0/24
+
+# TUN device configuration
+device = tun0
+address = 10.8.0.1
+netmask = 255.255.255.0
+
+# Client IP range
+client_network = 10.8.0.0/24
+
+# DNS servers to provide to clients (optional)
+dns_servers = 8.8.8.8,8.8.4.4
+
+[network]
+upstream_timeout=30
+tcp_nodelay=true
+ipv6_enabled=true
+connection_pool_size=10
+connection_pool_timeout=300
+
+[protocols]
+http_enabled=true
+https_enabled=true
+socks_enabled=true
+protocol_detection_timeout=5
 
 [ssl]
 enabled = true
-ca_cert_file = /home/thatch/.deadlight/ca.crt
-ca_key_file = /home/thatch/.deadlight/ca.key
+ca_cert_file = /home/thatch/.deadlight/ca/ca.crt
+ca_key_file = /home/thatch/.deadlight/ca/ca.key
 cert_cache_dir = /tmp/deadlight_certs
-
-[protocols]
-http_enabled = true
-https_enabled = true
-# connect_enabled = true
+intercept_enable = true
 
 [plugins]
-enabled = false
+enabled = true
 plugin_dir = ./bin/plugins
 
 [imap]
@@ -57,9 +81,27 @@ auth_required = false  ; Set to true to force username/pass
 username = testuser
 password = testpass
 
+[ftp]
+upstream_host = ftp.gnu.org
+upstream_port = 21
+
 [adblocker]
 enabled = true
 blocklist_path = /etc/deadlight/blocklist.txt
 # You can add custom blocklist URLs
 blocklist_url_0 = https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
 
+[ratelimiter]
+enabled = true
+requests_per_minute = 60
+auth_requests_per_minute = 10
+
+# SOCKS settings  
+socks_connections_per_minute = 30
+socks_high_risk_connections_per_minute = 5
+
+# Allow bursts
+burst_size = 15
+
+# Auth endpoint patterns
+auth_patterns = /auth/,/login/,/api/auth,/token

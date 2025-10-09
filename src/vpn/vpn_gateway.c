@@ -58,6 +58,16 @@ struct tcp_header {
     guint16 urgent_pointer;  // Urgent pointer
 } __attribute__((packed));
 
+// IPv6 header (40 bytes fixed)
+struct ipv6_header {
+    guint32 version_tc_fl;   // Version(4) + Traffic class(8) + Flow label(20)
+    guint16 payload_length;  // Payload length
+    guint8 next_header;      // Next header (TCP=6, UDP=17, ICMPv6=58)
+    guint8 hop_limit;        // Hop limit (like TTL)
+    struct in6_addr src_addr;  // Source address (128 bits)
+    struct in6_addr dest_addr; // Destination address (128 bits)
+} __attribute__((packed));
+
 // UDP header (8 bytes)
 struct udp_header {
     guint16 src_port;
@@ -109,6 +119,21 @@ static VPNUDPSession *vpn_udp_session_new(DeadlightVPNManager *vpn, guint32 clie
 static void vpn_udp_session_free(VPNUDPSession *session);
 static gboolean cleanup_idle_sessions(gpointer user_data);
 static gboolean cleanup_idle_udp_sessions(gpointer user_data);
+static guint16 tcp6_checksum(const struct in6_addr *src_addr,
+                            const struct in6_addr *dest_addr,
+                            const void *tcp_data, gsize tcp_len);
+static guint16 udp6_checksum(const struct in6_addr *src_addr,
+                            const struct in6_addr *dest_addr,
+                            const void *udp_data, gsize udp_len);
+static void send_tcp6_packet(DeadlightVPNManager *vpn, VPNSession *session,
+                            guint8 flags, const guint8 *payload, gsize payload_len);
+static void send_udp6_packet(DeadlightVPNManager *vpn, VPNUDPSession *session,
+                            const guint8 *payload, gsize payload_len);
+static void handle_tcp6_packet(DeadlightVPNManager *vpn, struct ipv6_header *ip6_hdr,
+                              struct tcp_header *tcp_hdr, guint8 *payload, gsize payload_len);
+static void handle_udp6_packet(DeadlightVPNManager *vpn, struct ipv6_header *ip6_hdr,
+                              struct udp_header *udp_hdr, guint8 *payload, gsize payload_len);
+static void handle_ipv6_packet(DeadlightVPNManager *vpn, guint8 *packet, gsize packet_len);
 
 //=============================================================================
 // Helper functions
@@ -267,6 +292,105 @@ static guint16 udp_checksum(guint32 src_ip, guint32 dest_ip,
     guint32 sum = 0;
     const guint16 *buf = (const guint16 *)pseudo_buf;
     gsize len = 12;
+
+    while (len > 1) {
+        sum += *buf++;
+        len -= 2;
+    }
+
+    buf = udp_data;
+    len = udp_len;
+    while (len > 1) {
+        sum += *buf++;
+        len -= 2;
+    }
+
+    if (len == 1) {
+        sum += *(guint8 *)buf;
+    }
+
+    sum = (sum >> 16) + (sum & 0xFFFF);
+    sum += (sum >> 16);
+
+    return (guint16)~sum;
+}
+
+static guint16 tcp6_checksum(const struct in6_addr *src_addr,
+                            const struct in6_addr *dest_addr,
+                            const void *tcp_data, gsize tcp_len) {
+    // IPv6 pseudo-header for TCP checksum
+    // Format: src_addr(16) + dest_addr(16) + tcp_length(4) + zeros(3) + next_header(1)
+    guint8 pseudo_buf[40];  // 16 + 16 + 4 + 3 + 1 = 40 bytes
+    
+    // Copy source address (128 bits = 16 bytes)
+    memcpy(pseudo_buf + 0, src_addr, 16);
+    
+    // Copy destination address (128 bits = 16 bytes)
+    memcpy(pseudo_buf + 16, dest_addr, 16);
+    
+    // TCP length (32 bits, big-endian)
+    guint32 tcp_length_net = htonl(tcp_len);
+    memcpy(pseudo_buf + 32, &tcp_length_net, 4);
+    
+    // Three zero bytes
+    pseudo_buf[36] = 0;
+    pseudo_buf[37] = 0;
+    pseudo_buf[38] = 0;
+    
+    // Next header (protocol = TCP = 6)
+    pseudo_buf[39] = IPPROTO_TCP;
+
+    // Calculate checksum over pseudo-header + TCP segment
+    guint32 sum = 0;
+    const guint16 *buf = (const guint16 *)pseudo_buf;
+    gsize len = 40;
+
+    // Sum pseudo-header
+    while (len > 1) {
+        sum += *buf++;
+        len -= 2;
+    }
+
+    // Sum TCP header + data
+    buf = tcp_data;
+    len = tcp_len;
+    while (len > 1) {
+        sum += *buf++;
+        len -= 2;
+    }
+
+    // Handle odd byte
+    if (len == 1) {
+        sum += *(guint8 *)buf;
+    }
+
+    // Fold 32-bit sum to 16 bits
+    sum = (sum >> 16) + (sum & 0xFFFF);
+    sum += (sum >> 16);
+
+    return (guint16)~sum;
+}
+
+static guint16 udp6_checksum(const struct in6_addr *src_addr,
+                            const struct in6_addr *dest_addr,
+                            const void *udp_data, gsize udp_len) {
+    // IPv6 pseudo-header for UDP checksum (same format as TCP)
+    guint8 pseudo_buf[40];
+    
+    memcpy(pseudo_buf + 0, src_addr, 16);
+    memcpy(pseudo_buf + 16, dest_addr, 16);
+    
+    guint32 udp_length_net = htonl(udp_len);
+    memcpy(pseudo_buf + 32, &udp_length_net, 4);
+    
+    pseudo_buf[36] = 0;
+    pseudo_buf[37] = 0;
+    pseudo_buf[38] = 0;
+    pseudo_buf[39] = IPPROTO_UDP;
+
+    guint32 sum = 0;
+    const guint16 *buf = (const guint16 *)pseudo_buf;
+    gsize len = 40;
 
     while (len > 1) {
         sum += *buf++;
@@ -571,6 +695,144 @@ static void send_tcp_packet(DeadlightVPNManager *vpn, VPNSession *session,
     }
 }
 
+static void send_udp6_packet(DeadlightVPNManager *vpn, VPNUDPSession *session,
+                            const guint8 *payload, gsize payload_len) {
+    guint8 packet[2048];
+    struct ipv6_header *ip6_hdr = (struct ipv6_header *)packet;
+    struct udp_header *udp_hdr = (struct udp_header *)(packet + sizeof(struct ipv6_header));
+    
+    gsize ip6_hdr_len = sizeof(struct ipv6_header);
+    gsize udp_hdr_len = sizeof(struct udp_header);
+    gsize total_len = ip6_hdr_len + udp_hdr_len + payload_len;
+    
+    if (total_len > sizeof(packet)) {
+        log_warn("VPN: IPv6 UDP packet too large (%zu bytes)", total_len);
+        return;
+    }
+    
+    // Build IPv6 header
+    memset(ip6_hdr, 0, ip6_hdr_len);
+    ip6_hdr->version_tc_fl = htonl(0x60000000);  // IPv6
+    ip6_hdr->payload_length = htons(udp_hdr_len + payload_len);
+    ip6_hdr->next_header = IPPROTO_UDP;
+    ip6_hdr->hop_limit = 64;
+    memcpy(&ip6_hdr->src_addr, &session->dest_ip, sizeof(struct in6_addr));
+    memcpy(&ip6_hdr->dest_addr, &session->client_ip, sizeof(struct in6_addr));
+    
+    // Build UDP header
+    memset(udp_hdr, 0, udp_hdr_len);
+    udp_hdr->src_port = htons(session->dest_port);
+    udp_hdr->dest_port = htons(session->client_port);
+    udp_hdr->length = htons(udp_hdr_len + payload_len);
+    
+    // Copy payload
+    if (payload_len > 0 && payload) {
+        memcpy(packet + ip6_hdr_len + udp_hdr_len, payload, payload_len);
+    }
+    
+    // UDP checksum
+    struct in6_addr src_copy, dest_copy;
+    memcpy(&src_copy, &ip6_hdr->src_addr, sizeof(struct in6_addr));
+    memcpy(&dest_copy, &ip6_hdr->dest_addr, sizeof(struct in6_addr));
+    udp_hdr->checksum = udp6_checksum(&src_copy, &dest_copy,
+                                     udp_hdr, udp_hdr_len + payload_len);
+    // Write to TUN
+    gssize written = write(vpn->tun_fd, packet, total_len);
+    if (written < 0) {
+        log_warn("VPN: Failed to write IPv6 UDP packet to TUN: %s", g_strerror(errno));
+        return;
+    }
+    
+    vpn->bytes_sent += written;
+    
+    gchar client_str[INET6_ADDRSTRLEN];
+    inet_ntop(AF_INET6, &session->client_ip, client_str, INET6_ADDRSTRLEN);
+    log_debug("VPN: Sent IPv6 UDP reply to [%s]:%u (%zu bytes)", 
+             client_str, session->client_port, total_len);
+}
+
+static void send_tcp6_packet(DeadlightVPNManager *vpn, VPNSession *session,
+                            guint8 flags, const guint8 *payload, gsize payload_len) {
+    guint8 packet[2048];
+    struct ipv6_header *ip6_hdr = (struct ipv6_header *)packet;
+    struct tcp_header *tcp_hdr = (struct tcp_header *)(packet + sizeof(struct ipv6_header));
+    
+    gsize ip6_hdr_len = sizeof(struct ipv6_header);
+    gsize tcp_hdr_len = sizeof(struct tcp_header);
+    gsize total_len = ip6_hdr_len + tcp_hdr_len + payload_len;
+
+    if (total_len > sizeof(packet)) {
+        log_warn("VPN: IPv6 packet too large (%zu bytes), dropping", total_len);
+        return;
+    }
+
+    // Build IPv6 header
+    memset(ip6_hdr, 0, ip6_hdr_len);
+    
+    // Version (4 bits) = 6, Traffic class (8 bits) = 0, Flow label (20 bits) = 0
+    ip6_hdr->version_tc_fl = htonl(0x60000000);  // 0110 0000 ... = IPv6
+    
+    // Payload length (does NOT include IPv6 header, only TCP header + data)
+    ip6_hdr->payload_length = htons(tcp_hdr_len + payload_len);
+    
+    ip6_hdr->next_header = IPPROTO_TCP;
+    ip6_hdr->hop_limit = 64;
+    
+    // Source = destination (we're replying FROM the dest TO the client)
+    memcpy(&ip6_hdr->src_addr, &session->dest_ip, sizeof(struct in6_addr));
+    memcpy(&ip6_hdr->dest_addr, &session->client_ip, sizeof(struct in6_addr));
+
+    // Build TCP header
+    memset(tcp_hdr, 0, tcp_hdr_len);
+    tcp_hdr->src_port = htons(session->dest_port);
+    tcp_hdr->dest_port = htons(session->client_port);
+    tcp_hdr->seq_num = htonl(session->seq);
+    tcp_hdr->ack_num = htonl(session->ack);
+    tcp_hdr->data_offset_flags = (5 << 4);  // 5-word header (20 bytes)
+    tcp_hdr->flags = flags;
+    tcp_hdr->window_size = htons(65535);
+    tcp_hdr->urgent_pointer = 0;
+
+    // Copy payload
+    if (payload_len > 0 && payload) {
+        memcpy(packet + ip6_hdr_len + tcp_hdr_len, payload, payload_len);
+    }
+
+    // TCP checksum for IPv6 (uses pseudo-header)
+    struct in6_addr src_copy, dest_copy;
+    memcpy(&src_copy, &ip6_hdr->src_addr, sizeof(struct in6_addr));
+    memcpy(&dest_copy, &ip6_hdr->dest_addr, sizeof(struct in6_addr));
+    tcp_hdr->checksum = tcp6_checksum(&src_copy, &dest_copy,
+                                     tcp_hdr, tcp_hdr_len + payload_len);
+    // Write to TUN
+    gssize written = write(vpn->tun_fd, packet, total_len);
+    if (written < 0 || (gsize)written != total_len) {
+        log_warn("VPN: Failed/partial TUN write for IPv6: %zd/%zu (%s)", 
+                 written, total_len, strerror(errno));
+        return;
+    }
+
+    vpn->bytes_sent += (guint64)written;
+
+    gchar client_str[INET6_ADDRSTRLEN];
+    inet_ntop(AF_INET6, &session->client_ip, client_str, INET6_ADDRSTRLEN);
+
+    log_debug("VPN: Sent IPv6 %s to [%s]:%u (%zu bytes, SEQ=%u, ACK=%u)",
+             (flags & TCP_SYN) ? "SYN-ACK" : (flags & TCP_FIN) ? "FIN" :
+             (flags & TCP_RST) ? "RST" : (flags & TCP_PSH) ? "PSH-ACK" : "ACK",
+             client_str, session->client_port, total_len, session->seq, session->ack);
+
+    // Store for retransmission
+    if (flags & (TCP_SYN | TCP_PSH | TCP_FIN)) {
+        g_free(session->last_packet.data);
+        session->last_packet.data = payload_len ? g_memdup2(payload, payload_len) : NULL;
+        session->last_packet.len = payload_len;
+        session->last_packet.flags = flags;
+        session->last_packet.retries = 0;
+        session->last_packet.sent_at = g_get_monotonic_time();
+    }
+}
+
 static void send_udp_packet(DeadlightVPNManager *vpn, VPNUDPSession *session,
                            const guint8 *payload, gsize payload_len) {
     guint8 packet[2048];
@@ -695,7 +957,22 @@ static gboolean on_udp_upstream_readable(GIOChannel *source, GIOCondition condit
                                    sizeof(buffer), NULL, &error);
     
     if (bytes > 0) {
-        send_udp_packet(vpn, session, buffer, bytes);
+        // Determine if this is IPv4 or IPv6 session by checking address family
+        gboolean is_ipv6 = FALSE;
+        
+        // Check if it's an IPv4-mapped IPv6 address
+        if (IN6_IS_ADDR_V4MAPPED(&session->client_ip)) {
+            is_ipv6 = FALSE;  // IPv4
+        } else {
+            is_ipv6 = TRUE;   // Native IPv6
+        }
+        
+        if (is_ipv6) {
+            send_udp6_packet(vpn, session, buffer, bytes);
+        } else {
+            send_udp_packet(vpn, session, buffer, bytes);
+        }
+        
         session->last_activity = g_get_monotonic_time();
         log_debug("VPN: Forwarded %zd UDP bytes from upstream to %s", 
                  bytes, session->session_key);
@@ -987,52 +1264,398 @@ static void handle_udp_packet(DeadlightVPNManager *vpn, struct ip_header *ip_hdr
 }
 
 static void handle_ip_packet(DeadlightVPNManager *vpn, guint8 *packet, gsize packet_len) {
-    if (packet_len < sizeof(struct ip_header)) {
+    if (packet_len < 1) {
         return;
     }
 
-    struct ip_header *ip_hdr = (struct ip_header *)packet;
-    guint8 version = (ip_hdr->version_ihl >> 4) & 0x0F;
-    guint8 ihl = (ip_hdr->version_ihl & 0x0F) * 4;
+    // Check IP version (first 4 bits)
+    guint8 version = (packet[0] >> 4) & 0x0F;
 
-    if (version != 4) {
-        log_debug("VPN: Ignoring non-IPv4 packet (version=%d)", version);
-        return;
-    }
-
-    if (packet_len < ihl) {
-        log_debug("VPN: Packet too short for IP header");
-        return;
-    }
-
-    if (ip_hdr->protocol == IPPROTO_TCP) {
-        if (packet_len < ihl + sizeof(struct tcp_header)) {
+    if (version == 4) {
+        // IPv4 handler
+        if (packet_len < sizeof(struct ip_header)) {
             return;
         }
-        struct tcp_header *tcp_hdr = (struct tcp_header *)(packet + ihl);
-        guint8 tcp_hdr_len = ((tcp_hdr->data_offset_flags >> 4) & 0x0F) * 4;
-        
-        if (packet_len < ihl + tcp_hdr_len) {
-            log_debug("VPN: Packet too short for TCP header");
+
+        struct ip_header *ip_hdr = (struct ip_header *)packet;
+        guint8 ihl = (ip_hdr->version_ihl & 0x0F) * 4;
+
+        if (packet_len < ihl) {
+            log_debug("VPN: Packet too short for IP header");
             return;
         }
-        
-        guint8 *payload = packet + ihl + tcp_hdr_len;
-        gsize payload_len = packet_len - ihl - tcp_hdr_len;
-        handle_tcp_packet(vpn, ip_hdr, tcp_hdr, payload, payload_len);
-        
-    } else if (ip_hdr->protocol == IPPROTO_UDP) {
-        if (packet_len < ihl + sizeof(struct udp_header)) {
-            return;
+
+        if (ip_hdr->protocol == IPPROTO_TCP) {
+            if (packet_len < ihl + sizeof(struct tcp_header)) {
+                return;
+            }
+            struct tcp_header *tcp_hdr = (struct tcp_header *)(packet + ihl);
+            guint8 tcp_hdr_len = ((tcp_hdr->data_offset_flags >> 4) & 0x0F) * 4;
+            
+            if (packet_len < ihl + tcp_hdr_len) {
+                log_debug("VPN: Packet too short for TCP header");
+                return;
+            }
+            
+            guint8 *payload = packet + ihl + tcp_hdr_len;
+            gsize payload_len = packet_len - ihl - tcp_hdr_len;
+            handle_tcp_packet(vpn, ip_hdr, tcp_hdr, payload, payload_len);
+            
+        } else if (ip_hdr->protocol == IPPROTO_UDP) {
+            if (packet_len < ihl + sizeof(struct udp_header)) {
+                return;
+            }
+            struct udp_header *udp_hdr = (struct udp_header *)(packet + ihl);
+            guint8 *payload = packet + ihl + sizeof(struct udp_header);
+            gsize payload_len = packet_len - ihl - sizeof(struct udp_header);
+            handle_udp_packet(vpn, ip_hdr, udp_hdr, payload, payload_len);
+            
+        } else {
+            log_debug("VPN: Ignoring IPv4 packet with protocol=%d", ip_hdr->protocol);
         }
-        struct udp_header *udp_hdr = (struct udp_header *)(packet + ihl);
-        guint8 *payload = packet + ihl + sizeof(struct udp_header);
-        gsize payload_len = packet_len - ihl - sizeof(struct udp_header);
-        handle_udp_packet(vpn, ip_hdr, udp_hdr, payload, payload_len);
+        
+    } else if (version == 6) {
+        // IPv6 handler
+        handle_ipv6_packet(vpn, packet, packet_len);
         
     } else {
-        log_debug("VPN: Ignoring non-TCP/UDP packet (protocol=%d)", ip_hdr->protocol);
+        log_debug("VPN: Unknown IP version: %d", version);
     }
+}
+
+static void handle_ipv6_packet(DeadlightVPNManager *vpn, guint8 *packet, gsize packet_len) {
+    if (packet_len < sizeof(struct ipv6_header)) {
+        log_debug("VPN: IPv6 packet too short");
+        return;
+    }
+
+    struct ipv6_header *ip6_hdr = (struct ipv6_header *)packet;
+    
+    // Extract version
+    guint8 version = (ntohl(ip6_hdr->version_tc_fl) >> 28) & 0x0F;
+    if (version != 6) {
+        log_debug("VPN: Invalid IPv6 version: %d", version);
+        return;
+    }
+
+    guint8 next_header = ip6_hdr->next_header;
+    guint16 payload_len = ntohs(ip6_hdr->payload_length);
+    
+    if (packet_len < sizeof(struct ipv6_header) + payload_len) {
+        log_debug("VPN: IPv6 packet length mismatch");
+        return;
+    }
+
+    gchar src_str[INET6_ADDRSTRLEN];
+    gchar dest_str[INET6_ADDRSTRLEN];
+    inet_ntop(AF_INET6, &ip6_hdr->src_addr, src_str, INET6_ADDRSTRLEN);
+    inet_ntop(AF_INET6, &ip6_hdr->dest_addr, dest_str, INET6_ADDRSTRLEN);
+
+    log_debug("VPN: IPv6 packet: %s -> %s (next_header=%d, len=%zu)",
+             src_str, dest_str, next_header, packet_len);
+
+    if (next_header == IPPROTO_TCP) {
+        if (packet_len < sizeof(struct ipv6_header) + sizeof(struct tcp_header)) {
+            return;
+        }
+        struct tcp_header *tcp_hdr = (struct tcp_header *)(packet + sizeof(struct ipv6_header));
+        guint8 tcp_hdr_len = ((tcp_hdr->data_offset_flags >> 4) & 0x0F) * 4;
+        
+        guint8 *payload = packet + sizeof(struct ipv6_header) + tcp_hdr_len;
+        gsize payload_len_actual = packet_len - sizeof(struct ipv6_header) - tcp_hdr_len;
+        
+        handle_tcp6_packet(vpn, ip6_hdr, tcp_hdr, payload, payload_len_actual);
+        
+    } else if (next_header == IPPROTO_UDP) {
+        if (packet_len < sizeof(struct ipv6_header) + sizeof(struct udp_header)) {
+            return;
+        }
+        struct udp_header *udp_hdr = (struct udp_header *)(packet + sizeof(struct ipv6_header));
+        guint8 *payload = packet + sizeof(struct ipv6_header) + sizeof(struct udp_header);
+        gsize payload_len_actual = packet_len - sizeof(struct ipv6_header) - sizeof(struct udp_header);
+        
+        handle_udp6_packet(vpn, ip6_hdr, udp_hdr, payload, payload_len_actual);
+        
+    } else {
+        log_debug("VPN: Ignoring IPv6 packet with next_header=%d", next_header);
+    }
+}
+
+static void handle_udp6_packet(DeadlightVPNManager *vpn, struct ipv6_header *ip6_hdr,
+                               struct udp_header *udp_hdr, guint8 *payload,
+                               gsize payload_len) {
+    guint16 client_port = ntohs(udp_hdr->src_port);
+    guint16 dest_port = ntohs(udp_hdr->dest_port);
+    
+    gchar client_str[INET6_ADDRSTRLEN];
+    gchar dest_str[INET6_ADDRSTRLEN];
+    inet_ntop(AF_INET6, &ip6_hdr->src_addr, client_str, INET6_ADDRSTRLEN);
+    inet_ntop(AF_INET6, &ip6_hdr->dest_addr, dest_str, INET6_ADDRSTRLEN);
+    
+    log_debug("VPN: IPv6 UDP packet: [%s]:%u -> [%s]:%u payload=%zu",
+             client_str, client_port, dest_str, dest_port, payload_len);
+    
+    gchar *key = g_strdup_printf("[%s]:%u->[%s]:%u", client_str, client_port, dest_str, dest_port);
+    
+    g_mutex_lock(&vpn->sessions_mutex);
+    VPNUDPSession *session = g_hash_table_lookup(vpn->udp_sessions_v6, key);
+    
+    if (!session) {
+        guint current_udp_sessions = g_hash_table_size(vpn->udp_sessions_v6);
+        if (current_udp_sessions >= 500) {
+            log_warn("VPN: Max IPv6 UDP sessions reached (%u), rejecting %s", 
+                     current_udp_sessions, key);
+            g_mutex_unlock(&vpn->sessions_mutex);
+            g_free(key);
+            return;
+        }
+        
+        log_info("VPN: New IPv6 UDP session: %s (total: %u)", key, current_udp_sessions + 1);
+        
+        session = g_new0(VPNUDPSession, 1);
+        memcpy(&session->client_ip, &ip6_hdr->src_addr, sizeof(struct in6_addr));
+        memcpy(&session->dest_ip, &ip6_hdr->dest_addr, sizeof(struct in6_addr));
+        session->client_port = client_port;
+        session->dest_port = dest_port;
+        session->session_key = g_strdup(key);
+        session->last_activity = g_get_monotonic_time();
+        session->vpn = vpn;
+        session->upstream_socket = NULL;
+        session->upstream_watch_id = 0;
+        
+        // Create UDP socket (IPv6)
+        GError *error = NULL;
+        session->upstream_socket = g_socket_new(G_SOCKET_FAMILY_IPV6,
+                                               G_SOCKET_TYPE_DATAGRAM,
+                                               G_SOCKET_PROTOCOL_UDP,
+                                               &error);
+        
+        if (!session->upstream_socket) {
+            log_warn("VPN: Failed to create IPv6 UDP socket for %s: %s",
+                    key, error ? error->message : "unknown");
+            if (error) g_error_free(error);
+            vpn_udp_session_free(session);
+            g_mutex_unlock(&vpn->sessions_mutex);
+            g_free(key);
+            return;
+        }
+        
+        g_socket_set_blocking(session->upstream_socket, FALSE);
+        
+        // Watch for upstream responses
+        gint fd = g_socket_get_fd(session->upstream_socket);
+        GIOChannel *chan = g_io_channel_unix_new(fd);
+        g_io_channel_set_encoding(chan, NULL, NULL);
+        g_io_channel_set_buffered(chan, FALSE);
+        session->upstream_watch_id = g_io_add_watch(chan, G_IO_IN | G_IO_HUP | G_IO_ERR,
+                                                   on_udp_upstream_readable, session);
+        g_io_channel_unref(chan);
+        
+        g_hash_table_insert(vpn->udp_sessions_v6, g_strdup(session->session_key), session);
+    }
+    
+    session->last_activity = g_get_monotonic_time();
+    
+    // Send UDP packet to upstream
+    GSocketAddress *addr = g_inet_socket_address_new(
+        g_inet_address_new_from_string(dest_str), dest_port);
+    
+    GError *error = NULL;
+    gssize sent = g_socket_send_to(session->upstream_socket, addr,
+                                   (const gchar *)payload, payload_len,
+                                   NULL, &error);
+    
+    g_object_unref(addr);
+    
+    if (sent > 0) {
+        log_debug("VPN: Forwarded %zd IPv6 UDP bytes from %s to [%s]:%u", 
+                 sent, session->session_key, dest_str, dest_port);
+    } else if (error) {
+        log_warn("VPN: Failed to send IPv6 UDP to upstream for %s: %s",
+                session->session_key, error->message);
+        g_error_free(error);
+    }
+    
+    g_mutex_unlock(&vpn->sessions_mutex);
+    g_free(key);
+}
+
+static void handle_tcp6_packet(DeadlightVPNManager *vpn, struct ipv6_header *ip6_hdr,
+                               struct tcp_header *tcp_hdr, guint8 *payload,
+                               gsize payload_len) {
+    guint16 client_port = ntohs(tcp_hdr->src_port);
+    guint16 dest_port = ntohs(tcp_hdr->dest_port);
+    guint8 flags = tcp_hdr->flags;
+    guint32 recv_seq = ntohl(tcp_hdr->seq_num);
+    guint32 recv_ack = ntohl(tcp_hdr->ack_num);
+
+    gchar client_str[INET6_ADDRSTRLEN];
+    gchar dest_str[INET6_ADDRSTRLEN];
+    inet_ntop(AF_INET6, &ip6_hdr->src_addr, client_str, INET6_ADDRSTRLEN);
+    inet_ntop(AF_INET6, &ip6_hdr->dest_addr, dest_str, INET6_ADDRSTRLEN);
+
+    log_debug("VPN: IPv6 TCP packet: [%s]:%u -> [%s]:%u flags=0x%02x seq=%u ack=%u payload=%zu",
+             client_str, client_port, dest_str, dest_port, flags, recv_seq, recv_ack, payload_len);
+
+    gchar *key = g_strdup_printf("[%s]:%u->[%s]:%u", client_str, client_port, dest_str, dest_port);
+
+    g_mutex_lock(&vpn->sessions_mutex);
+    VPNSession *session = g_hash_table_lookup(vpn->sessions_v6, key);
+
+    // Handle SYN (new connection)
+    if (!session && (flags & TCP_SYN) && !(flags & TCP_ACK)) {
+        if (vpn->active_connections >= 1000) {
+            log_warn("VPN: Max sessions reached, rejecting %s", key);
+            g_mutex_unlock(&vpn->sessions_mutex);
+            g_free(key);
+            return;
+        }
+        
+        session = g_new0(VPNSession, 1);
+        memcpy(&session->client_ip, &ip6_hdr->src_addr, sizeof(struct in6_addr));
+        memcpy(&session->dest_ip, &ip6_hdr->dest_addr, sizeof(struct in6_addr));
+        session->client_port = client_port;
+        session->dest_port = dest_port;
+        session->session_key = g_strdup(key);
+        
+        session->state = VPN_TCP_CLOSED;
+        session->seq = g_random_int();
+        session->isn = session->seq;
+        session->ack = recv_seq + 1;
+        session->created_at = g_get_monotonic_time();
+        session->last_activity = session->created_at;
+        session->vpn = vpn;
+        session->upstream_conn = NULL;
+        session->upstream_watch_id = 0;
+        session->retrans_timer_id = 0;
+        session->last_packet.data = NULL;
+        session->last_packet.len = 0;
+        
+        // Connect upstream
+        GError *error = NULL;
+        log_info("VPN: Connecting to IPv6 upstream: [%s]:%u", dest_str, dest_port);
+        
+        session->upstream_conn = deadlight_network_connect_tcp(vpn->context, dest_str, dest_port, &error);
+
+        if (!session->upstream_conn) {
+            log_warn("VPN: Failed to connect to [%s]:%u - %s", 
+                    dest_str, dest_port,
+                    error ? error->message : "unknown error");
+            if (error) g_error_free(error);
+            
+            send_tcp6_packet(vpn, session, TCP_RST | TCP_ACK, NULL, 0);
+            vpn_session_free(session);
+            g_mutex_unlock(&vpn->sessions_mutex);
+            g_free(key);
+            return;
+        }
+
+        // Watch for upstream data
+        GSocket *sock = g_socket_connection_get_socket(session->upstream_conn);
+        GIOChannel *chan = g_io_channel_unix_new(g_socket_get_fd(sock));
+        session->upstream_watch_id = g_io_add_watch(chan, G_IO_IN | G_IO_HUP | G_IO_ERR,
+                                                   on_upstream_readable, session);
+        g_io_channel_unref(chan);
+
+        g_hash_table_insert(vpn->sessions_v6, g_strdup(key), session);
+        vpn->total_connections++;
+        vpn->active_connections++;
+
+        // Send SYN-ACK
+        send_tcp6_packet(vpn, session, TCP_SYN | TCP_ACK, NULL, 0);
+        session->seq++;
+        session->state = VPN_TCP_SYN_RECEIVED;
+
+        g_mutex_unlock(&vpn->sessions_mutex);
+        g_free(key);
+        return;
+    }
+
+    if (!session) {
+        log_debug("VPN: No IPv6 session for %s, ignoring packet", key);
+        g_mutex_unlock(&vpn->sessions_mutex);
+        g_free(key);
+        return;
+    }
+
+    session->last_activity = g_get_monotonic_time();
+
+    // Handle ACK for SYN-ACK (complete handshake)
+    if (session->state == VPN_TCP_SYN_RECEIVED && (flags & TCP_ACK)) {
+        if (recv_ack != session->seq) {
+            log_debug("VPN: Invalid ACK for %s: expected %u, got %u", 
+                     session->session_key, session->seq, recv_ack);
+            send_tcp6_packet(vpn, session, TCP_RST, NULL, 0);
+            g_hash_table_remove(vpn->sessions_v6, session->session_key);
+            vpn->active_connections--;
+            g_mutex_unlock(&vpn->sessions_mutex);
+            g_free(key);
+            return;
+        }
+        session->state = VPN_TCP_ESTABLISHED;
+        log_info("VPN: IPv6 connection established: %s", session->session_key);
+    }
+
+    // Forward data to upstream
+    if ((session->state == VPN_TCP_ESTABLISHED) && payload_len > 0) {
+        GOutputStream *output = g_io_stream_get_output_stream(
+            G_IO_STREAM(session->upstream_conn));
+        GError *error = NULL;
+        gssize written = g_output_stream_write(output, payload, payload_len, NULL, &error);
+
+        if (written > 0) {
+            session->ack = recv_seq + written;
+            send_tcp6_packet(vpn, session, TCP_ACK, NULL, 0);
+            log_debug("VPN: Forwarded %zd bytes from %s to upstream", written, session->session_key);
+        } else if (error) {
+            log_warn("VPN: Failed to write to upstream for %s: %s",
+                    session->session_key, error->message);
+            g_error_free(error);
+            send_tcp6_packet(vpn, session, TCP_RST, NULL, 0);
+            g_hash_table_remove(vpn->sessions_v6, session->session_key);
+            vpn->active_connections--;
+        }
+    }
+
+    // Handle FIN
+    if (flags & TCP_FIN) {
+        session->ack = recv_seq + 1;
+        send_tcp6_packet(vpn, session, TCP_ACK, NULL, 0);
+        
+        if (session->state == VPN_TCP_ESTABLISHED) {
+            session->state = VPN_TCP_CLOSE_WAIT;
+            send_tcp6_packet(vpn, session, TCP_FIN | TCP_ACK, NULL, 0);
+            session->seq++;
+            session->state = VPN_TCP_LAST_ACK;
+        } else if (session->state == VPN_TCP_FIN_WAIT_1) {
+            session->state = VPN_TCP_FIN_WAIT_2;
+        }
+    }
+    
+    // Handle final ACK in FIN_WAIT_2
+    if (session->state == VPN_TCP_FIN_WAIT_2 && (flags & TCP_ACK) && recv_ack == session->seq) {
+        session->state = VPN_TCP_TIME_WAIT;
+        log_debug("VPN: IPv6 connection closing: %s", session->session_key);
+        g_hash_table_remove(vpn->sessions_v6, session->session_key);
+        vpn->active_connections--;
+    }
+
+    // Handle RST
+    if (flags & TCP_RST) {
+        log_info("VPN: IPv6 connection reset: %s", session->session_key);
+        g_hash_table_remove(vpn->sessions_v6, session->session_key);
+        vpn->active_connections--;
+    }
+
+    // Remove closed sessions
+    if (session->state == VPN_TCP_LAST_ACK && (flags & TCP_ACK) && recv_ack == session->seq) {
+        log_debug("VPN: IPv6 connection closed: %s", session->session_key);
+        g_hash_table_remove(vpn->sessions_v6, session->session_key);
+        vpn->active_connections--;
+    }
+
+    g_mutex_unlock(&vpn->sessions_mutex);
+    g_free(key);
 }
 
 static gboolean on_tun_readable(GIOChannel *source, GIOCondition condition,
@@ -1121,6 +1744,12 @@ gboolean deadlight_vpn_gateway_init(DeadlightContext *context, GError **error) {
     vpn->udp_sessions = g_hash_table_new_full(g_str_hash, g_str_equal,
                                           g_free,
                                           (GDestroyNotify)vpn_udp_session_free);
+    vpn->sessions_v6 = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                             g_free,
+                                             (GDestroyNotify)vpn_session_free);
+    vpn->udp_sessions_v6 = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                                 g_free,
+                                                 (GDestroyNotify)vpn_udp_session_free);
     g_mutex_init(&vpn->sessions_mutex);
 
     // Setup periodic cleanup of idle sessions
@@ -1180,6 +1809,16 @@ void deadlight_vpn_gateway_cleanup(DeadlightContext *context) {
     if (vpn->udp_sessions) {
         g_hash_table_destroy(vpn->udp_sessions);
         vpn->udp_sessions = NULL;
+    }
+
+    if (vpn->sessions_v6) {
+        g_hash_table_destroy(vpn->sessions);
+        vpn->sessions_v6 = NULL;
+    }
+    
+    if (vpn->udp_sessions_v6) {
+        g_hash_table_destroy(vpn->udp_sessions);
+        vpn->udp_sessions_v6 = NULL;
     }
 
     g_mutex_clear(&vpn->sessions_mutex);
