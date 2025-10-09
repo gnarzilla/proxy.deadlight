@@ -7,10 +7,12 @@
 
 #include <glib.h>
 #include <gio/gio.h>
+#include <netinet/in.h>
 #include "core/deadlight.h"
 
 // Forward declarations
 typedef struct _VPNSession VPNSession;
+typedef struct _VPNUDPSession VPNUDPSession;
 
 // TCP session states
 typedef enum {
@@ -26,12 +28,12 @@ typedef enum {
     VPN_TCP_LAST_ACK
 } VPNTCPState;
 
-// VPN session tracking
+// VPN session tracking (TCP) - Use in6_addr for IPv4/IPv6 compatibility
 struct _VPNSession {
-    // Connection identifiers
-    guint32 client_ip;
+    // Connection identifiers (now IPv6-compatible)
+    struct in6_addr client_ip;
     guint16 client_port;
-    guint32 dest_ip;
+    struct in6_addr dest_ip;
     guint16 dest_port;
     gchar *session_key;
     
@@ -63,6 +65,21 @@ struct _VPNSession {
     guint retrans_timer_id;
 };
 
+// UDP session tracking - Add this struct (mirrors your code)
+struct _VPNUDPSession {
+    struct in6_addr client_ip;
+    guint16 client_port;
+    struct in6_addr dest_ip;
+    guint16 dest_port;
+    gchar *session_key;
+    
+    GSocket *upstream_socket;  // UDP socket
+    guint upstream_watch_id;
+    
+    gint64 last_activity;
+    DeadlightVPNManager *vpn;
+};
+
 // VPN Manager
 struct _DeadlightVPNManager {
     DeadlightContext *context;
@@ -73,9 +90,11 @@ struct _DeadlightVPNManager {
     guint tun_watch_id;
     gchar *tun_device_name;
     
-    // Session tracking
-    GHashTable *sessions;      // TCP sessions
-    GHashTable *udp_sessions;  // UDP sessions
+    // Session tracking (split for IPv4/IPv6 to avoid key collisions)
+    GHashTable *sessions;        // IPv4 TCP sessions
+    GHashTable *sessions_v6;     // IPv6 TCP sessions
+    GHashTable *udp_sessions;    // IPv4 UDP sessions
+    GHashTable *udp_sessions_v6; // IPv6 UDP sessions
     GMutex sessions_mutex;
     
     // Configuration
