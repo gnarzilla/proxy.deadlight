@@ -620,7 +620,7 @@ static gboolean cleanup_idle_udp_sessions(gpointer user_data) {
 
 static void send_tcp_packet(DeadlightVPNManager *vpn, VPNSession *session,
                            guint8 flags, const guint8 *payload, gsize payload_len) {
-    guint8 packet[2048];
+    guint8 packet[4096];
     struct ip_header *ip_hdr = (struct ip_header *)packet;
     struct tcp_header *tcp_hdr = (struct tcp_header *)(packet + sizeof(struct ip_header));
     
@@ -629,8 +629,8 @@ static void send_tcp_packet(DeadlightVPNManager *vpn, VPNSession *session,
     gsize total_len = ip_hdr_len + tcp_hdr_len + payload_len;
 
     if (total_len > sizeof(packet)) {
-        log_warn("VPN: Packet too large (%zu bytes), dropping", total_len);
-        return;
+        log_warn("VPN: UDP packet too large (%zu bytes)", total_len);
+        return;  // Don't truncate, just drop oversized packets
     }
 
     // Extract IPv4 addresses from IPv4-mapped IPv6
@@ -697,7 +697,7 @@ static void send_tcp_packet(DeadlightVPNManager *vpn, VPNSession *session,
 
 static void send_udp6_packet(DeadlightVPNManager *vpn, VPNUDPSession *session,
                             const guint8 *payload, gsize payload_len) {
-    guint8 packet[2048];
+    guint8 packet[4096];
     struct ipv6_header *ip6_hdr = (struct ipv6_header *)packet;
     struct udp_header *udp_hdr = (struct udp_header *)(packet + sizeof(struct ipv6_header));
     
@@ -753,7 +753,7 @@ static void send_udp6_packet(DeadlightVPNManager *vpn, VPNUDPSession *session,
 
 static void send_tcp6_packet(DeadlightVPNManager *vpn, VPNSession *session,
                             guint8 flags, const guint8 *payload, gsize payload_len) {
-    guint8 packet[2048];
+    guint8 packet[4096];
     struct ipv6_header *ip6_hdr = (struct ipv6_header *)packet;
     struct tcp_header *tcp_hdr = (struct tcp_header *)(packet + sizeof(struct ipv6_header));
     
@@ -835,7 +835,7 @@ static void send_tcp6_packet(DeadlightVPNManager *vpn, VPNSession *session,
 
 static void send_udp_packet(DeadlightVPNManager *vpn, VPNUDPSession *session,
                            const guint8 *payload, gsize payload_len) {
-    guint8 packet[2048];
+    guint8 packet[4096];
     struct ip_header *ip_hdr = (struct ip_header *)packet;
     struct udp_header *udp_hdr = (struct udp_header *)(packet + sizeof(struct ip_header));
     
