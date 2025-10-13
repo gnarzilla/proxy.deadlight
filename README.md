@@ -319,46 +319,6 @@ The executable will be located at `bin/deadlight`.
 
 The proxy uses an INI-style configuration file. A sample is provided at [docs/CONFIGURATION](docs/CONFIGURATION.md).
 
-```ini
-[core]
-port = 8080
-bind_address = 0.0.0.0
-max_connections = 500
-log_level = info
-worker_threads = 4
-
-[ssl]
-enabled = true
-ca_cert_file = /home/thatch/.deadlight/ca/ca.crt
-ca_key_file = /home/thatch/.deadlight/ca/ca.key
-cert_cache_dir = /tmp/deadlight_certs
-
-[protocols]
-http_enabled = true
-https_enabled = true
-connect_enabled = true
-
-[plugins]
-enabled = false
-
-[imap]
-# The upstream IMAP server to proxy connections to.
-upstream_host = imap.gmail.com
-upstream_port = 143
-
-[imaps]
-# The upstream IMAPS server to proxy connections to.
-# This uses SSL/TLS on port 993.
-upstream_host = imap.gmail.com
-upstream_port = 993
-
-[ftp]
-# The upstream FTP server to proxy connections to when none is specified.
-upstream_host = ftp.gnu.org
-upstream_port = 21
-
-```
-
 ## Running
 ```bash
 # Proxy only
