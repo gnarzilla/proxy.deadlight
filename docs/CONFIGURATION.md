@@ -1,4 +1,4 @@
-```yaml
+```ini
 
 [core]
 #Listen port for proxy connections
@@ -162,3 +162,4 @@ max_request_size=10MB
 ```
 #Maximum header size
 max_header_size=8KB
+
