@@ -317,7 +317,7 @@ The executable will be located at `bin/deadlight`.
 
 ## Configuration
 
-The proxy uses an INI-style configuration file. A sample is provided at `deadlight.conf.example`.
+The proxy uses an INI-style configuration file. A sample is provided at [deadlight.conf.example](#/docs/CONFIGURATION.md).
 
 ```ini
 [core]
