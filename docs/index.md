@@ -14,4 +14,4 @@ A high-performance network proxy that serves as a stateless protocol bridge. It 
 - [Quick Start](getting-started/quickstart.md)
 - [API Reference](api/auth.md)
 - [Contributing Guide](contributing/setup.md)
-- [License](docs/LICENSE)
+- [License](LICENSE)
