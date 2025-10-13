@@ -210,7 +210,7 @@ Block malicious domains in real-time
 
 Intercept and inspect HTTPS traffic from any application
 ```bash
-./bin/deadlight -c deadlight.conf.nplunin -v
+./bin/deadlight -c deadlight.conf.nplugin -v
 curl --cacert ~/.deadlight/ca.crt -x http://localhost:8080 https://api.example.com
 ```
 
