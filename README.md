@@ -487,11 +487,6 @@ deadlight/
 └── README.md               # This file
 ```
 
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-
 ## Support
 
 [Support is greatly appreciated! - ko-fi/gnarzilla](https://ko-fi.com/gnarzilla)
