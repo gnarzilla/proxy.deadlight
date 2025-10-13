@@ -355,7 +355,7 @@ Configure your browser or system to use `http://localhost:8080` as its proxy. Or
 ```bash
 # HTTP/HTTPS
 curl -x http://localhost:8080 http://example.com
-curl --cacert ~/.deadlight/ca/ca.crt -x http://localhost:8080 https://example.com
+curl --cacert ~/.deadlight/ca.crt -x http://localhost:8080 https://example.com
 
 # SOCKS5
 curl --socks5 localhost:8080 http://example.com
@@ -378,7 +378,7 @@ For TLS interception to work, you must instruct your client to trust the proxy's
 
 ```bash
 # The --cacert flag tells curl to trust our custom CA for this one request.
-curl --cacert ~/.deadlight/ca/ca.crt -x http://localhost:8080 https://example.com
+curl --cacert ~/.deadlight/ca.crt -x http://localhost:8080 https://example.com
 ```
 
 ### SOCKS4 Privacy Proxy
@@ -484,6 +484,7 @@ deadlight/
 │   └── protocols/          # Protocol handler implementations
 ├── deadlight.conf.example  # Example configuration file
 ├── Makefile                # Build configuration
+├── docs/                   # Other Project Documentation
 └── README.md               # This file
 ```
 
