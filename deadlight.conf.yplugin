@@ -38,8 +38,8 @@ protocol_detection_timeout=5
 
 [ssl]
 enabled = true
-ca_cert_file = /home/thatch/.deadlight/ca/ca.crt
-ca_key_file = /home/thatch/.deadlight/ca/ca.key
+ca_cert_file = /home/thatch/.deadlight/ca.crt
+ca_key_file = /home/thatch/.deadlight/ca.key
 cert_cache_dir = /tmp/deadlight_certs
 intercept_enable = true
 
