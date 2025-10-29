@@ -58,8 +58,29 @@ username = testuser
 password = testpass
 
 [adblocker]
-enabled = true
+enabled = false
 blocklist_path = /etc/deadlight/blocklist.txt
 # You can add custom blocklist URLs
 blocklist_url_0 = https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
 
+[vpn]
+# Enable VPN gateway (requires root privileges)
+enabled=true
+device = tun0
+tun_device=tun0
+address = 10.8.0.1
+netmask = 255.255.255.0
+upstream_interface = 172.29.16.1 dev eth0 src 172.29.16.185 uid 1000
+gateway_ip=10.8.0.1
+client_subnet=10.8.0.0/24
+
+# TUN device configuration
+device = tun0
+address = 10.8.0.1
+netmask = 255.255.255.0
+
+# Client IP range
+client_network = 10.8.0.0/24
+
+# DNS servers to provide to clients (optional)
+dns_servers = 8.8.8.8,8.8.4.4
