@@ -3,7 +3,7 @@
 A high-performance, multi-protocol proxy server written in C using GLib.
 Features kernel-integrated VPN gateway, deep packet inspection, protocol analysis and plugin extensibility.
 
-[Features](#features) ·  [Usage](#usage) · [Getting Started](#getting-started) · [Architecture](#architecture)· [Extending Deadlight](#extending-deadlight) · [Use Cases](#use-cases) · [Roadmap](#roadmap) · [Configuration](#configuration) 
+[Features](#features) ·  [Usage](#usage) · [Getting Started](#getting-started) · [Architecture](#architecture)· [Extending Deadlight](#extending-deadlight) · [Use Cases](#use-cases) · [Roadmap](#roadmap) · [Configuration](#configuration) · [License](docs/LICENSE)
 
 ---
 
@@ -210,8 +210,8 @@ Block malicious domains in real-time
 
 Intercept and inspect HTTPS traffic from any application
 ```bash
-./bin/deadlight -c deadlight.conf -v
-curl --cacert ~/.deadlight/ca/ca.crt -x http://localhost:8080 https://api.example.com
+./bin/deadlight -c deadlight.conf.nplugin -v
+curl --cacert ~/.deadlight/ca.crt -x http://localhost:8080 https://api.example.com
 ```
 
 Automatic certificate generation with upstream mimicry
@@ -317,47 +317,7 @@ The executable will be located at `bin/deadlight`.
 
 ## Configuration
 
-The proxy uses an INI-style configuration file. A sample is provided at `deadlight.conf.example`.
-
-```ini
-[core]
-port = 8080
-bind_address = 0.0.0.0
-max_connections = 500
-log_level = info
-worker_threads = 4
-
-[ssl]
-enabled = true
-ca_cert_file = /home/thatch/.deadlight/ca/ca.crt
-ca_key_file = /home/thatch/.deadlight/ca/ca.key
-cert_cache_dir = /tmp/deadlight_certs
-
-[protocols]
-http_enabled = true
-https_enabled = true
-connect_enabled = true
-
-[plugins]
-enabled = false
-
-[imap]
-# The upstream IMAP server to proxy connections to.
-upstream_host = imap.gmail.com
-upstream_port = 143
-
-[imaps]
-# The upstream IMAPS server to proxy connections to.
-# This uses SSL/TLS on port 993.
-upstream_host = imap.gmail.com
-upstream_port = 993
-
-[ftp]
-# The upstream FTP server to proxy connections to when none is specified.
-upstream_host = ftp.gnu.org
-upstream_port = 21
-
-```
+The proxy uses an INI-style configuration file. A sample is provided at [docs/CONFIGURATION](docs/CONFIGURATION.md).
 
 ## Running
 ```bash
@@ -395,7 +355,7 @@ Configure your browser or system to use `http://localhost:8080` as its proxy. Or
 ```bash
 # HTTP/HTTPS
 curl -x http://localhost:8080 http://example.com
-curl --cacert ~/.deadlight/ca/ca.crt -x http://localhost:8080 https://example.com
+curl --cacert ~/.deadlight/ca.crt -x http://localhost:8080 https://example.com
 
 # SOCKS5
 curl --socks5 localhost:8080 http://example.com
@@ -418,7 +378,7 @@ For TLS interception to work, you must instruct your client to trust the proxy's
 
 ```bash
 # The --cacert flag tells curl to trust our custom CA for this one request.
-curl --cacert ~/.deadlight/ca/ca.crt -x http://localhost:8080 https://example.com
+curl --cacert ~/.deadlight/ca.crt -x http://localhost:8080 https://example.com
 ```
 
 ### SOCKS4 Privacy Proxy
@@ -524,13 +484,9 @@ deadlight/
 │   └── protocols/          # Protocol handler implementations
 ├── deadlight.conf.example  # Example configuration file
 ├── Makefile                # Build configuration
+├── docs/                   # Other Project Documentation
 └── README.md               # This file
 ```
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
 
 ## Support
 
