@@ -274,8 +274,32 @@ void deadlight_response_set_header(DeadlightResponse *response, const gchar *nam
 // Connection Pool API
 ConnectionPool* connection_pool_new(gint max_per_host, gint idle_timeout);
 void connection_pool_free(ConnectionPool *pool);
-GSocketConnection* connection_pool_get(ConnectionPool *pool, const gchar *host, guint16 port, gboolean is_ssl);
-void connection_pool_release(ConnectionPool *pool, GSocketConnection *connection, const gchar *host, guint16 port, gboolean is_ssl);
+
+GSocketConnection* connection_pool_get(ConnectionPool *pool, 
+                                       const gchar *host, 
+                                       guint16 port, 
+                                       gboolean is_ssl);
+
+void connection_pool_release(ConnectionPool *pool, 
+                            GSocketConnection *connection, 
+                            const gchar *host, 
+                            guint16 port, 
+                            gboolean is_ssl);
+
+// NEW: Register a newly created connection with the pool for tracking
+gboolean connection_pool_register(ConnectionPool *pool,
+                                  GSocketConnection *connection,
+                                  const gchar *host,
+                                  guint16 port,
+                                  gboolean is_ssl);
+
+// NEW: Get pool statistics
+void connection_pool_get_stats(ConnectionPool *pool,
+                              guint *idle_count,
+                              guint *active_count,
+                              guint64 *total_gets,
+                              guint64 *cache_hits,
+                              gdouble *hit_rate);
 
 // Testing API
 gboolean deadlight_test_module(const gchar *module_name);

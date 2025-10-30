@@ -65,7 +65,7 @@ struct _VPNSession {
     guint retrans_timer_id;
 };
 
-// UDP session tracking - Add this struct (mirrors your code)
+// UDP session tracking
 struct _VPNUDPSession {
     struct in6_addr client_ip;
     guint16 client_port;
@@ -112,10 +112,14 @@ struct _DeadlightVPNManager {
 // Public API
 gboolean deadlight_vpn_gateway_init(DeadlightContext *context, GError **error);
 void deadlight_vpn_gateway_cleanup(DeadlightContext *context);
+
+// Updated stats function with pool metrics (NULL-safe parameters)
 void deadlight_vpn_gateway_get_stats(DeadlightContext *context,
                                     guint64 *active_connections,
                                     guint64 *total_connections,
                                     guint64 *bytes_sent,
-                                    guint64 *bytes_received);
+                                    guint64 *bytes_received,
+                                    guint *pooled_connections,      // NEW: Can be NULL
+                                    gdouble *pool_hit_rate);        // NEW: Can be NULL
 
 #endif // DEADLIGHT_VPN_GATEWAY_H

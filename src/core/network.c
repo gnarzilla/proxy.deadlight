@@ -37,6 +37,49 @@ static void connection_thread_func(gpointer data, gpointer user_data);
 static void cleanup_connection(DeadlightConnection *conn);
 GSocketConnection* deadlight_network_connect_tcp(DeadlightContext *context, const gchar *host, guint16 port, GError **error);
 void deadlight_network_tunnel_socket_connections(GSocketConnection *conn1, GSocketConnection *conn2);
+static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remove_from_table);
+
+/**
+ * Determine if a connection to a target should use SSL
+ * Must be called AFTER protocol detection, before pool lookup
+ */
+static gboolean should_use_ssl_for_protocol(DeadlightProtocol protocol, 
+                                           DeadlightConnection *conn) {
+    g_return_val_if_fail(conn != NULL, FALSE);
+    
+    switch (protocol) {
+        // Protocols that ALWAYS require SSL
+        case DEADLIGHT_PROTOCOL_HTTPS:
+        case DEADLIGHT_PROTOCOL_IMAPS:
+            return TRUE;
+        
+        // Protocols that NEVER require SSL for upstream
+        // (though client-side may be intercepted)
+        case DEADLIGHT_PROTOCOL_HTTP:
+        case DEADLIGHT_PROTOCOL_IMAP:
+        case DEADLIGHT_PROTOCOL_SMTP:
+        case DEADLIGHT_PROTOCOL_FTP:
+            return FALSE;
+        
+        // Protocols that upgrade via STARTTLS/CONNECT
+        case DEADLIGHT_PROTOCOL_SOCKS:
+        case DEADLIGHT_PROTOCOL_SOCKS4:
+        case DEADLIGHT_PROTOCOL_SOCKS5:
+            // Determined by CONNECT tunneling
+            return conn->upstream_tls != NULL;
+        
+        // WebSocket can be over SSL or plain
+        case DEADLIGHT_PROTOCOL_WEBSOCKET:
+            return conn->upstream_tls != NULL;
+        
+        case DEADLIGHT_PROTOCOL_API:
+            // Check config
+            return conn->context->ssl_intercept_enabled;
+        
+        default:
+            return conn->upstream_tls != NULL;
+    }
+}
 
 /**
  * Initialize network module
@@ -53,8 +96,12 @@ gboolean deadlight_network_init(DeadlightContext *context, GError **error) {
     context->network->next_connection_id = 1;
     
     // Initialize connection tracking
-    context->connections = g_hash_table_new_full(g_int64_hash, g_int64_equal,
-                                            g_free, NULL);  // <-- No automatic cleanup
+    context->connections = g_hash_table_new_full(
+        g_int64_hash, 
+        g_int64_equal,
+        g_free,  // Free the guint64* key
+        (GDestroyNotify)cleanup_connection  // Clean up DeadlightConnection value
+    );
     // Create worker thread pool
     gint worker_threads = deadlight_config_get_int(context, "core", "worker_threads", 4);
     context->worker_pool = g_thread_pool_new(connection_thread_func, context,
@@ -141,15 +188,25 @@ void deadlight_network_stop(DeadlightContext *context) {
             context->network->listener = NULL;
         }
         
-        // Close all active connections
+        // FIXED: Properly close all active connections
+        // The hash table destructor will call cleanup_connection for each
         if (context->connections) {
-            g_hash_table_remove_all(context->connections);
+            guint count = g_hash_table_size(context->connections);
+            g_info("Closing %u active connections...", count);
+            g_hash_table_destroy(context->connections);
+            context->connections = NULL;
         }
         
-        // Shutdown thread pool
+        // Shutdown thread pool (wait for workers to finish)
         if (context->worker_pool) {
-            g_thread_pool_free(context->worker_pool, TRUE, TRUE);
+            g_thread_pool_free(context->worker_pool, FALSE, TRUE);
             context->worker_pool = NULL;
+        }
+        
+        // Clean up connection pool
+        if (context->conn_pool) {
+            connection_pool_free(context->conn_pool);
+            context->conn_pool = NULL;
         }
         
         g_mutex_clear(&context->network->connection_mutex);
@@ -375,9 +432,11 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
             return;
             
         case HANDLER_SUCCESS_ASYNC:
-            g_debug("Connection %lu: Asynchronous handler for '%s' started; worker thread exiting without cleanup.", 
+            g_debug("Connection %lu: Asynchronous handler for '%s' started; worker thread exiting.", 
                     conn->id, deadlight_protocol_to_string(conn->protocol));
-            // Do nothing else - handler will manage lifecycle and cleanup
+            // Handler now owns the connection lifecycle
+            // If handler crashes or forgets cleanup, connection will be orphaned
+            // TODO: Consider adding a timeout-based cleanup watchdog
             break;
             
         case HANDLER_ERROR:
@@ -391,21 +450,23 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
 
         default:
             g_warning("Connection %lu: Unexpected handler result %d", conn->id, handler_result);
-            cleanup_connection(conn);
-            break;
+            goto cleanup;
     }
-
+    
+    return;  // Exit cleanly for ASYNC case
+    
     cleanup:
-    // This block is now ONLY reached by synchronous handlers or errors.
-    if (conn->handler && conn->handler->cleanup) {
-        conn->handler->cleanup(conn);
-    }
-    deadlight_connection_free(conn);
+        // This block is ONLY reached for SYNC and ERROR cases
+        if (conn->handler && conn->handler->cleanup) {
+            conn->handler->cleanup(conn);
+        }
+        cleanup_connection(conn);
 }
 
-/**
- * Connect to upstream server
- */
+// ==============================================================
+// Improved upstream connection with pool 
+// ==============================================================
+
 gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, 
                                           const gchar *host, 
                                           guint16 port,
@@ -416,52 +477,54 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn,
     
     DeadlightContext *context = conn->context;
 
-    // Try to get a pooled connection first
-    GSocketConnection *pooled = connection_pool_get(context->conn_pool, host, port, FALSE);
+    // Store target info FIRST - needed for SSL and pool tracking
+    if (!conn->target_host) {
+        conn->target_host = g_strdup(host);
+    }
+    conn->target_port = port;
+
+    // Try to get from pool first (SSL handled separately for now)
+    gboolean want_ssl = FALSE;  // Will be set by caller if needed
+    GSocketConnection *pooled = connection_pool_get(
+        context->conn_pool, host, port, want_ssl);
     
     if (pooled) {
         conn->upstream_connection = pooled;
-        // Make sure to set target info for pooled connections too!
-        if (!conn->target_host) {
-            conn->target_host = g_strdup(host);
-        }
-        conn->target_port = port;
         g_info("Connection %lu: Reused pooled connection to %s:%d", 
                conn->id, host, port);
         return TRUE;
     }
 
+    // Create new connection
     g_info("Connection %lu: Connecting to upstream %s:%d", conn->id, host, port);
     
-    // Create socket client
     GSocketClient *client = g_socket_client_new();
     
     // Set timeout
     gint timeout = deadlight_config_get_int(context, "network", "upstream_timeout", 30);
     g_socket_client_set_timeout(client, timeout);
     
-    // Set IPv6 support
+    // IPv6 support
     gboolean ipv6_enabled = deadlight_config_get_bool(context, "network", "ipv6_enabled", TRUE);
     g_socket_client_set_enable_proxy(client, FALSE);
     
-    // Don't set family when IPv6 is enabled - let GLib choose
     if (!ipv6_enabled) {
         g_socket_client_set_family(client, G_SOCKET_FAMILY_IPV4);
     }
     
     // Connect
-    conn->upstream_connection = g_socket_client_connect_to_host(client, host, port, NULL, error);
+    conn->upstream_connection = g_socket_client_connect_to_host(
+        client, host, port, NULL, error);
     g_object_unref(client);
     
     if (!conn->upstream_connection) {
         return FALSE;
     }
     
-    // Store target info - THIS IS CRITICAL FOR SSL INTERCEPTION
-    if (!conn->target_host) {  // Only set if not already set
-        conn->target_host = g_strdup(host);
-    }
-    conn->target_port = port;
+    // Register with pool for tracking
+    connection_pool_register(context->conn_pool, 
+                            conn->upstream_connection,
+                            host, port, want_ssl);
     
     // Set socket options
     GSocket *socket = g_socket_connection_get_socket(conn->upstream_connection);
@@ -479,131 +542,202 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn,
 }
 
 /**
- * Cleanup connection resources
+ * Internal cleanup - does NOT remove from hash table by default
  */
-static void cleanup_connection(DeadlightConnection *conn) {
+/**
+ * Update cleanup_connection_internal in network.c
+ * 
+ * CHANGE: Allow TLS connections to be pooled for CONNECT tunnels
+ * 
+ * TLS connections are safe to reuse when:
+ * 1. Both client and upstream use TLS (CONNECT tunnel)
+ * 2. The underlying socket is still healthy
+ * 3. Some data was actually transferred
+ */
+
+static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remove_from_table) {
     if (!conn) return;
     
-    g_debug("Cleaning up connection %lu", conn->id);
+    g_debug("Cleaning up connection %lu (state=%d, remove_from_table=%d)", 
+            conn->id, conn->state, remove_from_table);
 
-    // Notify plugins of connection close
+    // Notify plugins FIRST
     if (conn->context) {
         deadlight_plugins_call_on_connection_close(conn->context, conn);
     }
 
-    // Return upstream connection to pool if possible
-    if (conn->upstream_connection && conn->target_host && conn->state == DEADLIGHT_STATE_CLOSING) {
-        // Check if connection is reusable (HTTP keep-alive, etc)
-        gboolean reusable = FALSE;
-        if (conn->current_request) {
-            const gchar *connection_header = g_hash_table_lookup(
-                conn->current_request->headers, "Connection");
-            reusable = (connection_header &&
-                        g_ascii_strcasecmp(connection_header, "keep-alive") == 0);
+    // IMPROVED: Pool TLS connections for CONNECT tunnels
+    if (conn->upstream_connection && conn->target_host) {
+        gboolean should_pool = FALSE;
+        
+        // Check if connection is in a good state for reuse
+        if (conn->state == DEADLIGHT_STATE_CLOSING || 
+            conn->state == DEADLIGHT_STATE_CONNECTED) {
+            
+            // Validate connection health
+            GSocket *socket = g_socket_connection_get_socket(conn->upstream_connection);
+            if (g_socket_is_connected(socket) && 
+                g_socket_condition_check(socket, G_IO_ERR | G_IO_HUP) == 0) {
+                
+                // For HTTP, check keep-alive header
+                if (conn->protocol == DEADLIGHT_PROTOCOL_HTTP && 
+                    conn->current_request) {
+                    const gchar *conn_hdr = g_hash_table_lookup(
+                        conn->current_request->headers, "Connection");
+                    
+                    should_pool = (conn_hdr && 
+                                  g_ascii_strcasecmp(conn_hdr, "keep-alive") == 0);
+                }
+                // NEW: For CONNECT tunnels with TLS, pool if data was transferred
+                else if (conn->protocol == DEADLIGHT_PROTOCOL_CONNECT && 
+                         conn->upstream_tls && conn->client_tls) {
+                    // Only pool if actual data was transferred (not just handshake)
+                    guint64 total_bytes = conn->bytes_client_to_upstream + 
+                                         conn->bytes_upstream_to_client;
+                    
+                    if (total_bytes > 0) {
+                        should_pool = TRUE;
+                        g_debug("Connection %lu: CONNECT tunnel eligible for pooling (%lu bytes transferred)",
+                               conn->id, total_bytes);
+                    } else {
+                        g_debug("Connection %lu: CONNECT tunnel NOT pooled (0 bytes transferred)",
+                               conn->id);
+                    }
+                }
+                // For non-TLS connections (plain HTTP proxy)
+                else if (!conn->upstream_tls && !conn->client_tls) {
+                    should_pool = TRUE;
+                }
+            }
         }
-
-        if (reusable && !conn->upstream_tls) { // Don't reuse TLS connections
-            connection_pool_release(conn->context->conn_pool,
-                                  conn->upstream_connection, 
-                                  conn->target_host, 
-                                  conn->target_port, FALSE);
-            conn->upstream_connection = NULL; // Don't close it
+        
+        if (should_pool) {
+            g_debug("Connection %lu: Returning upstream to pool (%s:%d, tls=%d)",
+                   conn->id, conn->target_host, conn->target_port,
+                   conn->upstream_tls != NULL);
+            
+            connection_pool_release(
+                conn->context->conn_pool,
+                conn->upstream_connection,
+                conn->target_host,
+                conn->target_port,
+                conn->upstream_tls != NULL  // Track TLS separately
+            );
+            
+            // Don't unref - pool owns it now
+            conn->upstream_connection = NULL;
+        } else {
+            g_debug("Connection %lu: NOT pooling (state=%d, bytes=%lu, tls_up=%d, tls_cl=%d)",
+                   conn->id, conn->state,
+                   conn->bytes_client_to_upstream + conn->bytes_upstream_to_client,
+                   conn->upstream_tls != NULL, conn->client_tls != NULL);
         }
     }
     
-    // IMPORTANT: Close TLS connections BEFORE underlying socket connections
-    // because TLS connections wrap the socket connections
-    
+    // Close TLS connections BEFORE underlying sockets
     if (conn->client_tls) {
-        if (G_IS_IO_STREAM(conn->client_tls)) {
-            g_io_stream_close(G_IO_STREAM(conn->client_tls), NULL, NULL);
-        }
+        g_io_stream_close(G_IO_STREAM(conn->client_tls), NULL, NULL);
         g_object_unref(conn->client_tls);
         conn->client_tls = NULL;
     }
     
     if (conn->upstream_tls) {
-        if (G_IS_IO_STREAM(conn->upstream_tls)) {
-            g_io_stream_close(G_IO_STREAM(conn->upstream_tls), NULL, NULL);
-        }
+        g_io_stream_close(G_IO_STREAM(conn->upstream_tls), NULL, NULL);
         g_object_unref(conn->upstream_tls);
         conn->upstream_tls = NULL;
     }
 
-    // Now close the underlying socket connections
+    // Close underlying socket connections
     if (conn->client_connection) {
-        // Attempt graceful close if it hasn't been closed by the TLS wrapper.
-        g_io_stream_close(G_IO_STREAM(conn->client_connection), NULL, NULL); 
-        
-        // Always unref the object to free its memory.
+        g_io_stream_close(G_IO_STREAM(conn->client_connection), NULL, NULL);
         g_object_unref(conn->client_connection);
         conn->client_connection = NULL;
     }
     
     if (conn->upstream_connection) {
-        // Attempt graceful close if it hasn't been closed by the TLS wrapper.
-        g_io_stream_close(G_IO_STREAM(conn->upstream_connection), NULL, NULL); 
-        
-        // Always unref the object to free its memory.
+        // If we reach here, connection wasn't pooled
+        g_io_stream_close(G_IO_STREAM(conn->upstream_connection), NULL, NULL);
         g_object_unref(conn->upstream_connection);
         conn->upstream_connection = NULL;
     }
     
-    // Clean up certificate reference
+    // ... rest of cleanup remains the same ...
+    
     if (conn->upstream_peer_cert) {
         g_object_unref(conn->upstream_peer_cert);
         conn->upstream_peer_cert = NULL;
     }
     
-    // Free buffers
     if (conn->client_buffer) {
         g_byte_array_free(conn->client_buffer, TRUE);
+        conn->client_buffer = NULL;
     }
     
     if (conn->upstream_buffer) {
         g_byte_array_free(conn->upstream_buffer, TRUE);
+        conn->upstream_buffer = NULL;
     }
     
-    // Free strings
     g_free(conn->client_address);
     g_free(conn->target_host);
     g_free(conn->username);
     g_free(conn->session_token);
     
-    // Free plugin data
     if (conn->plugin_data) {
         g_hash_table_destroy(conn->plugin_data);
+        conn->plugin_data = NULL;
     }
     
-    // Free request/response
     if (conn->current_request) {
         deadlight_request_free(conn->current_request);
+        conn->current_request = NULL;
     }
     
     if (conn->current_response) {
         deadlight_response_free(conn->current_response);
+        conn->current_response = NULL;
     }
     
-    // Stop timer
     if (conn->connection_timer) {
         g_timer_destroy(conn->connection_timer);
+        conn->connection_timer = NULL;
     }
     
-    // Update stats
     if (conn->context) {
-        conn->context->bytes_transferred += conn->bytes_client_to_upstream + 
-                                           conn->bytes_upstream_to_client;
-    }
-
-    // --- CRITICAL FIX: Remove from master list and final free ---
-    if (conn->context && conn->context->network) {
-        g_mutex_lock(&conn->context->network->connection_mutex);
-        g_hash_table_remove(conn->context->connections, &conn->id);
-        conn->context->active_connections--;
-        g_mutex_unlock(&conn->context->network->connection_mutex);
+        g_mutex_lock(&conn->context->stats_mutex);
+        conn->context->bytes_transferred += 
+            conn->bytes_client_to_upstream + conn->bytes_upstream_to_client;
+        g_mutex_unlock(&conn->context->stats_mutex);
+        
+        if (remove_from_table && conn->context->network) {
+            g_mutex_lock(&conn->context->network->connection_mutex);
+            
+            if (g_hash_table_contains(conn->context->connections, &conn->id)) {
+                g_hash_table_steal(conn->context->connections, &conn->id);
+                conn->context->active_connections--;
+            }
+            
+            g_mutex_unlock(&conn->context->network->connection_mutex);
+        }
     }
     
     g_free(conn);
+}
+
+/**
+ * Public cleanup function - used as hash table destructor
+ * This is called BY the hash table, so DON'T remove from table
+ */
+static void cleanup_connection(DeadlightConnection *conn) {
+    cleanup_connection_internal(conn, FALSE);  // Don't remove from table
+}
+
+/**
+ * Worker thread cleanup - DOES remove from table
+ * This is called BY worker threads, so DO remove from table
+ */
+static void cleanup_connection_and_remove(DeadlightConnection *conn) {
+    cleanup_connection_internal(conn, TRUE);  // Remove from table
 }
 
 gboolean deadlight_tls_tunnel_data(DeadlightConnection *conn, GError **error) {

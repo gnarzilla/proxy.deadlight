@@ -415,8 +415,62 @@ static guint16 udp6_checksum(const struct in6_addr *src_addr,
 }
 
 //=============================================================================
-// Session Management
+// Session Management with Pool Integration
 //=============================================================================
+
+/**
+ * Parse session key to extract host/port
+ * Returns: TRUE if successfully parsed, FALSE otherwise
+ * 
+ * Formats handled:
+ *   IPv4: "192.168.1.1:1234->93.184.216.34:80"
+ *   IPv6: "[2001:db8::1]:1234->[2001:db8::2]:80"
+ */
+static gboolean parse_destination_from_session_key(const gchar *session_key,
+                                                   gchar **out_host,
+                                                   guint16 *out_port) {
+    if (!session_key || !out_host || !out_port) return FALSE;
+    
+    // Find the arrow separator
+    const gchar *arrow = strstr(session_key, "->");
+    if (!arrow) return FALSE;
+    
+    // Get destination part (everything after "->")
+    const gchar *dest_part = arrow + 2;
+    
+    // Check if IPv6 (starts with '[')
+    if (dest_part[0] == '[') {
+        // IPv6 format: [addr]:port
+        const gchar *bracket_end = strchr(dest_part, ']');
+        if (!bracket_end) return FALSE;
+        
+        // Extract address between brackets
+        gsize addr_len = bracket_end - dest_part - 1;
+        *out_host = g_strndup(dest_part + 1, addr_len);
+        
+        // Extract port after ']:' 
+        const gchar *port_start = bracket_end + 2;  // Skip ']:'
+        *out_port = (guint16)atoi(port_start);
+        
+    } else {
+        // IPv4 format: addr:port
+        // Find last ':' to handle edge cases
+        const gchar *colon = strrchr(dest_part, ':');
+        if (!colon) {
+            return FALSE;
+        }
+        
+        // Extract address
+        gsize addr_len = colon - dest_part;
+        *out_host = g_strndup(dest_part, addr_len);
+        
+        // Extract port
+        *out_port = (guint16)atoi(colon + 1);
+    }
+    
+    return (*out_port > 0);  // Validation
+}
+
 
 static VPNSession *vpn_session_new(DeadlightVPNManager *vpn, guint32 client_ip,
                                    guint16 client_port, guint32 dest_ip,
@@ -468,24 +522,86 @@ static VPNSession *vpn_session_new(DeadlightVPNManager *vpn, guint32 client_ip,
     return session;
 }
 
+
+/**
+ * Free VPN session with pool integration
+ * 
+ * CRITICAL: This now properly returns healthy connections to the pool
+ */
 static void vpn_session_free(VPNSession *session) {
     if (!session) return;
     
+    g_debug("VPN: Freeing session %s", session->session_key);
+    
+    // Remove timers first
     if (session->upstream_watch_id > 0) {
         g_source_remove(session->upstream_watch_id);
+        session->upstream_watch_id = 0;
     }
     if (session->retrans_timer_id > 0) {
         g_source_remove(session->retrans_timer_id);
+        session->retrans_timer_id = 0;
     }
+    
+    // Handle upstream connection
     if (session->upstream_conn) {
-        GError *error = NULL;
-        g_io_stream_close(G_IO_STREAM(session->upstream_conn), NULL, &error);
-        if (error) {
-            log_warn("VPN: Error closing upstream for %s: %s", session->session_key, error->message);
-            g_error_free(error);
+        GSocket *socket = g_socket_connection_get_socket(session->upstream_conn);
+        
+        // Check if connection is healthy and should be pooled
+        gboolean should_pool = FALSE;
+        
+        if (session->state == VPN_TCP_TIME_WAIT || 
+            session->state == VPN_TCP_FIN_WAIT_2 ||
+            session->state == VPN_TCP_LAST_ACK) {
+            // Connection closing gracefully - might still be usable
+            if (g_socket_is_connected(socket) && 
+                g_socket_condition_check(socket, G_IO_ERR | G_IO_HUP) == 0) {
+                should_pool = TRUE;
+            }
         }
-        g_object_unref(session->upstream_conn);
+        
+        if (should_pool) {
+            // Parse destination from session key
+            gchar *dest_host = NULL;
+            guint16 dest_port = 0;
+            
+            if (parse_destination_from_session_key(session->session_key, 
+                                                   &dest_host, &dest_port)) {
+                g_debug("VPN: Returning connection to pool: %s:%u", 
+                       dest_host, dest_port);
+                
+                connection_pool_release(
+                    session->vpn->context->conn_pool,
+                    session->upstream_conn,
+                    dest_host,
+                    dest_port,
+                    FALSE  // VPN doesn't use SSL (app-layer handles it)
+                );
+                
+                g_free(dest_host);
+                
+                // Don't unref - pool owns it now
+                session->upstream_conn = NULL;
+            } else {
+                g_warning("VPN: Failed to parse destination from key: %s", 
+                         session->session_key);
+            }
+        }
+        
+        // If we still have the connection, close it
+        if (session->upstream_conn) {
+            GError *error = NULL;
+            g_io_stream_close(G_IO_STREAM(session->upstream_conn), NULL, &error);
+            if (error) {
+                g_debug("VPN: Error closing upstream for %s: %s", 
+                       session->session_key, error->message);
+                g_error_free(error);
+            }
+            g_object_unref(session->upstream_conn);
+            session->upstream_conn = NULL;
+        }
     }
+    
     g_free(session->last_packet.data);
     g_free(session->session_key);
     g_free(session);
@@ -996,9 +1112,15 @@ static gboolean on_udp_upstream_readable(GIOChannel *source, GIOCondition condit
 // Protocol Handlers
 //=============================================================================
 
+/**
+ * Handle TCP packet with pool integration
+ * 
+ * CRITICAL CHANGE: Try pool first before creating new connection
+ */
 static void handle_tcp_packet(DeadlightVPNManager *vpn, struct ip_header *ip_hdr,
                               struct tcp_header *tcp_hdr, guint8 *payload,
                               gsize payload_len) {
+
     guint32 client_ip = ntohl(ip_hdr->src_addr);
     guint32 dest_ip = ntohl(ip_hdr->dest_addr);
     guint16 client_port = ntohs(tcp_hdr->src_port);
@@ -1018,7 +1140,8 @@ static void handle_tcp_packet(DeadlightVPNManager *vpn, struct ip_header *ip_hdr
     log_debug("VPN: TCP packet: %s:%u -> %s:%u flags=0x%02x seq=%u ack=%u payload=%zu",
              client_str, client_port, dest_str, dest_port, flags, recv_seq, recv_ack, payload_len);
 
-    gchar *key = g_strdup_printf("%s:%u->%s:%u", client_str, client_port, dest_str, dest_port);
+    gchar *key = g_strdup_printf("%s:%u->%s:%u", 
+                                 client_str, client_port, dest_str, dest_port);
 
     g_mutex_lock(&vpn->sessions_mutex);
     VPNSession *session = g_hash_table_lookup(vpn->sessions, key);
@@ -1036,30 +1159,58 @@ static void handle_tcp_packet(DeadlightVPNManager *vpn, struct ip_header *ip_hdr
         session->ack = recv_seq + 1;
         session->state = VPN_TCP_SYN_RECEIVED;
 
-        // Create real kernel socket
-        GError *error = NULL;
-        log_info("VPN: Connecting to upstream: %s:%u", dest_str, dest_port);
+        // === POOL INTEGRATION: Try pool first ===
+        log_info("VPN: New connection request: %s -> %s:%u", 
+                session->session_key, dest_str, dest_port);
         
-        session->upstream_conn = deadlight_network_connect_tcp(vpn->context, dest_str, dest_port, &error);
-
-        if (!session->upstream_conn) {
-            log_warn("VPN: Failed to connect to %s:%u - %s", 
-                    dest_str, dest_port,
-                    error ? error->message : "unknown error");
-            if (error) g_error_free(error);
+        // Try to get from pool
+        session->upstream_conn = connection_pool_get(
+            vpn->context->conn_pool,
+            dest_str,
+            dest_port,
+            FALSE  // No SSL at VPN layer
+        );
+        
+        if (session->upstream_conn) {
+            log_info("VPN: Reusing pooled connection to %s:%u", dest_str, dest_port);
+        } else {
+            // Create new connection
+            GError *error = NULL;
+            log_info("VPN: Creating new upstream connection to %s:%u", 
+                    dest_str, dest_port);
             
-            // Send RST to client
-            send_tcp_packet(vpn, session, TCP_RST | TCP_ACK, NULL, 0);
-            vpn_session_free(session);
-            g_mutex_unlock(&vpn->sessions_mutex);
-            g_free(key);
-            return;
+            session->upstream_conn = deadlight_network_connect_tcp(
+                vpn->context, dest_str, dest_port, &error);
+
+            if (!session->upstream_conn) {
+                log_warn("VPN: Failed to connect to %s:%u - %s", 
+                        dest_str, dest_port,
+                        error ? error->message : "unknown error");
+                if (error) g_error_free(error);
+                
+                // Send RST to client
+                send_tcp_packet(vpn, session, TCP_RST | TCP_ACK, NULL, 0);
+                vpn_session_free(session);
+                g_mutex_unlock(&vpn->sessions_mutex);
+                g_free(key);
+                return;
+            }
+            
+            // Register new connection with pool
+            connection_pool_register(
+                vpn->context->conn_pool,
+                session->upstream_conn,
+                dest_str,
+                dest_port,
+                FALSE
+            );
         }
 
         // Watch for upstream data
         GSocket *sock = g_socket_connection_get_socket(session->upstream_conn);
         GIOChannel *chan = g_io_channel_unix_new(g_socket_get_fd(sock));
-        session->upstream_watch_id = g_io_add_watch(chan, G_IO_IN | G_IO_HUP | G_IO_ERR,
+        session->upstream_watch_id = g_io_add_watch(chan, 
+                                                   G_IO_IN | G_IO_HUP | G_IO_ERR,
                                                    on_upstream_readable, session);
         g_io_channel_unref(chan);
 
@@ -1831,11 +1982,21 @@ void deadlight_vpn_gateway_cleanup(DeadlightContext *context) {
     log_info("VPN: Gateway cleanup complete");
 }
 
+
+//=============================================================================
+// VPN Statistics with Pool Metrics
+//=============================================================================
+
+/**
+ * Get VPN statistics including pool metrics
+ */
 void deadlight_vpn_gateway_get_stats(DeadlightContext *context,
                                     guint64 *active_connections,
                                     guint64 *total_connections,
                                     guint64 *bytes_sent,
-                                    guint64 *bytes_received) {
+                                    guint64 *bytes_received,
+                                    guint *pooled_connections,
+                                    gdouble *pool_hit_rate) {
     g_return_if_fail(context != NULL);
     g_return_if_fail(context->vpn != NULL);
 
@@ -1845,4 +2006,21 @@ void deadlight_vpn_gateway_get_stats(DeadlightContext *context,
     if (total_connections) *total_connections = vpn->total_connections;
     if (bytes_sent) *bytes_sent = vpn->bytes_sent;
     if (bytes_received) *bytes_received = vpn->bytes_received;
+    
+    // Pool statistics (NULL-safe)
+    if ((pooled_connections || pool_hit_rate) && context->conn_pool) {
+        guint idle_count = 0;
+        gdouble hit_rate = 0.0;
+        
+        connection_pool_get_stats(context->conn_pool,
+                                 &idle_count,
+                                 NULL, NULL, NULL,
+                                 &hit_rate);
+        
+        if (pooled_connections) *pooled_connections = idle_count;
+        if (pool_hit_rate) *pool_hit_rate = hit_rate;
+    } else {
+        if (pooled_connections) *pooled_connections = 0;
+        if (pool_hit_rate) *pool_hit_rate = 0.0;
+    }
 }

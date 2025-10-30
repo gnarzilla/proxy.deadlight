@@ -62,6 +62,9 @@ static void pooled_connection_free(PooledConnection *pc) {
 
 /**
  * Check if a connection is still healthy
+ * 
+ * NOTE: For TLS connections, this only checks the underlying socket.
+ * The TLS session state is managed separately.
  */
 static gboolean connection_is_healthy(GSocketConnection *conn) {
     if (!conn) return FALSE;
@@ -78,6 +81,11 @@ static gboolean connection_is_healthy(GSocketConnection *conn) {
     if (g_socket_condition_check(socket, G_IO_ERR | G_IO_HUP) != 0) {
         return FALSE;
     }
+    
+    // TODO: For TLS connections, we could add more sophisticated checks:
+    // - Verify TLS session is still valid
+    // - Check for pending close_notify
+    // For now, rely on socket health
     
     return TRUE;
 }

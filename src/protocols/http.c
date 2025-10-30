@@ -8,7 +8,7 @@
 
 // Helper function forward declarations
 
-// Protocol handler forward declarations - These now match the header (http.h)
+// Protocol handler forward declarations
 static gsize http_detect(const guint8 *data, gsize len);
 static DeadlightHandlerResult http_handle(DeadlightConnection *conn, GError **error);
 static void http_cleanup(DeadlightConnection *conn);
@@ -147,7 +147,6 @@ static DeadlightHandlerResult handle_plain_http(DeadlightConnection *conn, GErro
     }
 }
 static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError **error) {
-    // --- REFACTORED: More robust and efficient CONNECT line parsing ---
 
     // 1. Get a pointer to the start of the buffer and find the end of the first line.
     const gchar *data = (const gchar *)conn->client_buffer->data;
@@ -172,8 +171,6 @@ static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError *
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Invalid CONNECT request line format");
         return HANDLER_ERROR;
     }
-
-    // --- End of refactoring. The rest of the logic uses the parsed parts. ---
 
     gchar *host = NULL;
     guint16 port = 443; // Default port for CONNECT
@@ -200,7 +197,7 @@ static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError *
         return HANDLER_SUCCESS_CLEANUP_NOW;
     }
     
-    // Proxy loop prevention (your existing code is perfect)
+    // Proxy loop prevention
     if ((g_strcmp0(host, conn->context->listen_address) == 0 || g_strcmp0(host, "localhost") == 0 || g_strcmp0(host, "127.0.0.1") == 0) && port == conn->context->listen_port) {
         g_warning("Connection %lu: Detected proxy loop to %s:%d. Denying request.", conn->id, host, port);
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "Proxy loop detected");
@@ -224,13 +221,11 @@ static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError *
         return HANDLER_ERROR;
     }
 
-    // The rest of the tunneling logic...
     if (conn->context->ssl_intercept_enabled) {
         if (deadlight_ssl_intercept_connection(conn, error)) {
             g_info("Connection %lu: Tunneling with intercepted client TLS.", conn->id);
             g_info("Connection %lu: Tunneling with upstream TLS.", conn->id);
             
-            // [FIX] Corrected function call syntax
             if (start_ssl_tunnel_blocking(conn, error)) {
                 return HANDLER_SUCCESS_CLEANUP_NOW;
             } else {
