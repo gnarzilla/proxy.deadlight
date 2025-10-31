@@ -223,7 +223,7 @@ void connection_pool_release(ConnectionPool *pool,
     
     g_mutex_lock(&pool->mutex);
     
-    // FIXED: Lookup and STEAL (don't destroy) from active table
+    // Lookup and STEAL (don't destroy) from active table
     PooledConnection *pc = g_hash_table_lookup(pool->active_connections, connection);
     
     if (!pc) {
@@ -257,7 +257,7 @@ void connection_pool_release(ConnectionPool *pool,
         return;
     }
     
-    // FIXED: Reuse existing PooledConnection, just update timestamp
+    // Reuse existing PooledConnection, just update timestamp
     pc->last_used = g_get_monotonic_time();
     
     // Add to idle queue

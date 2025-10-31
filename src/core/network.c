@@ -123,6 +123,79 @@ gboolean deadlight_network_init(DeadlightContext *context, GError **error) {
 }
 
 /**
+ * Determine if an upstream connection will use SSL
+ * 
+ * This function predicts whether the connection will be SSL-secured
+ * BEFORE actually connecting, so we can look up the correct pool entry.
+ * 
+ * Accounts for:
+ * - Protocol type (HTTPS, IMAPS always SSL)
+ * - Target port (443, 993, 995, 465, 989 → likely SSL)
+ * - SSL interception settings
+ * - Already-negotiated TLS state
+ */
+static gboolean network_should_use_ssl(DeadlightProtocol protocol,
+                                       DeadlightConnection *conn) {
+    g_return_val_if_fail(conn != NULL, FALSE);
+    
+    // Already have TLS established
+    if (conn->upstream_tls != NULL) {
+        return TRUE;
+    }
+    
+    switch (protocol) {
+        // These protocols ALWAYS use SSL
+        case DEADLIGHT_PROTOCOL_HTTPS:
+        case DEADLIGHT_PROTOCOL_IMAPS:
+            return TRUE;
+        
+        // HTTP and CONNECT: Check for port-based SSL + interception
+        case DEADLIGHT_PROTOCOL_CONNECT:
+        case DEADLIGHT_PROTOCOL_HTTP:
+        {
+            if (conn->context->ssl_intercept_enabled && conn->target_port > 0) {
+                // Will intercept common SSL ports
+                return conn->target_port == 443 ||   // HTTPS
+                       conn->target_port == 993 ||   // IMAPS
+                       conn->target_port == 995 ||   // POP3S
+                       conn->target_port == 465 ||   // SMTPS
+                       conn->target_port == 989;     // FTPS
+            }
+            return FALSE;
+        }
+        
+        // Text protocols: plain initially, might upgrade
+        case DEADLIGHT_PROTOCOL_SMTP:
+        case DEADLIGHT_PROTOCOL_IMAP:
+            return FALSE;
+        
+        // SOCKS: depends on target port
+        case DEADLIGHT_PROTOCOL_SOCKS:
+        case DEADLIGHT_PROTOCOL_SOCKS4:
+        case DEADLIGHT_PROTOCOL_SOCKS5:
+        {
+            if (conn->target_port > 0) {
+                return conn->target_port == 443 ||
+                       conn->target_port == 993 ||
+                       conn->target_port == 995 ||
+                       conn->target_port == 465 ||
+                       conn->target_port == 989;
+            }
+            return FALSE;
+        }
+        
+        case DEADLIGHT_PROTOCOL_WEBSOCKET:
+            return conn->target_port == 443;
+        
+        case DEADLIGHT_PROTOCOL_FTP:
+            return conn->target_port == 989;
+        
+        default:
+            return FALSE;
+    }
+}
+
+/**
  * Start network listener
  */
 gboolean deadlight_network_start_listener(DeadlightContext *context, gint port, GError **error) {
@@ -464,9 +537,20 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
 }
 
 // ==============================================================
-// Improved upstream connection with pool 
+// Upstream connection with pool 
 // ==============================================================
-
+/**
+ * Connect to upstream server
+ * 
+ * UPDATED: SSL-aware pooling with protocol-specific logic
+ * 
+ * This function:
+ * 1. Determines if SSL will be used based on protocol
+ * 2. Checks the pool for a matching connection (with correct SSL status)
+ * 3. Creates a new connection if pool miss
+ * 4. Registers the connection for tracking
+ * 5. Establishes SSL if needed
+ */
 gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, 
                                           const gchar *host, 
                                           guint16 port,
@@ -476,57 +560,98 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn,
     g_return_val_if_fail(port > 0, FALSE);
     
     DeadlightContext *context = conn->context;
-
-    // Store target info FIRST - needed for SSL and pool tracking
+    
+    // === STEP 1: Store target info ===
     if (!conn->target_host) {
         conn->target_host = g_strdup(host);
     }
     conn->target_port = port;
-
-    // Try to get from pool first (SSL handled separately for now)
-    gboolean want_ssl = FALSE;  // Will be set by caller if needed
+    
+    // === STEP 2: Already connected to same target? ===
+    if (conn->upstream_connection) {
+        if (g_strcmp0(conn->target_host, host) == 0 && 
+            conn->target_port == port) {
+            g_debug("Connection %lu: Upstream already connected to %s:%d",
+                   conn->id, host, port);
+            return TRUE;
+        }
+        
+        // Different target (shouldn't happen in normal flow)
+        g_warning("Connection %lu: Changing upstream target from %s:%d to %s:%d",
+                 conn->id, conn->target_host, conn->target_port, host, port);
+        g_object_unref(conn->upstream_connection);
+        conn->upstream_connection = NULL;
+    }
+    
+    // === STEP 3: Determine SSL requirement AT THIS MOMENT ===
+    gboolean will_use_ssl = network_should_use_ssl(conn->protocol, conn);
+    
+    g_debug("Connection %lu: Upstream lookup: %s:%d (protocol=%s, will_ssl=%d)",
+           conn->id, host, port,
+           deadlight_protocol_to_string(conn->protocol), will_use_ssl);
+    
+    // === STEP 4: Check pool ===
     GSocketConnection *pooled = connection_pool_get(
-        context->conn_pool, host, port, want_ssl);
+        context->conn_pool, host, port, will_use_ssl);
     
     if (pooled) {
         conn->upstream_connection = pooled;
-        g_info("Connection %lu: Reused pooled connection to %s:%d", 
-               conn->id, host, port);
+        g_info("Connection %lu: ✓ Pool HIT: Reused %s:%d (SSL=%d)",
+               conn->id, host, port, will_use_ssl);
+        
+        // For SSL connections from pool, ensure TLS is established
+        if (will_use_ssl && !conn->upstream_tls) {
+            g_debug("Connection %lu: Establishing SSL on pooled connection", conn->id);
+            if (!deadlight_network_establish_upstream_ssl(conn, error)) {
+                g_warning("Connection %lu: SSL failed on pooled connection: %s",
+                         conn->id, error && *error ? (*error)->message : "unknown");
+                // Don't return to pool - this connection is broken
+                g_object_unref(conn->upstream_connection);
+                conn->upstream_connection = NULL;
+                return FALSE;
+            }
+        }
+        
         return TRUE;
     }
-
-    // Create new connection
-    g_info("Connection %lu: Connecting to upstream %s:%d", conn->id, host, port);
+    
+    // === STEP 5: Pool miss - create new connection ===
+    g_debug("Connection %lu: Pool MISS - creating new connection to %s:%d",
+           conn->id, host, port);
     
     GSocketClient *client = g_socket_client_new();
     
-    // Set timeout
-    gint timeout = deadlight_config_get_int(context, "network", "upstream_timeout", 30);
+    // Get timeout from config
+    gint timeout = deadlight_config_get_int(context, "network", 
+                                           "upstream_timeout", 30);
     g_socket_client_set_timeout(client, timeout);
     
-    // IPv6 support
-    gboolean ipv6_enabled = deadlight_config_get_bool(context, "network", "ipv6_enabled", TRUE);
+    // Check IPv6 preference
+    gboolean ipv6_enabled = deadlight_config_get_bool(context, "network", 
+                                                     "ipv6_enabled", TRUE);
     g_socket_client_set_enable_proxy(client, FALSE);
-    
     if (!ipv6_enabled) {
         g_socket_client_set_family(client, G_SOCKET_FAMILY_IPV4);
     }
     
-    // Connect
+    // Attempt connection
     conn->upstream_connection = g_socket_client_connect_to_host(
         client, host, port, NULL, error);
     g_object_unref(client);
     
     if (!conn->upstream_connection) {
+        g_warning("Connection %lu: Failed to connect to %s:%d: %s",
+                 conn->id, host, port,
+                 error && *error ? (*error)->message : "unknown");
         return FALSE;
     }
     
-    // Register with pool for tracking
+    // === STEP 6: Register with pool for future reuse ===
     connection_pool_register(context->conn_pool, 
                             conn->upstream_connection,
-                            host, port, want_ssl);
+                            host, port, will_use_ssl);
     
-    // Set socket options
+    // === STEP 7: Configure socket options ===
     GSocket *socket = g_socket_connection_get_socket(conn->upstream_connection);
     g_socket_set_blocking(socket, FALSE);
     
@@ -537,7 +662,22 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn,
         g_socket_set_option(socket, IPPROTO_TCP, TCP_NODELAY, optval, NULL);
     }
     
-    g_info("Connection %lu: Connected to upstream %s:%d", conn->id, host, port);
+    // === STEP 8: Establish SSL if needed ===
+    if (will_use_ssl) {
+        g_debug("Connection %lu: Establishing SSL for new connection", conn->id);
+        if (!deadlight_network_establish_upstream_ssl(conn, error)) {
+            g_warning("Connection %lu: Failed to establish SSL: %s",
+                     conn->id, error && *error ? (*error)->message : "unknown");
+            // Connection broken, close it
+            g_object_unref(conn->upstream_connection);
+            conn->upstream_connection = NULL;
+            return FALSE;
+        }
+    }
+    
+    g_info("Connection %lu: ✓ Connected to %s:%d (SSL=%d)",
+           conn->id, host, port, will_use_ssl);
+    
     return TRUE;
 }
 
@@ -565,72 +705,146 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
     if (conn->context) {
         deadlight_plugins_call_on_connection_close(conn->context, conn);
     }
-
-    // IMPROVED: Pool TLS connections for CONNECT tunnels
+    // === POOL RELEASE: Return connection if appropriate ===
     if (conn->upstream_connection && conn->target_host) {
+        gboolean use_ssl = conn->upstream_tls != NULL;
         gboolean should_pool = FALSE;
+        const gchar *reason = "unknown";
         
-        // Check if connection is in a good state for reuse
-        if (conn->state == DEADLIGHT_STATE_CLOSING || 
-            conn->state == DEADLIGHT_STATE_CONNECTED) {
-            
-            // Validate connection health
-            GSocket *socket = g_socket_connection_get_socket(conn->upstream_connection);
-            if (g_socket_is_connected(socket) && 
-                g_socket_condition_check(socket, G_IO_ERR | G_IO_HUP) == 0) {
-                
-                // For HTTP, check keep-alive header
-                if (conn->protocol == DEADLIGHT_PROTOCOL_HTTP && 
-                    conn->current_request) {
-                    const gchar *conn_hdr = g_hash_table_lookup(
-                        conn->current_request->headers, "Connection");
-                    
-                    should_pool = (conn_hdr && 
-                                  g_ascii_strcasecmp(conn_hdr, "keep-alive") == 0);
-                }
-                // NEW: For CONNECT tunnels with TLS, pool if data was transferred
-                else if (conn->protocol == DEADLIGHT_PROTOCOL_CONNECT && 
-                         conn->upstream_tls && conn->client_tls) {
-                    // Only pool if actual data was transferred (not just handshake)
-                    guint64 total_bytes = conn->bytes_client_to_upstream + 
-                                         conn->bytes_upstream_to_client;
-                    
-                    if (total_bytes > 0) {
-                        should_pool = TRUE;
-                        g_debug("Connection %lu: CONNECT tunnel eligible for pooling (%lu bytes transferred)",
-                               conn->id, total_bytes);
-                    } else {
-                        g_debug("Connection %lu: CONNECT tunnel NOT pooled (0 bytes transferred)",
-                               conn->id);
+        // Check 1: Socket health
+        GSocket *socket = g_socket_connection_get_socket(conn->upstream_connection);
+        gboolean socket_ok = (g_socket_is_connected(socket) && 
+                             g_socket_condition_check(socket, G_IO_ERR | G_IO_HUP) == 0);
+        
+        if (!socket_ok) {
+            reason = "socket dead";
+        }
+        // Check 2: Connection state
+        else if (conn->state != DEADLIGHT_STATE_CLOSING &&
+                 conn->state != DEADLIGHT_STATE_CONNECTED &&
+                 conn->state != DEADLIGHT_STATE_TUNNELING) {
+            reason = "bad state";
+        }
+        // Check 3: Protocol-specific rules
+        else {
+            switch (conn->protocol) {
+                case DEADLIGHT_PROTOCOL_HTTP:
+                {
+                    // HTTP: Check Connection header for keep-alive
+                    gboolean keep_alive = TRUE;
+                    if (conn->current_request) {
+                        const gchar *conn_hdr = g_hash_table_lookup(
+                            conn->current_request->headers, "Connection");
+                        if (conn_hdr && 
+                            g_ascii_strcasecmp(conn_hdr, "close") == 0) {
+                            keep_alive = FALSE;
+                        }
                     }
+                    
+                    if (keep_alive) {
+                        should_pool = TRUE;
+                        reason = "HTTP keep-alive";
+                    } else {
+                        reason = "HTTP Connection: close";
+                    }
+                    break;
                 }
-                // For non-TLS connections (plain HTTP proxy)
-                else if (!conn->upstream_tls && !conn->client_tls) {
-                    should_pool = TRUE;
+                
+                case DEADLIGHT_PROTOCOL_HTTPS:
+                {
+                    // HTTPS: Pool if clean and SSL OK
+                    if (conn->state == DEADLIGHT_STATE_CONNECTED && use_ssl) {
+                        should_pool = TRUE;
+                        reason = "HTTPS clean";
+                    } else {
+                        reason = "HTTPS incomplete";
+                    }
+                    break;
+                }
+                
+                case DEADLIGHT_PROTOCOL_CONNECT:
+                {
+                    // CONNECT tunnels are one-way per client
+                    reason = "CONNECT one-way";
+                    break;
+                }
+                
+                case DEADLIGHT_PROTOCOL_SOCKS:
+                case DEADLIGHT_PROTOCOL_SOCKS4:
+                case DEADLIGHT_PROTOCOL_SOCKS5:
+                {
+                    // SOCKS tunnels are one-way
+                    reason = "SOCKS one-way";
+                    break;
+                }
+                
+                case DEADLIGHT_PROTOCOL_IMAP:
+                case DEADLIGHT_PROTOCOL_IMAPS:
+                {
+                    // Pool IMAP if authenticated and clean
+                    if (conn->authenticated && 
+                        conn->state == DEADLIGHT_STATE_CONNECTED) {
+                        should_pool = TRUE;
+                        reason = "IMAP auth OK";
+                    } else {
+                        reason = "IMAP not auth";
+                    }
+                    break;
+                }
+                
+                case DEADLIGHT_PROTOCOL_SMTP:
+                {
+                    // Pool SMTP between transactions
+                    if (conn->state == DEADLIGHT_STATE_CONNECTED) {
+                        should_pool = TRUE;
+                        reason = "SMTP OK";
+                    } else {
+                        reason = "SMTP incomplete";
+                    }
+                    break;
+                }
+                
+                case DEADLIGHT_PROTOCOL_WEBSOCKET:
+                {
+                    // WebSocket is one-way per connection
+                    reason = "WebSocket one-way";
+                    break;
+                }
+                
+                case DEADLIGHT_PROTOCOL_FTP:
+                {
+                    // FTP state is complex, don't pool
+                    reason = "FTP complex";
+                    break;
+                }
+                
+                default:
+                {
+                    reason = "unknown protocol";
+                    break;
                 }
             }
         }
         
         if (should_pool) {
-            g_debug("Connection %lu: Returning upstream to pool (%s:%d, tls=%d)",
-                   conn->id, conn->target_host, conn->target_port,
-                   conn->upstream_tls != NULL);
+            g_info("Connection %lu: ✓ Returning to pool: %s:%d (SSL=%d, reason=%s)",
+                   conn->id, conn->target_host, conn->target_port, 
+                   use_ssl, reason);
             
             connection_pool_release(
                 conn->context->conn_pool,
                 conn->upstream_connection,
                 conn->target_host,
                 conn->target_port,
-                conn->upstream_tls != NULL  // Track TLS separately
+                use_ssl  // CRITICAL: Use actual SSL state, not predicted
             );
             
-            // Don't unref - pool owns it now
+            // Pool owns it now
             conn->upstream_connection = NULL;
         } else {
-            g_debug("Connection %lu: NOT pooling (state=%d, bytes=%lu, tls_up=%d, tls_cl=%d)",
-                   conn->id, conn->state,
-                   conn->bytes_client_to_upstream + conn->bytes_upstream_to_client,
-                   conn->upstream_tls != NULL, conn->client_tls != NULL);
+            g_debug("Connection %lu: ✗ Not pooling: %s:%d (SSL=%d, reason=%s)",
+                   conn->id, conn->target_host, conn->target_port,
+                   use_ssl, reason);
         }
     }
     
@@ -1054,4 +1268,21 @@ gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error
            deadlight_format_bytes(conn->bytes_upstream_to_client));
 
     return TRUE;
+}
+
+/**
+ * Print detailed pool statistics to log
+ */
+static inline void connection_pool_log_stats(ConnectionPool *pool) {
+    guint idle, active;
+    guint64 total_gets, cache_hits;
+    gdouble hit_rate;
+    
+    connection_pool_get_stats(pool, &idle, &active, &total_gets, &cache_hits, &hit_rate);
+    
+    g_info("Pool Statistics: "
+           "idle=%u, active=%u, total_gets=%lu, hits=%lu, "
+           "misses=%lu, created=%lu, closed=%lu, hit_rate=%.1f%%",
+           idle, active, total_gets, cache_hits,
+           total_gets - cache_hits, 0, 0, hit_rate);
 }
