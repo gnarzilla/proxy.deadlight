@@ -429,6 +429,36 @@ printf "USER anonymous\r\nPASV\r\n" | nc localhost 8080
 -   `-v, --verbose`: Enable verbose (debug) logging.
 -   `-h, --help`: Show help message.
 
+### Request trace through HTTP Keep-Alive with Pool
+
+```text
+Request 1: GET http://example.com/page1
+├─ network_should_use_ssl() → FALSE (port 80, no interception)
+├─ connection_pool_get(pool, "example.com", 80, FALSE) → NULL (miss)
+├─ Create new connection
+├─ connection_pool_register(pool, conn, "example.com", 80, FALSE)
+│  └─ Creates PooledConnection with is_ssl=FALSE
+│  └─ Adds to active_connections hash table
+├─ Send request
+├─ deadlight_network_tunnel_data() → complete
+└─ cleanup_connection()
+   └─ connection_pool_release(pool, conn, "example.com", 80, FALSE)
+      └─ Steals from active_connections
+      └─ Validates health ✓
+      └─ Checks Connection header → keep-alive ✓
+      └─ Adds to idle_connections queue
+
+Request 2: GET http://example.com/page2
+├─ network_should_use_ssl() → FALSE
+├─ connection_pool_get(pool, "example.com", 80, FALSE)
+│  └─ Searches idle_connections
+│  └─ Finds match: strcmp("example.com", "example.com") ✓
+│  └─ Checks port: 80 == 80 ✓
+│  └─ Checks is_ssl: FALSE == FALSE ✓
+│  └─ connection_is_healthy() ✓
+│  └─ Moves from idle to active ✓
+│  └─ Returns connection ✓✓✓ POOL HIT!
+```
 
 ## Extending Deadlight
 
