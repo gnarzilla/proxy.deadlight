@@ -5,6 +5,8 @@ Features kernel-integrated VPN gateway, deep packet inspection, protocol analysi
 
 [Features](#features) ·  [Usage](#usage) · [Getting Started](#getting-started) · [Architecture](#architecture)· [Extending Deadlight](#extending-deadlight) · [Use Cases](#use-cases) · [Roadmap](#roadmap) · [Configuration](#configuration) · [License](docs/LICENSE)
 
+![proxy.deadlight with web UI and CLI logging](assets/proxy_ui_cli_uPi.gif)
+
 ---
 
 ## Overview
