@@ -22,7 +22,7 @@ typedef struct _PooledConnection {
     guint16 port;
     gint64 last_used;
     gboolean is_ssl;
-    guint64 requests_served;  // NEW: Track usage
+    guint64 requests_served;
 } PooledConnection;
 
 struct _ConnectionPool {
@@ -30,7 +30,7 @@ struct _ConnectionPool {
     GHashTable *active_connections;  // Key: GSocketConnection*, Value: PooledConnection*
     GMutex mutex;
     gint max_per_host;
-    gint max_total_idle;  // NEW: Global limit
+    gint max_total_idle; 
     gint idle_timeout;
     guint cleanup_source_id;
     
@@ -82,7 +82,7 @@ static gboolean connection_is_healthy(GSocketConnection *conn) {
         return FALSE;
     }
     
-    // TODO: For TLS connections, we could add more sophisticated checks:
+    // TODO: For TLS connections, could add more sophisticated checks:
     // - Verify TLS session is still valid
     // - Check for pending close_notify
     // For now, rely on socket health
@@ -97,7 +97,7 @@ ConnectionPool* connection_pool_new(gint max_per_host, gint idle_timeout) {
     ConnectionPool *pool = g_new0(ConnectionPool, 1);
     pool->idle_connections = g_queue_new();
     
-    // FIXED: Add value destructor for proper cleanup
+    // Add value destructor for proper cleanup
     pool->active_connections = g_hash_table_new_full(
         g_direct_hash, 
         g_direct_equal,
@@ -212,7 +212,7 @@ GSocketConnection* connection_pool_get(ConnectionPool *pool,
 /**
  * Release connection back to pool
  * 
- * CRITICAL FIX: Reuse existing PooledConnection object instead of creating new one
+ * 
  */
 void connection_pool_release(ConnectionPool *pool, 
                             GSocketConnection *connection,
