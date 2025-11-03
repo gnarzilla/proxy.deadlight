@@ -310,8 +310,8 @@ static gboolean on_incoming_connection(GSocketService *service,
                                      GSocketConnection *connection,
                                      GObject *source_object,
                                      gpointer user_data) {
-    (void)service;  // Mark as unused
-    (void)source_object;  // Mark as unused
+    (void)service; 
+    (void)source_object; 
     
     DeadlightContext *context = (DeadlightContext *)user_data;
     
@@ -496,7 +496,6 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
 
     DeadlightHandlerResult handler_result = handler->handle(conn, &error);
 
-    // The switch is now simpler
     switch (handler_result) {
         case HANDLER_SUCCESS_CLEANUP_NOW:
             g_info("Connection %lu: Synchronous handler for '%s' completed.", 
@@ -596,7 +595,7 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn,
     
     if (pooled) {
         conn->upstream_connection = pooled;
-        g_info("Connection %lu: ✓ Pool HIT: Reused %s:%d (SSL=%d)",
+        g_info("Connection %lu: Pool HIT: Reused %s:%d (SSL=%d)",
                conn->id, host, port, will_use_ssl);
         
         // For SSL connections from pool, ensure TLS is established
@@ -675,7 +674,7 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn,
         }
     }
     
-    g_info("Connection %lu: ✓ Connected to %s:%d (SSL=%d)",
+    g_info("Connection %lu: Connected to %s:%d (SSL=%d)",
            conn->id, host, port, will_use_ssl);
     
     return TRUE;
@@ -827,7 +826,7 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
         }
         
         if (should_pool) {
-            g_info("Connection %lu: ✓ Returning to pool: %s:%d (SSL=%d, reason=%s)",
+            g_info("Connection %lu: Returning to pool: %s:%d (SSL=%d, reason=%s)",
                    conn->id, conn->target_host, conn->target_port, 
                    use_ssl, reason);
             
@@ -842,7 +841,7 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
             // Pool owns it now
             conn->upstream_connection = NULL;
         } else {
-            g_debug("Connection %lu: ✗ Not pooling: %s:%d (SSL=%d, reason=%s)",
+            g_debug("Connection %lu: Not pooling: %s:%d (SSL=%d, reason=%s)",
                    conn->id, conn->target_host, conn->target_port,
                    use_ssl, reason);
         }
@@ -874,8 +873,6 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
         g_object_unref(conn->upstream_connection);
         conn->upstream_connection = NULL;
     }
-    
-    // ... rest of cleanup remains the same ...
     
     if (conn->upstream_peer_cert) {
         g_object_unref(conn->upstream_peer_cert);

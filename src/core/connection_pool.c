@@ -1,11 +1,6 @@
 /**
  * Deadlight Proxy v1.0 - Connection Pool Implementation (FIXED)
  * 
- * CRITICAL FIXES:
- * 1. Proper memory management with value destructors
- * 2. Reuse PooledConnection objects instead of recreating
- * 3. Connection health validation
- * 4. Statistics tracking
  */
 
 #include <glib.h>
@@ -22,7 +17,7 @@ typedef struct _PooledConnection {
     guint16 port;
     gint64 last_used;
     gboolean is_ssl;
-    guint64 requests_served;  // NEW: Track usage
+    guint64 requests_served; 
 } PooledConnection;
 
 struct _ConnectionPool {
@@ -30,7 +25,7 @@ struct _ConnectionPool {
     GHashTable *active_connections;  // Key: GSocketConnection*, Value: PooledConnection*
     GMutex mutex;
     gint max_per_host;
-    gint max_total_idle;  // NEW: Global limit
+    gint max_total_idle;
     gint idle_timeout;
     guint cleanup_source_id;
     
@@ -97,7 +92,7 @@ ConnectionPool* connection_pool_new(gint max_per_host, gint idle_timeout) {
     ConnectionPool *pool = g_new0(ConnectionPool, 1);
     pool->idle_connections = g_queue_new();
     
-    // FIXED: Add value destructor for proper cleanup
+
     pool->active_connections = g_hash_table_new_full(
         g_direct_hash, 
         g_direct_equal,
@@ -211,8 +206,6 @@ GSocketConnection* connection_pool_get(ConnectionPool *pool,
 
 /**
  * Release connection back to pool
- * 
- * CRITICAL FIX: Reuse existing PooledConnection object instead of creating new one
  */
 void connection_pool_release(ConnectionPool *pool, 
                             GSocketConnection *connection,

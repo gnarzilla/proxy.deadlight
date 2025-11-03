@@ -286,14 +286,12 @@ void connection_pool_release(ConnectionPool *pool,
                             guint16 port, 
                             gboolean is_ssl);
 
-// NEW: Register a newly created connection with the pool for tracking
 gboolean connection_pool_register(ConnectionPool *pool,
                                   GSocketConnection *connection,
                                   const gchar *host,
                                   guint16 port,
                                   gboolean is_ssl);
 
-// NEW: Get pool statistics
 void connection_pool_get_stats(ConnectionPool *pool,
                               guint *idle_count,
                               guint *active_count,

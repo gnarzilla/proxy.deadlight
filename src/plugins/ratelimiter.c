@@ -3,14 +3,40 @@
 #include <glib.h>
 #include <gio/gio.h>
 #include <string.h>
-#include "ratelimiter.h"
 #include "deadlight.h"
+#include "ratelimiter.h"
+
+// Periodic cleanup of old entries (run every 5 minutes)
+static gboolean cleanup_old_entries(gpointer user_data) {
+    RateLimiterData *data = (RateLimiterData *)user_data;
+    gint64 now = g_get_monotonic_time() / G_USEC_PER_SEC;
+    gint64 cutoff = now - 300;  // Remove entries older than 5 minutes
+    
+    g_mutex_lock(&data->mutex);
+    
+    GHashTableIter iter;
+    gpointer key, value;
+    g_hash_table_iter_init(&iter, data->ip_limits);
+    
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        RateLimitEntry *entry = (RateLimitEntry *)value;
+        if (entry->timestamp < cutoff) {
+            g_hash_table_iter_remove(&iter);
+        }
+    }
+    
+    g_mutex_unlock(&data->mutex);
+    
+    return G_SOURCE_CONTINUE;
+}
 
 static gboolean ratelimiter_init(DeadlightContext *context) {
     g_info("Initializing RateLimiter plugin...");
     
     RateLimiterData *data = g_new0(RateLimiterData, 1);
     g_mutex_init(&data->mutex);
+    
+    data->enabled = deadlight_config_get_bool(context, "ratelimiter", "enabled", TRUE);
     
     // Create hash tables
     data->ip_limits = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
@@ -23,6 +49,12 @@ static gboolean ratelimiter_init(DeadlightContext *context) {
                                                             "auth_requests_per_minute", 10);
     data->burst_size = deadlight_config_get_int(context, "ratelimiter", 
                                               "burst_size", 10);
+    
+    // Initialize auth_patterns (add this)
+    data->auth_patterns = NULL;  // Or load from config if needed
+    
+    // Schedule periodic cleanup (add this to actually use the cleanup function)
+    data->cleanup_source_id = g_timeout_add_seconds(300, cleanup_old_entries, data);
     
     if (!context->plugins_data) {
         context->plugins_data = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
@@ -154,6 +186,16 @@ static void ratelimiter_cleanup(DeadlightContext *context) {
     
     g_info("RateLimiter stats: %lu limited, %lu passed", 
            data->total_limited, data->total_passed);
+    
+    // Remove the cleanup timer (add this)
+    if (data->cleanup_source_id) {
+        g_source_remove(data->cleanup_source_id);
+    }
+    
+    // Free auth_patterns if allocated (add this)
+    if (data->auth_patterns) {
+        g_strfreev(data->auth_patterns);
+    }
     
     g_hash_table_destroy(data->ip_limits);
     g_hash_table_destroy(data->path_limits);
