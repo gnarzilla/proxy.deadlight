@@ -1,5 +1,5 @@
 /**
- * Deadlight Proxy v1.0 - Connection Pool Implementation (FIXED)
+ * Deadlight Proxy v1.0 - Connection Pool Implementation
  * 
  */
 
