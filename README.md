@@ -88,7 +88,7 @@ curl -x http://localhost:8080 http://example.com
 
 For VPN mode (requires root):
 ```
-sudo ./bin/deadlight --vpn
+sudo ./bin/deadlight -c deadlight.conf.vpn
 ```
 
 ## Usage
