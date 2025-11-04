@@ -15,6 +15,12 @@
 
 #include "deadlight.h"
 
+// Certificate cache entry structure (must be defined BEFORE it's used)
+typedef struct {
+    gchar *pem_data;
+    gint64 expiry_time;
+} CertCacheEntry;
+
 // SSL Manager structure
 struct _DeadlightSSLManager {
     SSL_CTX *server_ctx;
@@ -34,6 +40,15 @@ struct _DeadlightSSLManager {
 static gboolean load_ca_certificate(DeadlightSSLManager *ssl_mgr, GError **error);
 static SSL_CTX *create_ssl_context(gboolean is_server, GError **error);
 
+// Certificate cache entry destructor (must be defined BEFORE hash table creation)
+static void cert_cache_entry_free(gpointer data) {
+    CertCacheEntry *entry = (CertCacheEntry *)data;
+    if (entry) {
+        g_free(entry->pem_data);
+        g_free(entry);
+    }
+}
+
 /**
  * Initialize SSL module
  */
@@ -50,13 +65,14 @@ gboolean deadlight_ssl_init(DeadlightContext *context, GError **error) {
     context->ssl = g_new0(DeadlightSSLManager, 1);
     g_mutex_init(&context->ssl->cert_mutex);
     
-    // --- FIXED: Load system trust store ---
+    // --- Load system trust store ---
     g_info("Loading system CA certificates for upstream validation...");
     const gchar *ca_bundle_file = "/etc/ssl/certs/ca-certificates.crt";
     context->ssl->system_trust_db = g_tls_file_database_new(ca_bundle_file, error);
 
     if (context->ssl->system_trust_db == NULL) {
-        g_warning("FATAL: Failed to load system CA trust store from %s: %s", ca_bundle_file, (*error)->message);
+        g_warning("FATAL: Failed to load system CA trust store from %s: %s", 
+                  ca_bundle_file, (*error)->message);
         g_free(context->ssl);
         context->ssl = NULL;
         return FALSE; 
@@ -68,11 +84,16 @@ gboolean deadlight_ssl_init(DeadlightContext *context, GError **error) {
     context->ssl->ca_key_file = deadlight_config_get_string(context, "ssl", "ca_key_file", "/etc/deadlight/ca.key");
     context->ssl->cert_cache_dir = deadlight_config_get_string(context, "ssl", "cert_cache_dir", "/tmp/deadlight_certs");
     
-    context->ssl->cert_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    // ✅ FIXED: Create hash table with proper destructor
+    context->ssl->cert_cache = g_hash_table_new_full(
+        g_str_hash, g_str_equal,
+        g_free,                    // Key destructor
+        cert_cache_entry_free      // Value destructor (prevents memory leaks)
+    );
     
     context->ssl->server_ctx = create_ssl_context(TRUE, error);
     if (!context->ssl->server_ctx) {
-        return FALSE; // Cleanup will be handled by caller
+        return FALSE;
     }
     
     context->ssl->client_ctx = create_ssl_context(FALSE, error);
@@ -89,7 +110,9 @@ gboolean deadlight_ssl_init(DeadlightContext *context, GError **error) {
         }
         
         if (g_mkdir_with_parents(context->ssl->cert_cache_dir, 0700) != 0) {
-            g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to create certificate cache directory: %s", context->ssl->cert_cache_dir);
+            g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, 
+                       "Failed to create certificate cache directory: %s", 
+                       context->ssl->cert_cache_dir);
             return FALSE;
         }
     }
@@ -109,12 +132,11 @@ void deadlight_ssl_cleanup(DeadlightContext *context) {
     g_info("Cleaning up SSL module...");
     
     if (context->ssl) {
-        // --- FIXED: Added cleanup for trust store ---
+        // Cleanup trust store
         if (context->ssl->system_trust_db) {
             g_object_unref(context->ssl->system_trust_db);
         }
 
-        // --- FIXED: Removed duplicated if statement ---
         if (context->ssl->server_ctx) {
             SSL_CTX_free(context->ssl->server_ctx);
         }
@@ -131,6 +153,7 @@ void deadlight_ssl_cleanup(DeadlightContext *context) {
             EVP_PKEY_free(context->ssl->ca_key);
         }
         
+        // ✅ FIXED: Just destroy the hash table - destructor will be called automatically
         if (context->ssl->cert_cache) {
             g_hash_table_destroy(context->ssl->cert_cache);
         }
@@ -217,22 +240,18 @@ static gboolean load_ca_certificate(DeadlightSSLManager *ssl_mgr, GError **error
     return TRUE;
 }
 
-
-// --- THIS FUNCTION IS THE IMPORTANT ONE TO GET RIGHT ---
 /**
  * Establish an SSL/TLS connection to an upstream server.
- * This is used by handlers like IMAPS that need to encrypt their upstream connection.
  */
 gboolean deadlight_network_establish_upstream_ssl(DeadlightConnection *conn, GError **error) {
     if (!conn->upstream_connection) {
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Upstream connection is not established; cannot perform TLS handshake.");
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, 
+                   "Upstream connection is not established; cannot perform TLS handshake.");
         return FALSE;
     }
 
-    // Step 1: Create a GSocketConnectable object representing the server we're connecting to.
     GSocketConnectable *server_identity = g_network_address_new(conn->target_host, conn->target_port);
 
-    // Step 2: Create the client connection object, passing this explicit server identity.
     conn->upstream_tls = G_TLS_CONNECTION(g_tls_client_connection_new(
         G_IO_STREAM(conn->upstream_connection),
         server_identity,
@@ -245,23 +264,20 @@ gboolean deadlight_network_establish_upstream_ssl(DeadlightConnection *conn, GEr
         return FALSE;
     }
 
-    // Step 3: Explicitly set the trust database.
     g_object_set(G_OBJECT(conn->upstream_tls),
                  "database", conn->context->ssl->system_trust_db,
                  NULL);
 
-    // Step 4: Perform the handshake.
     if (!g_tls_connection_handshake(conn->upstream_tls, NULL, error)) {
-        g_warning("Upstream TLS handshake failed for conn %lu to host %s: %s", conn->id, conn->target_host, (*error)->message);
+        g_warning("Upstream TLS handshake failed for conn %lu to host %s: %s", 
+                  conn->id, conn->target_host, (*error)->message);
         g_object_unref(conn->upstream_tls);
         conn->upstream_tls = NULL;
         return FALSE;
     }
     
-    // Step 5: Extract upstream certificate details for mimicry.
     GTlsCertificate *peer_cert = g_tls_connection_get_peer_certificate(conn->upstream_tls);
     if (peer_cert) {
-        // Store certificate for later use in forgery (assumes DeadlightConnection has a field for this).
         conn->upstream_peer_cert = g_object_ref(peer_cert);
         g_info("Upstream certificate retrieved for conn %lu to host %s", conn->id, conn->target_host);
     } else {
@@ -296,7 +312,6 @@ static void copy_relevant_extensions(X509 *cert, X509 *upstream_cert, X509 *ca_c
     X509V3_set_ctx_nodb(&ctx);
     X509V3_set_ctx(&ctx, ca_cert, cert, NULL, NULL, 0);
     
-    // Always add SAN with the hostname
     gchar *san = g_strdup_printf("DNS:%s", hostname);
     X509_EXTENSION *ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_subject_alt_name, san);
     if (ext) {
@@ -305,11 +320,8 @@ static void copy_relevant_extensions(X509 *cert, X509 *upstream_cert, X509 *ca_c
     }
     g_free(san);
     
-    // Copy key usage if present in upstream
     int ext_loc = X509_get_ext_by_NID(upstream_cert, NID_key_usage, -1);
     if (ext_loc >= 0) {
-        X509_EXTENSION *ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_key_usage, "digitalSignature,keyEncipherment");
-        // For key usage, we typically want: digitalSignature, keyEncipherment
         ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_key_usage, "digitalSignature,keyEncipherment");
         if (ext) {
             X509_add_ext(cert, ext, -1);
@@ -317,7 +329,6 @@ static void copy_relevant_extensions(X509 *cert, X509 *upstream_cert, X509 *ca_c
         }
     }
     
-    // Copy extended key usage if present
     ext_loc = X509_get_ext_by_NID(upstream_cert, NID_ext_key_usage, -1);
     if (ext_loc >= 0) {
         ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_ext_key_usage, "serverAuth,clientAuth");
@@ -327,7 +338,6 @@ static void copy_relevant_extensions(X509 *cert, X509 *upstream_cert, X509 *ca_c
         }
     }
     
-    // Basic constraints - always CA:FALSE for end entity
     ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_basic_constraints, "CA:FALSE");
     if (ext) {
         X509_add_ext(cert, ext, -1);
@@ -341,7 +351,6 @@ static void add_default_extensions(X509 *cert, X509 *ca_cert, const char *hostna
     X509V3_set_ctx_nodb(&ctx);
     X509V3_set_ctx(&ctx, ca_cert, cert, NULL, NULL, 0);
     
-    // Subject Alternative Name
     gchar *san = g_strdup_printf("DNS:%s", hostname);
     X509_EXTENSION *ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_subject_alt_name, san);
     if (ext) {
@@ -350,21 +359,18 @@ static void add_default_extensions(X509 *cert, X509 *ca_cert, const char *hostna
     }
     g_free(san);
     
-    // Basic constraints
     ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_basic_constraints, "CA:FALSE");
     if (ext) {
         X509_add_ext(cert, ext, -1);
         X509_EXTENSION_free(ext);
     }
     
-    // Key usage
     ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_key_usage, "digitalSignature,keyEncipherment");
     if (ext) {
         X509_add_ext(cert, ext, -1);
         X509_EXTENSION_free(ext);
     }
     
-    // Extended key usage
     ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_ext_key_usage, "serverAuth,clientAuth");
     if (ext) {
         X509_add_ext(cert, ext, -1);
@@ -372,156 +378,108 @@ static void add_default_extensions(X509 *cert, X509 *ca_cert, const char *hostna
     }
 }
 
-// Updated generate_host_pem with certificate mimicry
-static gchar* generate_host_pem(DeadlightSSLManager *ssl_mgr, 
+// Generate host certificate with mimicry
+static gchar* generate_host_pem(DeadlightSSLManager *ssl_mgr,
                                 const gchar *hostname,
                                 DeadlightConnection *conn,
                                 GError **error) {
-    X509 *cert = NULL;
+    EVP_PKEY_CTX *pctx = NULL;
     EVP_PKEY *key = NULL;
+    X509 *cert = NULL;
     BIO *bio = NULL;
     gchar *pem_data = NULL;
     X509 *upstream_x509 = NULL;
     long pem_len;
-    EVP_PKEY_CTX *pctx = NULL;
 
-    // Generate private key using modern API
+    // Generate RSA key
     pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
     if (!pctx) {
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to create key context");
-        goto cleanup;
-    }
-    
-    if (EVP_PKEY_keygen_init(pctx) <= 0) {
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to initialize key generation");
-        goto cleanup;
-    }
-    
-    if (EVP_PKEY_CTX_set_rsa_keygen_bits(pctx, 2048) <= 0) {
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to set key size");
-        goto cleanup;
-    }
-    
-    if (EVP_PKEY_keygen(pctx, &key) <= 0) {
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                   "Failed to generate private key: %s",
-                   ERR_error_string(ERR_get_error(), NULL));
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to create PKEY context");
         goto cleanup;
     }
 
-    // Extract upstream certificate if available for mimicry
+    if (EVP_PKEY_keygen_init(pctx) <= 0) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to init keygen");
+        goto cleanup;
+    }
+
+    if (EVP_PKEY_CTX_set_rsa_keygen_bits(pctx, 2048) <= 0) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to set RSA bits");
+        goto cleanup;
+    }
+
+    if (EVP_PKEY_keygen(pctx, &key) <= 0) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to generate key");
+        goto cleanup;
+    }
+
+    // Extract upstream cert if available
     if (conn && conn->upstream_peer_cert) {
         upstream_x509 = extract_x509_from_gtls_certificate(conn->upstream_peer_cert);
-        if (upstream_x509) {
-            g_debug("Extracted upstream X509 certificate for mimicry");
-        }
     }
 
     // Create certificate
     cert = X509_new();
     if (!cert) {
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                   "Failed to create certificate: %s",
-                   ERR_error_string(ERR_get_error(), NULL));
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to create X509");
         goto cleanup;
     }
 
     // Set version
-    X509_set_version(cert, 2);  // X509v3
+    X509_set_version(cert, 2);
 
-    // Set serial number - if upstream available, generate similar length
+    // Set serial number
     if (upstream_x509) {
-        ASN1_INTEGER *upstream_serial = X509_get_serialNumber(upstream_x509);
-        int serial_len = ASN1_STRING_length(upstream_serial);
-        BIGNUM *bn = BN_new();
-        BN_rand(bn, serial_len * 8, -1, 0);
-        BN_to_ASN1_INTEGER(bn, X509_get_serialNumber(cert));
-        BN_free(bn);
+        ASN1_INTEGER *serial = X509_get_serialNumber(upstream_x509);
+        X509_set_serialNumber(cert, serial);
     } else {
-        ASN1_INTEGER_set(X509_get_serialNumber(cert), g_get_real_time() / 1000000);
+        ASN1_INTEGER_set(X509_get_serialNumber(cert), 1);
     }
 
-    // Set validity period - mimic upstream if available
+    // Set validity period
     if (upstream_x509) {
-        const ASN1_TIME *not_before = X509_get0_notBefore(upstream_x509);
-        const ASN1_TIME *not_after = X509_get0_notAfter(upstream_x509);
-        X509_set1_notBefore(cert, not_before);
-        X509_set1_notAfter(cert, not_after);
+        X509_set_notBefore(cert, X509_get_notBefore(upstream_x509));
+        X509_set_notAfter(cert, X509_get_notAfter(upstream_x509));
     } else {
-        // Default: valid from now for 1 year
         X509_gmtime_adj(X509_get_notBefore(cert), 0);
-        X509_gmtime_adj(X509_get_notAfter(cert), 31536000L);
+        X509_gmtime_adj(X509_get_notAfter(cert), 31536000L); // 1 year
     }
 
-    // Set subject name - enhance with upstream info if available
+    // Set subject
     X509_NAME *subject = X509_NAME_new();
     
     if (upstream_x509) {
-        // Copy organization info from upstream if present
         X509_NAME *upstream_subject = X509_get_subject_name(upstream_x509);
-        int pos = -1;
-        X509_NAME_ENTRY *entry;
-        
-        // Copy country
-        pos = X509_NAME_get_index_by_NID(upstream_subject, NID_countryName, -1);
-        if (pos >= 0) {
-            entry = X509_NAME_get_entry(upstream_subject, pos);
-            X509_NAME_add_entry(subject, entry, -1, 0);
-        } else {
-            X509_NAME_add_entry_by_txt(subject, "C", MBSTRING_ASC, (unsigned char *)"US", -1, -1, 0);
-        }
-        
-        // Copy organization
-        pos = X509_NAME_get_index_by_NID(upstream_subject, NID_organizationName, -1);
-        if (pos >= 0) {
-            entry = X509_NAME_get_entry(upstream_subject, pos);
-            X509_NAME_add_entry(subject, entry, -1, 0);
-        } else {
-            X509_NAME_add_entry_by_txt(subject, "O", MBSTRING_ASC, (unsigned char *)"Deadlight Proxy", -1, -1, 0);
-        }
-        
-        // Copy state/province if present
-        pos = X509_NAME_get_index_by_NID(upstream_subject, NID_stateOrProvinceName, -1);
-        if (pos >= 0) {
-            entry = X509_NAME_get_entry(upstream_subject, pos);
-            X509_NAME_add_entry(subject, entry, -1, 0);
-        }
-        
-        // Copy locality if present
-        pos = X509_NAME_get_index_by_NID(upstream_subject, NID_localityName, -1);
-        if (pos >= 0) {
-            entry = X509_NAME_get_entry(upstream_subject, pos);
+        // Copy all entries from upstream
+        for (int i = 0; i < X509_NAME_entry_count(upstream_subject); i++) {
+            X509_NAME_ENTRY *entry = X509_NAME_get_entry(upstream_subject, i);
             X509_NAME_add_entry(subject, entry, -1, 0);
         }
     } else {
-        // Default subject info
+        // Create basic subject
         X509_NAME_add_entry_by_txt(subject, "C", MBSTRING_ASC, (unsigned char *)"US", -1, -1, 0);
         X509_NAME_add_entry_by_txt(subject, "O", MBSTRING_ASC, (unsigned char *)"Deadlight Proxy", -1, -1, 0);
     }
     
-    // Always set CN to our hostname
+    // Always ensure CN matches hostname
     X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_ASC, (unsigned char *)hostname, -1, -1, 0);
     X509_set_subject_name(cert, subject);
     X509_NAME_free(subject);
 
-    // Set issuer: Always our CA (this is what makes it trusted by clients that trust our CA)
+    // Set issuer (our CA)
     X509_set_issuer_name(cert, X509_get_subject_name(ssl_mgr->ca_cert));
-
-    // Set public key
     X509_set_pubkey(cert, key);
 
-    // Add extensions based on upstream or defaults
+    // Copy or add extensions
     if (upstream_x509) {
         copy_relevant_extensions(cert, upstream_x509, ssl_mgr->ca_cert, hostname);
     } else {
         add_default_extensions(cert, ssl_mgr->ca_cert, hostname);
     }
 
-    // Sign the certificate with our CA key
+    // Sign certificate
     if (!X509_sign(cert, ssl_mgr->ca_key, EVP_sha256())) {
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                   "Failed to sign certificate: %s",
-                   ERR_error_string(ERR_get_error(), NULL));
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to sign certificate");
         goto cleanup;
     }
 
@@ -532,20 +490,18 @@ static gchar* generate_host_pem(DeadlightSSLManager *ssl_mgr,
         goto cleanup;
     }
 
-    // Write certificate and key to PEM format
-    if (!PEM_write_bio_X509(bio, cert) || 
+    if (!PEM_write_bio_X509(bio, cert) ||
         !PEM_write_bio_PrivateKey(bio, key, NULL, NULL, 0, NULL, NULL)) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to write PEM");
         goto cleanup;
     }
 
-    // Read PEM data from BIO
     pem_len = BIO_pending(bio);
     pem_data = g_malloc(pem_len + 1);
     BIO_read(bio, pem_data, pem_len);
     pem_data[pem_len] = '\0';
 
-    g_info("Generated certificate for %s %s upstream mimicry", 
+    g_info("Generated certificate for %s %s upstream mimicry",
            hostname, upstream_x509 ? "with" : "without");
 
 cleanup:
@@ -554,22 +510,19 @@ cleanup:
     if (key) EVP_PKEY_free(key);
     if (bio) BIO_free(bio);
     if (pctx) EVP_PKEY_CTX_free(pctx);
-    
+
     return pem_data;
 }
 
 /**
  * Get or generate certificate for hostname
  */
-typedef struct {
-    gchar *pem_data;
-    gint64 expiry_time;
-} CertCacheEntry;
-
-static gchar* get_host_certificate(DeadlightSSLManager *ssl_mgr, const gchar *hostname, DeadlightConnection *conn, GError **error) {
+static gchar* get_host_certificate(DeadlightSSLManager *ssl_mgr, 
+                                  const gchar *hostname, 
+                                  DeadlightConnection *conn, 
+                                  GError **error) {
     g_mutex_lock(&ssl_mgr->cert_mutex);
     
-    // Check cache with expiration
     CertCacheEntry *entry = g_hash_table_lookup(ssl_mgr->cert_cache, hostname);
     gint64 now = g_get_real_time() / G_USEC_PER_SEC;
     
@@ -580,12 +533,14 @@ static gchar* get_host_certificate(DeadlightSSLManager *ssl_mgr, const gchar *ho
         return cached_pem;
     }
     
-    // Generate new certificate
+    // Keep mutex locked during generation to prevent race conditions
     gchar *pem = generate_host_pem(ssl_mgr, hostname, conn, error);
     if (pem) {
         CertCacheEntry *new_entry = g_new0(CertCacheEntry, 1);
         new_entry->pem_data = g_strdup(pem);
-        new_entry->expiry_time = now + (24 * 60 * 60); // 24 hour cache
+        new_entry->expiry_time = now + (24 * 60 * 60);
+        
+        // This will automatically free old entry if it exists (with destructor)
         g_hash_table_insert(ssl_mgr->cert_cache, g_strdup(hostname), new_entry);
     }
     
@@ -601,28 +556,23 @@ gboolean deadlight_ssl_intercept_connection(DeadlightConnection *conn, GError **
     g_return_val_if_fail(conn->client_connection != NULL, FALSE);
     g_return_val_if_fail(conn->target_host != NULL, FALSE);
 
-    // Step 1: Establish upstream TLS (already using GTlsClientConnection)
     if (!deadlight_network_establish_upstream_ssl(conn, error)) {
         return FALSE;
     }
 
-    // Step 2: Get forged PEM for the host, passing conn for mimicry
     gchar *pem_data = get_host_certificate(conn->context->ssl, conn->target_host, conn, error);
     if (!pem_data) {
         return FALSE;
     }
     
-    // Debugging: Save PEM to temporary file for inspection
     g_file_set_contents("/tmp/test.pem", pem_data, -1, NULL);
 
-    // Step 3: Create GTlsCertificate from PEM
     GTlsCertificate *tls_cert = g_tls_certificate_new_from_pem(pem_data, -1, error);
     g_free(pem_data);
     if (!tls_cert) {
         return FALSE;
     }
 
-    // Step 4: Wrap client connection as TLS server
     conn->client_tls = (GTlsConnection *)g_tls_server_connection_new(
         G_IO_STREAM(conn->client_connection),
         tls_cert,
@@ -632,13 +582,12 @@ gboolean deadlight_ssl_intercept_connection(DeadlightConnection *conn, GError **
     if (!conn->client_tls) {
         return FALSE;
     }
-    // Set ALPN protocols for better compatibility
+    
     const gchar *alpn_protos[] = {"h2", "http/1.1", NULL};
     g_object_set(conn->client_tls,
                 "advertised-protocols", alpn_protos,
                 NULL);
 
-    // Also check what the client wants
     gchar **client_protos = NULL;
     g_object_get(conn->client_tls,
                 "advertised-protocols", &client_protos,
@@ -650,9 +599,6 @@ gboolean deadlight_ssl_intercept_connection(DeadlightConnection *conn, GError **
         g_strfreev(client_protos);
     }
 
-    // No need for explicit database/validation on server side
-
-    // Step 5: Perform server-side handshake (blocks appropriately in non-async mode)
     if (!g_tls_connection_handshake(conn->client_tls, NULL, error)) {
         g_warning("Client TLS handshake failed for conn %lu to host %s: %s", 
                   conn->id, conn->target_host, (*error)->message);
@@ -667,7 +613,7 @@ gboolean deadlight_ssl_intercept_connection(DeadlightConnection *conn, GError **
 }
 
 /**
- * Create CA certificate - Complete implementation
+ * Create CA certificate
  */
 gboolean deadlight_ssl_create_ca_certificate(const gchar *cert_file, 
                                            const gchar *key_file, 
@@ -680,7 +626,6 @@ gboolean deadlight_ssl_create_ca_certificate(const gchar *cert_file,
     gboolean success = FALSE;
     EVP_PKEY_CTX *pctx = NULL;
     
-    // Generate key using modern EVP API
     pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
     if (!pctx) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
@@ -706,7 +651,6 @@ gboolean deadlight_ssl_create_ca_certificate(const gchar *cert_file,
         goto cleanup;
     }
     
-    // Create certificate
     cert = X509_new();
     if (!cert) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
@@ -714,15 +658,12 @@ gboolean deadlight_ssl_create_ca_certificate(const gchar *cert_file,
         goto cleanup;
     }
     
-    // Set version and serial
-    X509_set_version(cert, 2);  // X509v3
+    X509_set_version(cert, 2);
     ASN1_INTEGER_set(X509_get_serialNumber(cert), 1);
     
-    // Set validity (10 years)
     X509_gmtime_adj(X509_get_notBefore(cert), 0);
     X509_gmtime_adj(X509_get_notAfter(cert), 315360000L);
     
-    // Set subject and issuer (self-signed)
     name = X509_NAME_new();
     X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, 
                               (unsigned char *)"US", -1, -1, 0);
@@ -732,27 +673,23 @@ gboolean deadlight_ssl_create_ca_certificate(const gchar *cert_file,
                               (unsigned char *)"Deadlight CA", -1, -1, 0);
     
     X509_set_subject_name(cert, name);
-    X509_set_issuer_name(cert, name);  // Self-signed
+    X509_set_issuer_name(cert, name);
     X509_NAME_free(name);
     
-    // Set public key
     X509_set_pubkey(cert, pkey);
     
-    // Add CA extensions
     X509V3_CTX ctx;
     X509V3_set_ctx_nodb(&ctx);
     X509V3_set_ctx(&ctx, cert, cert, NULL, NULL, 0);
     
     X509_EXTENSION *ext;
     
-    // Basic constraints - CA:TRUE
     ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_basic_constraints, "CA:TRUE");
     if (ext) {
         X509_add_ext(cert, ext, -1);
         X509_EXTENSION_free(ext);
     }
     
-    // Key usage
     ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_key_usage, 
                              "digitalSignature,keyCertSign,cRLSign");
     if (ext) {
@@ -760,14 +697,12 @@ gboolean deadlight_ssl_create_ca_certificate(const gchar *cert_file,
         X509_EXTENSION_free(ext);
     }
     
-    // Subject key identifier
     ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_subject_key_identifier, "hash");
     if (ext) {
         X509_add_ext(cert, ext, -1);
         X509_EXTENSION_free(ext);
     }
     
-    // Sign the certificate
     if (!X509_sign(cert, pkey, EVP_sha256())) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
                    "Failed to sign CA certificate: %s",
@@ -775,7 +710,6 @@ gboolean deadlight_ssl_create_ca_certificate(const gchar *cert_file,
         goto cleanup;
     }
     
-    // Save certificate
     fp = fopen(cert_file, "w");
     if (!fp) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
@@ -791,7 +725,6 @@ gboolean deadlight_ssl_create_ca_certificate(const gchar *cert_file,
     }
     fclose(fp);
     
-    // Save private key
     fp = fopen(key_file, "w");
     if (!fp) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,

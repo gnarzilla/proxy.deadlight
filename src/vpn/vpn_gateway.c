@@ -1963,12 +1963,12 @@ void deadlight_vpn_gateway_cleanup(DeadlightContext *context) {
     }
 
     if (vpn->sessions_v6) {
-        g_hash_table_destroy(vpn->sessions);
+        g_hash_table_destroy(vpn->sessions_v6);
         vpn->sessions_v6 = NULL;
     }
     
     if (vpn->udp_sessions_v6) {
-        g_hash_table_destroy(vpn->udp_sessions);
+        g_hash_table_destroy(vpn->udp_sessions_v6);
         vpn->udp_sessions_v6 = NULL;
     }
 

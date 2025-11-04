@@ -38,48 +38,7 @@ static void cleanup_connection(DeadlightConnection *conn);
 GSocketConnection* deadlight_network_connect_tcp(DeadlightContext *context, const gchar *host, guint16 port, GError **error);
 void deadlight_network_tunnel_socket_connections(GSocketConnection *conn1, GSocketConnection *conn2);
 static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remove_from_table);
-
-/**
- * Determine if a connection to a target should use SSL
- * Must be called AFTER protocol detection, before pool lookup
- */
-static gboolean should_use_ssl_for_protocol(DeadlightProtocol protocol, 
-                                           DeadlightConnection *conn) {
-    g_return_val_if_fail(conn != NULL, FALSE);
-    
-    switch (protocol) {
-        // Protocols that ALWAYS require SSL
-        case DEADLIGHT_PROTOCOL_HTTPS:
-        case DEADLIGHT_PROTOCOL_IMAPS:
-            return TRUE;
-        
-        // Protocols that NEVER require SSL for upstream
-        // (though client-side may be intercepted)
-        case DEADLIGHT_PROTOCOL_HTTP:
-        case DEADLIGHT_PROTOCOL_IMAP:
-        case DEADLIGHT_PROTOCOL_SMTP:
-        case DEADLIGHT_PROTOCOL_FTP:
-            return FALSE;
-        
-        // Protocols that upgrade via STARTTLS/CONNECT
-        case DEADLIGHT_PROTOCOL_SOCKS:
-        case DEADLIGHT_PROTOCOL_SOCKS4:
-        case DEADLIGHT_PROTOCOL_SOCKS5:
-            // Determined by CONNECT tunneling
-            return conn->upstream_tls != NULL;
-        
-        // WebSocket can be over SSL or plain
-        case DEADLIGHT_PROTOCOL_WEBSOCKET:
-            return conn->upstream_tls != NULL;
-        
-        case DEADLIGHT_PROTOCOL_API:
-            // Check config
-            return conn->context->ssl_intercept_enabled;
-        
-        default:
-            return conn->upstream_tls != NULL;
-    }
-}
+static void connection_pool_log_stats(ConnectionPool *pool);
 
 /**
  * Initialize network module
@@ -144,23 +103,19 @@ static gboolean network_should_use_ssl(DeadlightProtocol protocol,
     }
     
     switch (protocol) {
-        // These protocols ALWAYS use SSL
         case DEADLIGHT_PROTOCOL_HTTPS:
         case DEADLIGHT_PROTOCOL_IMAPS:
             return TRUE;
         
-        // HTTP and CONNECT: Check for port-based SSL + interception
         case DEADLIGHT_PROTOCOL_CONNECT:
+            // CONNECT never auto-establishes SSL
+            // The handler decides later based on interception settings
+            return FALSE;
+        
         case DEADLIGHT_PROTOCOL_HTTP:
         {
-            if (conn->context->ssl_intercept_enabled && conn->target_port > 0) {
-                // Will intercept common SSL ports
-                return conn->target_port == 443 ||   // HTTPS
-                       conn->target_port == 993 ||   // IMAPS
-                       conn->target_port == 995 ||   // POP3S
-                       conn->target_port == 465 ||   // SMTPS
-                       conn->target_port == 989;     // FTPS
-            }
+            // Plain HTTP never uses SSL on upstream
+            // (HTTPS comes through CONNECT, not HTTP)
             return FALSE;
         }
         
@@ -261,8 +216,7 @@ void deadlight_network_stop(DeadlightContext *context) {
             context->network->listener = NULL;
         }
         
-        // FIXED: Properly close all active connections
-        // The hash table destructor will call cleanup_connection for each
+        // Close all active connections
         if (context->connections) {
             guint count = g_hash_table_size(context->connections);
             g_info("Closing %u active connections...", count);
@@ -276,8 +230,9 @@ void deadlight_network_stop(DeadlightContext *context) {
             context->worker_pool = NULL;
         }
         
-        // Clean up connection pool
+        // Log pool statistics BEFORE destroying
         if (context->conn_pool) {
+            connection_pool_log_stats(context->conn_pool);  // <-- ADD THIS
             connection_pool_free(context->conn_pool);
             context->conn_pool = NULL;
         }
@@ -528,11 +483,10 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
     return;  // Exit cleanly for ASYNC case
     
     cleanup:
-        // This block is ONLY reached for SYNC and ERROR cases
         if (conn->handler && conn->handler->cleanup) {
             conn->handler->cleanup(conn);
         }
-        cleanup_connection(conn);
+        cleanup_connection_internal(conn, TRUE);  // <-- Explicitly remove from table
 }
 
 // ==============================================================
@@ -1270,16 +1224,25 @@ gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error
 /**
  * Print detailed pool statistics to log
  */
-static inline void connection_pool_log_stats(ConnectionPool *pool) {
-    guint idle, active;
-    guint64 total_gets, cache_hits;
-    gdouble hit_rate;
-    
+static void connection_pool_log_stats(ConnectionPool *pool) {
+    guint idle = 0;
+    guint active = 0;
+    guint64 total_gets = 0;
+    guint64 cache_hits = 0;
+    gdouble hit_rate = 0.0;
+
     connection_pool_get_stats(pool, &idle, &active, &total_gets, &cache_hits, &hit_rate);
-    
+
     g_info("Pool Statistics: "
-           "idle=%u, active=%u, total_gets=%lu, hits=%lu, "
-           "misses=%lu, created=%lu, closed=%lu, hit_rate=%.1f%%",
-           idle, active, total_gets, cache_hits,
-           total_gets - cache_hits, 0, 0, hit_rate);
+           "Hits: %lu, Misses: %lu, Hit Rate: %.1f%%, "
+           "Active: %u, Idle: %u, Total: %u, "
+           "Evicted: %u, Failed: %u",
+           (unsigned long)cache_hits, 
+           (unsigned long)(total_gets - cache_hits), 
+           hit_rate,
+           active, 
+           idle, 
+           active + idle,  // Calculate total from active + idle
+           (guint)0,      // Placeholder for evicted (implement if needed)
+           (guint)0);     // Placeholder for failed (implement if needed)
 }

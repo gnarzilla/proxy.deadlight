@@ -207,12 +207,23 @@ GSocketConnection* connection_pool_get(ConnectionPool *pool,
 /**
  * Release connection back to pool
  */
-void connection_pool_release(ConnectionPool *pool, 
+void connection_pool_release(ConnectionPool *pool,
                             GSocketConnection *connection,
                             const gchar *host,
                             guint16 port,
                             gboolean is_ssl) {
     if (!pool || !connection || !host) return;
+    
+    // TEMPORARY: Never pool SSL connections until we fix TLS session reuse
+    if (is_ssl) {
+        g_info("Pool: Not pooling SSL connection to %s:%d (SSL reuse disabled)", host, port);
+        g_mutex_lock(&pool->mutex);
+        // Remove from active if present
+        g_hash_table_remove(pool->active_connections, connection);
+        g_mutex_unlock(&pool->mutex);
+        pool->connections_closed++;
+        return;
+    }
     
     g_mutex_lock(&pool->mutex);
     
@@ -223,11 +234,11 @@ void connection_pool_release(ConnectionPool *pool,
         // This connection wasn't from the pool - just close it
         g_warning("Attempted to release connection to %s:%d not from pool", host, port);
         g_mutex_unlock(&pool->mutex);
-        g_object_unref(connection);
-        pool->connections_closed++;
+        // DON'T UNREF - we don't own this reference!
+        // The caller is responsible for cleanup
         return;
     }
-    
+        
     // Remove from active WITHOUT destroying
     g_hash_table_steal(pool->active_connections, connection);
     
