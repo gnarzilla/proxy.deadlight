@@ -1,4 +1,4 @@
-// in src/core/ssl.c
+// src/core/ssl.c
 
 /**
  * Deadlight Proxy v1.0 - SSL/TLS Module
@@ -84,7 +84,7 @@ gboolean deadlight_ssl_init(DeadlightContext *context, GError **error) {
     context->ssl->ca_key_file = deadlight_config_get_string(context, "ssl", "ca_key_file", "/etc/deadlight/ca.key");
     context->ssl->cert_cache_dir = deadlight_config_get_string(context, "ssl", "cert_cache_dir", "/tmp/deadlight_certs");
     
-    // ✅ FIXED: Create hash table with proper destructor
+    // Create hash table with proper destructor
     context->ssl->cert_cache = g_hash_table_new_full(
         g_str_hash, g_str_equal,
         g_free,                    // Key destructor
@@ -153,7 +153,7 @@ void deadlight_ssl_cleanup(DeadlightContext *context) {
             EVP_PKEY_free(context->ssl->ca_key);
         }
         
-        // ✅ FIXED: Just destroy the hash table - destructor will be called automatically
+        // ust destroy the hash table - destructor will be called automatically
         if (context->ssl->cert_cache) {
             g_hash_table_destroy(context->ssl->cert_cache);
         }

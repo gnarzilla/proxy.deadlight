@@ -13,7 +13,7 @@
 
 #include "deadlight.h"
 
-// Forward declarations (these should be at the top of the file, not inside a function)
+// Forward declarations
 static void config_file_changed(GFileMonitor *monitor, GFile *file, GFile *other_file,
                                GFileMonitorEvent event_type, gpointer user_data);
 static gboolean validate_config_section(DeadlightConfig *config, const gchar *section, GError **error);
