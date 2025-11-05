@@ -85,7 +85,7 @@ gboolean deadlight_network_init(DeadlightContext *context, GError **error) {
  * Determine if an upstream connection will use SSL
  * 
  * This function predicts whether the connection will be SSL-secured
- * BEFORE actually connecting, so we can look up the correct pool entry.
+ * BEFORE actually connecting, so can look up the correct pool entry.
  * 
  * Accounts for:
  * - Protocol type (HTTPS, IMAPS always SSL)

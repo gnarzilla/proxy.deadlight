@@ -4,18 +4,6 @@
 #include "deadlight.h"
 #include <glib.h>
 #include <gio/gio.h>
-#include <errno.h>
-
-/**
- * A synchronous, blocking function that shuttles data over two established GTlsConnection handles.
- * It will run in a loop until one side closes the connection or an error occurs.
- */
-// src/core/ssl_tunnel.c
-
-#include "ssl_tunnel.h"
-#include "deadlight.h"
-#include <glib.h>
-#include <gio/gio.h>
 #include <errno.h> // Required for errno
 
 /**
@@ -42,7 +30,6 @@ gboolean start_ssl_tunnel_blocking(DeadlightConnection *conn, GError **error) {
     GInputStream *upstream_input = g_io_stream_get_input_stream(G_IO_STREAM(conn->upstream_tls));
     GOutputStream *upstream_output = g_io_stream_get_output_stream(G_IO_STREAM(conn->upstream_tls));
 
-    // --- NEW: Setup for g_poll() ---
     // Get the underlying GSocket from the GSocketConnection to get its file descriptor (fd).
     GSocket *client_socket = g_socket_connection_get_socket(G_SOCKET_CONNECTION(conn->client_connection));
     GSocket *upstream_socket = g_socket_connection_get_socket(G_SOCKET_CONNECTION(conn->upstream_connection));
@@ -62,7 +49,6 @@ gboolean start_ssl_tunnel_blocking(DeadlightConnection *conn, GError **error) {
     gboolean running = TRUE;
     
     while (running) {
-        // [REFACTOR] Wait for I/O events instead of sleeping.
         // This will block until data is available or the timeout (1000ms) is hit.
         int ret = g_poll(fds, 2, 1000);
 

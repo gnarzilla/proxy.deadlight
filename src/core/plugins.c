@@ -289,7 +289,6 @@ GList* deadlight_plugins_get_all_names(DeadlightContext *context)
 
     g_hash_table_iter_init(&iter, context->plugins->plugins);
     while (g_hash_table_iter_next(&iter, &key, &value)) {
-        // The key in your hash table is already the duplicated string name
         names = g_list_prepend(names, g_strdup((gchar *)key));
     }
     

@@ -6,9 +6,6 @@
 #include <glib.h>
 #include <gio/gio.h>
 
-// Helper function forward declarations
-
-// Protocol handler forward declarations
 static gsize http_detect(const guint8 *data, gsize len);
 static DeadlightHandlerResult http_handle(DeadlightConnection *conn, GError **error);
 static void http_cleanup(DeadlightConnection *conn);
@@ -32,7 +29,7 @@ void deadlight_register_http_handler(void) {
 // --- Protocol Handler Implementation ---
 
 static gsize http_detect(const guint8 *data, gsize len) {
-    // --- NEW LOGIC: Check if it's a WebSocket upgrade first ---
+    // --- Check if it's a WebSocket upgrade first ---
     gchar *request_lower = NULL;
     if (len > 20) { // A reasonable length to check headers
         gchar *request = g_strndup((const gchar*)data, len);
@@ -106,22 +103,22 @@ static DeadlightHandlerResult handle_plain_http(DeadlightConnection *conn, GErro
     const gchar *host_header = deadlight_request_get_header(conn->current_request, "host");
     if (!host_header) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Missing Host header");
-        return HANDLER_ERROR; // Changed from FALSE
+        return HANDLER_ERROR;
     }
 
     gchar *host = NULL;
     guint16 port = 80;
     if (!deadlight_parse_host_port(host_header, &host, &port)) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Invalid Host header");
-        return HANDLER_ERROR; // Changed from FALSE
+        return HANDLER_ERROR; 
     }
 
-    // *** FIX FOR PROXY LOOP ***
+    // *** DETECT PROXY LOOP ***
     if ((g_strcmp0(host, conn->context->listen_address) == 0 || g_strcmp0(host, "localhost") == 0 || g_strcmp0(host, "127.0.0.1") == 0) && port == conn->context->listen_port) {
         g_warning("Connection %lu: Detected proxy loop to %s:%d. Denying request.", conn->id, host, port);
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "Proxy loop detected");
         g_free(host);
-        return HANDLER_ERROR; // Changed from FALSE
+        return HANDLER_ERROR;
     }
 
     g_info("Connection %lu: HTTP request to %s:%d", conn->id, host, port);
@@ -141,7 +138,7 @@ static DeadlightHandlerResult handle_plain_http(DeadlightConnection *conn, GErro
     
     // deadlight_network_tunnel_data is BLOCKING. When it returns, the connection is finished.
     if (deadlight_network_tunnel_data(conn, error)) {
-        return HANDLER_SUCCESS_CLEANUP_NOW; // <-- CORRECTED: The caller should clean up now.
+        return HANDLER_SUCCESS_CLEANUP_NOW;
     } else {
         return HANDLER_ERROR;
     }

@@ -80,7 +80,6 @@ gboolean deadlight_request_parse_headers(DeadlightRequest *request, const gchar 
     return TRUE;
 }
 
-// THIS IS THE FUNCTION THE LINKER COULDN'T FIND
 gchar *deadlight_request_get_header(DeadlightRequest *request, const gchar *name) {
     g_return_val_if_fail(request != NULL && request->headers != NULL && name != NULL, NULL);
     gchar *lower_name = g_ascii_strdown(name, -1);
