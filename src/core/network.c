@@ -203,16 +203,15 @@ gboolean deadlight_network_start_listener(DeadlightContext *context, gint port, 
 /**
  * Stop network listener
  */
-
-/**
- * Fixed network stop function
- */
 void deadlight_network_stop(DeadlightContext *context) {
     g_return_if_fail(context != NULL);
     
     g_info("Stopping network module...");
     
     if (context->network) {
+        // Mark shutdown state FIRST
+        context->shutdown_requested = TRUE;
+        
         // Stop accepting new connections
         if (context->network->listener) {
             g_socket_service_stop(context->network->listener);
@@ -220,32 +219,27 @@ void deadlight_network_stop(DeadlightContext *context) {
             context->network->listener = NULL;
         }
         
-        // Close all active connections CAREFULLY
+        // Shutdown thread pool (wait for workers to finish current tasks)
+        if (context->worker_pool) {
+            g_thread_pool_free(context->worker_pool, TRUE, TRUE);  // immediate=TRUE, wait=TRUE
+            context->worker_pool = NULL;
+        }
+        
+        // Now close all connections safely
         if (context->connections) {
+            g_mutex_lock(&context->network->connection_mutex);
             guint count = g_hash_table_size(context->connections);
             g_info("Closing %u active connections...", count);
             
-            // Extract all connections to a list first
-            GList *conn_list = g_hash_table_get_values(context->connections);
+            // Clear the table - this calls the destructor for each value
+            g_hash_table_remove_all(context->connections);
+            context->active_connections = 0;
             
-            // Clean up each connection without modifying the hash table
-            for (GList *l = conn_list; l != NULL; l = l->next) {
-                DeadlightConnection *conn = (DeadlightConnection *)l->data;
-                if (conn) {
-                    cleanup_connection_internal(conn, FALSE);  // Don't remove from table
-                }
-            }
-            g_list_free(conn_list);
+            g_mutex_unlock(&context->network->connection_mutex);
             
-            // Now destroy the emptied hash table
+            // Now destroy the empty table
             g_hash_table_destroy(context->connections);
             context->connections = NULL;
-        }
-        
-        // Shutdown thread pool (wait for workers to finish)
-        if (context->worker_pool) {
-            g_thread_pool_free(context->worker_pool, FALSE, TRUE);
-            context->worker_pool = NULL;
         }
         
         // Log and destroy connection pool
@@ -266,15 +260,11 @@ void deadlight_network_stop(DeadlightContext *context) {
 /**
  * Free connection object
  */
-
 void deadlight_connection_free(DeadlightConnection *conn) {
     if (!conn) return;
-
-    // This API function should now delegate the full cleanup logic
-    // and rely on the state machine to be clean.
-    // Given its current use in on_incoming_connection for a *rejected* conn:
-    cleanup_connection(conn); // <-- Call full cleanup/free
-    // The cleanup_connection will handle the context removal and g_free(conn).
+    // Don't remove from table - this is called for rejected connections
+    // that were never added to the table
+    cleanup_connection_internal(conn, FALSE);
 }
 /**
  * Handle incoming connection
@@ -474,7 +464,7 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
         case HANDLER_SUCCESS_CLEANUP_NOW:
             g_info("Connection %lu: Synchronous handler for '%s' completed.", 
                 conn->id, deadlight_protocol_to_string(conn->protocol));
-            cleanup_connection(conn);
+            cleanup_connection_internal(conn, TRUE);
             return;
             
         case HANDLER_SUCCESS_ASYNC:
@@ -500,14 +490,15 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
     }
     
     return;  // Exit cleanly for ASYNC case
-    
-    cleanup:
+
+        cleanup:
         if (conn->handler && conn->handler->cleanup) {
             conn->handler->cleanup(conn);
         }
-        cleanup_connection_internal(conn, TRUE);  // <-- Explicitly remove from table
+        // Use the function that removes from table
+        cleanup_connection_internal(conn, TRUE);
 }
-
+    
 // ==============================================================
 // Upstream connection with pool 
 // ==============================================================
@@ -917,34 +908,29 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
             conn->bytes_client_to_upstream + conn->bytes_upstream_to_client;
         g_mutex_unlock(&conn->context->stats_mutex);
         
-        // Remove from connection table
+        // Remove from connection table if requested
         if (remove_from_table && conn->context->network && conn->context->connections) {
             g_mutex_lock(&conn->context->network->connection_mutex);
             
-            // Find the connection by value and remove it
-            GHashTableIter iter;
-            gpointer key, value;
-            g_hash_table_iter_init(&iter, conn->context->connections);
-            
-            while (g_hash_table_iter_next(&iter, &key, &value)) {
-                if (value == conn) {
-                    g_hash_table_iter_remove(&iter);  // This will call the destructor
-                    conn->context->active_connections--;
-                    break;
-                }
+            // Check if connection is actually in the table
+            if (g_hash_table_contains(conn->context->connections, &conn->id)) {
+                // Remove it - this will call the destructor
+                g_hash_table_remove(conn->context->connections, &conn->id);
+                conn->context->active_connections--;
+                g_mutex_unlock(&conn->context->network->connection_mutex);
+                
+                // CRITICAL FIX: Return here since destructor freed the connection
+                return;
             }
             
             g_mutex_unlock(&conn->context->network->connection_mutex);
-            
-            // IMPORTANT: Don't free conn here! 
-            // g_hash_table_iter_remove already called the destructor which freed it
-            return;  // <-- ADD THIS RETURN
         }
     }
     
     // Only free if we didn't remove from table (and thus destructor wasn't called)
     g_free(conn);
 }
+
 
 /**
  * Public cleanup function - used as hash table destructor
