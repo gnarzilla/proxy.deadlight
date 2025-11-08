@@ -214,31 +214,30 @@ void connection_pool_release(ConnectionPool *pool,
                             gboolean is_ssl) {
     if (!pool || !connection || !host) return;
     
-    // TEMPORARY: Never pool SSL connections until we fix TLS session reuse
-    if (is_ssl) {
-        g_info("Pool: Not pooling SSL connection to %s:%d (SSL reuse disabled)", host, port);
-        g_mutex_lock(&pool->mutex);
-        // Remove from active if present
-        g_hash_table_remove(pool->active_connections, connection);
-        g_mutex_unlock(&pool->mutex);
-        pool->connections_closed++;
-        return;
-    }
-    
     g_mutex_lock(&pool->mutex);
     
-    // Lookup and STEAL (don't destroy) from active table
+    // Lookup in active table
     PooledConnection *pc = g_hash_table_lookup(pool->active_connections, connection);
     
     if (!pc) {
-        // This connection wasn't from the pool - just close it
+        // This connection wasn't from the pool
         g_warning("Attempted to release connection to %s:%d not from pool", host, port);
         g_mutex_unlock(&pool->mutex);
-        // DON'T UNREF - we don't own this reference!
-        // The caller is responsible for cleanup
         return;
     }
-        
+    
+    // Remove from active table (steal to avoid double-free)
+    g_hash_table_steal(pool->active_connections, connection);
+    
+    // TEMPORARY: Never pool SSL connections until we fix TLS session reuse
+    if (is_ssl) {
+        g_info("Pool: Not pooling SSL connection to %s:%d (SSL reuse disabled)", host, port);
+        pooled_connection_free(pc);  // This will unref the connection
+        pool->connections_closed++;
+        g_mutex_unlock(&pool->mutex);
+        return;
+    }
+    
     // Remove from active WITHOUT destroying
     g_hash_table_steal(pool->active_connections, connection);
     

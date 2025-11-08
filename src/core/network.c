@@ -674,7 +674,10 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
     }
     
     // === POOL RELEASE: Return connection if appropriate ===
-    if (conn->upstream_connection && conn->target_host && conn->context) {
+    if (conn->upstream_connection && conn->target_host && conn->context && conn->context->conn_pool) {
+        // Check if this connection is actually in the pool
+        // The pool will handle its own reference counting
+        
         gboolean use_ssl = conn->upstream_tls != NULL;
         gboolean should_pool = FALSE;
         const gchar *reason = "unknown";
@@ -766,10 +769,9 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
                     break;
             }
         }
-        
         if (should_pool) {
             g_info("Connection %lu: Returning to pool: %s:%d (SSL=%d, reason=%s)",
-                   conn->id, conn->target_host, conn->target_port, use_ssl, reason);
+                conn->id, conn->target_host, conn->target_port, use_ssl, reason);
             
             connection_pool_release(
                 conn->context->conn_pool,
@@ -779,11 +781,12 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
                 use_ssl
             );
             
-            // Pool owns it now - don't close/unref
+            // Pool now owns the reference - clear our pointer but don't unref
             conn->upstream_connection = NULL;
         } else {
             g_debug("Connection %lu: Not pooling: %s:%d (SSL=%d, reason=%s)",
-                   conn->id, conn->target_host, conn->target_port, use_ssl, reason);
+                conn->id, conn->target_host, conn->target_port, use_ssl, reason);
+            // We still own this connection, will be cleaned up below
         }
     }
     
