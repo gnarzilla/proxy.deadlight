@@ -120,6 +120,7 @@ struct _DeadlightConnection {
     gchar *username;
     gchar *session_token;
     gboolean authenticated;
+    gboolean cleaned;
     DeadlightProtocol protocol;
     DeadlightConnectionState state;
     const DeadlightProtocolHandler *handler;

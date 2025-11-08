@@ -379,6 +379,7 @@ DeadlightConnection *deadlight_connection_new(DeadlightContext *context,
     g_mutex_unlock(&context->network->connection_mutex);
     
     // Initialize connection
+    conn->cleaned = FALSE;
     conn->context = context;
     conn->client_connection = g_object_ref(client_connection);
     conn->state = DEADLIGHT_STATE_INIT;
@@ -653,24 +654,17 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn,
 }
 
 /**
- * Internal cleanup - does NOT remove from hash table by default
- */
-/**
- * Update cleanup_connection_internal in network.c
- * 
- * CHANGE: Allow TLS connections to be pooled for CONNECT tunnels
- * 
- * TLS connections are safe to reuse when:
- * 1. Both client and upstream use TLS (CONNECT tunnel)
- * 2. The underlying socket is still healthy
- * 3. Some data was actually transferred
- */
-/**
  * Internal cleanup with proper NULL checks and safe object handling
  */
 static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remove_from_table) {
     if (!conn) return;
     
+    if (conn->cleaned) {
+        g_debug("Connection %lu already cleaned, skipping", conn->id);
+        return;
+    }
+    conn->cleaned = TRUE;
+
     g_debug("Cleaning up connection %lu (state=%d, remove_from_table=%d)", 
             conn->id, conn->state, remove_from_table);
 
@@ -931,17 +925,21 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
             
             while (g_hash_table_iter_next(&iter, &key, &value)) {
                 if (value == conn) {
-                    g_hash_table_iter_remove(&iter);
+                    g_hash_table_iter_remove(&iter);  // This will call the destructor
                     conn->context->active_connections--;
                     break;
                 }
             }
             
             g_mutex_unlock(&conn->context->network->connection_mutex);
+            
+            // IMPORTANT: Don't free conn here! 
+            // g_hash_table_iter_remove already called the destructor which freed it
+            return;  // <-- ADD THIS RETURN
         }
     }
     
-    // Finally free the connection structure
+    // Only free if we didn't remove from table (and thus destructor wasn't called)
     g_free(conn);
 }
 
