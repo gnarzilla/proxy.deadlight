@@ -107,8 +107,14 @@ Copy `ca.crt` to the client.
 Double-click → Install Certificate → Local Machine → Place all certificates in the following store → Trusted Root Certification Authorities.
 
 ### 5. Install in Firefox
+
 `about:preferences#privacy` → View Certificates → Authorities → Import → select `ca.crt` → check Trust this CA to identify websites.
 
+### 6. Verify
+
+```bash
+curl -v --proxy http://localhost:8080 https://httpbin.org/get
+```
 ### Quick Start
 
 Proxy without VPN no plugins:
