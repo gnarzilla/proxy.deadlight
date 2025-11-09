@@ -64,6 +64,51 @@ Deadlight can run standalone or as part of larger systems, such as the Deadlight
 
 3. Install the generated `/.deadlight/ca/ca.crt` in your system's trust store or browser for seamless HTTPS proxying.
 
+## Installing the Deadlight CA (required for TLS interception)
+
+Deadlight can inspect HTTPS traffic by acting as a man-in-the-middle.  
+For this to work **without browser warnings**, the Deadlight root CA must be
+trusted by the client OS or browser.
+
+> **WARNING** Only install the CA on devices *you control*.  
+> Interception breaks certificate pinning on some sites (GitHub, Mozilla, etc.)
+> and must be used responsibly.
+
+### 1. The CA is generated upon initial launch on the proxy host
+
+```bash
+# The proxy creates, if they do not exist:
+/etc/deadlight/ca.crt      # public certificate (install on clients)
+/etc/deadlight/ca.key      # private key (keep secret, never share)
+```
+
+### 2. Install on Linux (system-wide)
+
+```bash
+# Debian/Ubuntu
+sudo cp /etc/deadlight/ca/ca.crt /usr/local/share/ca-certificates/deadlight.crt
+sudo update-ca-certificates
+
+# Fedora/RHEL
+sudo cp /etc/deadlight/ca.crt /etc/pki/ca-trust/source/anchors/deadlight.crt
+sudo update-ca-trust
+```
+Restart any service that caches certs (systemctl restart docker etc.).
+
+### 3. Install on macOS
+
+```bash
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain /etc/deadlight/ca.crt
+```
+
+### 4. Install on Windows
+
+Copy `ca.crt` to the client.
+Double-click → Install Certificate → Local Machine → Place all certificates in the following store → Trusted Root Certification Authorities.
+
+### 5. Install in Firefox
+`about:preferences#privacy` → View Certificates → Authorities → Import → select `ca.crt` → check Trust this CA to identify websites.
+
 ### Quick Start
 
 Proxy without VPN no plugins:
