@@ -62,27 +62,156 @@ Deadlight can run standalone or as part of larger systems, such as the Deadlight
    - For UI support: `make ENABLE_UI=1`
    - For debug builds: `make DEBUG=1`
 
-3. Install (optional, copies to /usr/local/bin):
-   ```
-   sudo make install
-   ```
+3. Install the generated `/.deadlight/ca/ca.crt` in your system's trust store or browser for seamless HTTPS proxying.
 
-4. Generate SSL CA (for interception):
-   ```
-   sudo mkdir -p /etc/deadlight
-   sudo ./bin/deadlight --generate-ca
-   ```
-   Install the generated `/etc/deadlight/ca.crt` in your system's trust store or browser for seamless HTTPS proxying.
+## Installing the Deadlight CA (required for TLS interception)
 
+Deadlight can inspect HTTPS traffic by acting as a man-in-the-middle.  
+For this to work **without browser warnings**, the Deadlight root CA must be
+trusted by the client OS or browser.
+
+> **WARNING** Only install the CA on devices *you control*.  
+> Interception breaks certificate pinning on some sites (GitHub, Mozilla, etc.)
+> and must be used responsibly.
+
+### 1. The CA is generated upon initial launch on the proxy host
+
+```bash
+# The proxy creates, if they do not exist:
+/etc/deadlight/ca.crt      # public certificate (install on clients)
+/etc/deadlight/ca.key      # private key (keep secret, never share)
+```
+
+### 2. Install on Linux (system-wide)
+
+```bash
+# Debian/Ubuntu
+sudo cp /etc/deadlight/ca/ca.crt /usr/local/share/ca-certificates/deadlight.crt
+sudo update-ca-certificates
+
+# Fedora/RHEL
+sudo cp /etc/deadlight/ca.crt /etc/pki/ca-trust/source/anchors/deadlight.crt
+sudo update-ca-trust
+```
+Restart any service that caches certs (systemctl restart docker etc.).
+
+### 3. Install on macOS
+
+```bash
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain /etc/deadlight/ca.crt
+```
+
+### 4. Install on Windows
+
+Copy `ca.crt` to the client.
+Double-click → Install Certificate → Local Machine → Place all certificates in the following store → Trusted Root Certification Authorities.
+
+### 5. Install in Firefox
+
+`about:preferences#privacy` → View Certificates → Authorities → Import → select `ca.crt` → check Trust this CA to identify websites.
+
+### 6. Verify
+
+```bash
+curl -v --proxy http://localhost:8080 https://httpbin.org/get
+```
 ### Quick Start
 
-Run the proxy on port 8080:
+Proxy without VPN no plugins:
 ```
-./bin/deadlight -p 8080
+$ ./bin/deadlight -c deadlight.conf.nplug -v
+2025-11-08 20:33:41 [INFO ] deadlight: Configuration file monitoring enabled
+2025-11-08 20:33:41 [INFO ] deadlight: Configuration loaded successfully from deadlight.conf.nplug
+2025-11-08 20:33:41 [INFO ] deadlight: Logging to stderr
+2025-11-08 20:33:41 [INFO ] deadlight: Logging system initialized (level: 3)
+
+======================================================
+                                                      
+              Deadlight Proxy v1.0                   
+                                                      
+     Modular - Extensible - High Performance         
+                                                      
+======================================================
+
+2025-11-08 20:33:41 [INFO ] deadlight: Initializing protocol handlers...
+2025-11-08 20:33:41 [INFO ] deadlight: Registered protocol handler: API
+2025-11-08 20:33:41 [INFO ] deadlight: Registered protocol handler: WebSocket
+2025-11-08 20:33:41 [INFO ] deadlight: Registered protocol handler: HTTP
+2025-11-08 20:33:41 [INFO ] deadlight: Registered protocol handler: IMAP
+2025-11-08 20:33:41 [INFO ] deadlight: Registered protocol handler: IMAPS
+2025-11-08 20:33:41 [INFO ] deadlight: Registering SOCKS protocol handler (SOCKS4/4a/5 support with plugin integration)
+2025-11-08 20:33:41 [INFO ] deadlight: Registered protocol handler: SOCKS
+2025-11-08 20:33:41 [INFO ] deadlight: Registered protocol handler: SMTP
+2025-11-08 20:33:41 [INFO ] deadlight: Registered protocol handler: FTP
+2025-11-08 20:33:41 [INFO ] deadlight: 8 protocol handlers registered.
+2025-11-08 20:33:41 [INFO ] deadlight: Initializing Deadlight systems...
+2025-11-08 20:33:41 [INFO ] deadlight: Initializing network module...
+2025-11-08 20:33:41 [INFO ] deadlight: Connection pool created: max_per_host=10, idle_timeout=300s
+2025-11-08 20:33:41 [INFO ] deadlight: Network module initialized with 4 worker threads and connection pooling
+2025-11-08 20:33:41 [INFO ] deadlight: Initializing SSL module...
+2025-11-08 20:33:41 [INFO ] deadlight: Loading system CA certificates for upstream validation...
+2025-11-08 20:33:41 [DEBUG] GLib-GIO: _g_io_module_get_default: Found default implementation gnutls (GTlsBackendGnutls) for ‘gio-tls-backend’
+2025-11-08 20:33:41 [INFO ] deadlight: System CA trust store loaded successfully.
+2025-11-08 20:33:41 [INFO ] deadlight: CA certificate and key loaded successfully
+2025-11-08 20:33:41 [INFO ] deadlight: SSL module initialized successfully
+2025-11-08 20:33:41 [INFO ] deadlight: Initializing plugin system...
+2025-11-08 20:33:41 [INFO ] deadlight: Plugin system disabled by configuration
+2025-11-08 20:33:41 [INFO ] deadlight: VPN gateway is enabled in configuration
+2025-11-08 20:33:41 [INFO ] deadlight: VPN: Initializing VPN gateway...
+2025-11-08 20:33:41 [WARN ] deadlight: Failed to initialize VPN gateway: TUNSETIFF ioctl failed: Operation not permitted
+2025-11-08 20:33:41 [WARN ] deadlight: Continuing without VPN functionality
+2025-11-08 20:33:41 [INFO ] deadlight: Starting UI server...
+2025-11-08 20:33:41 [INFO ] deadlight: UI server listening on http://127.0.0.1:8081
+2025-11-08 20:33:41 [INFO ] deadlight: Starting proxy on port 8080
+2025-11-08 20:33:41 [INFO ] deadlight: Network listener started on 0.0.0.0:8080
+
+Deadlight Proxy is ready!
+Listening on port 8080
+Configuration file: deadlight.conf.nplug
+Plugins loaded: 0
+
+Test commands:
+  # HTTP
+  curl -x http://localhost:8080 http://example.com
+
+  # HTTPS
+  curl --cacert ~/.deadlight/ca.crt -x http://localhost:8080 https://example.com
+
+  # SOCKS4
+  curl --socks4 localhost:8080 http://example.com
+
+  # SOCKS5
+  curl --socks5 localhost:8080 http://example.com
+
+  # SMTP
+  printf "HELO test.com\r\n" | nc localhost 8080
+
+  # IMAP (NOOP)
+  printf "A001 NOOP\r\n" | nc localhost 8080
+
+  # IMAP STARTTLS
+  openssl s_client -connect localhost:8080 -starttls imap -crlf
+
+  # IMAPS tunnel using telnet
+  telnet localhost 8080
+
+  # Once connected, type the following and press Enter:
+  A001 NOOP
+
+  # WebSocket
+  curl -v --proxy http://localhost:8080 -H "Upgrade: websocket" http://ws.ifelse.io/
+
+  # FTP with netcat:
+  printf "USER anonymous\r\n" | nc localhost 8080
+
+
+Press Ctrl+C to stop
+
 ```
 
 Test with curl:
-```
+```bash
+# from other terminal
 curl -x http://localhost:8080 http://example.com
 ```
 
