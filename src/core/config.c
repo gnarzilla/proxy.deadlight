@@ -40,8 +40,8 @@ static const struct {
     
     // SSL/TLS settings
     {"ssl", "enabled", "true", "Enable SSL interception"},
-    {"ssl", "ca_cert_file", "/etc/deadlight/ca/ca.crt", "CA certificate file"},
-    {"ssl", "ca_key_file", "/etc/deadlight/ca/ca.key", "CA private key file"},
+    {"ssl", "ca_cert_file", "~/.deadlight/ca/ca.crt", "CA certificate file"},
+    {"ssl", "ca_key_file", "~/.deadlight/ca/ca.key", "CA private key file"},
     {"ssl", "cert_cache_dir", "/tmp/deadlight_certs", "Certificate cache directory"},
     {"ssl", "cert_cache_size", "1000", "Maximum cached certificates"},
     {"ssl", "cert_validity_days", "30", "Generated certificate validity period"},
@@ -67,6 +67,14 @@ static const struct {
     {"network", "ipv6_enabled", "true", "Enable IPv6 support"},
     {"network", "tcp_nodelay", "true", "Enable TCP_NODELAY"},
     {"network", "tcp_keepalive", "true", "Enable TCP keepalive"},
+
+    // Network/Connection Pool settings
+    {"network", "connection_pool_size", "10", "Max connections per upstream host"},
+    {"network", "connection_pool_timeout", "300", "Idle connection timeout (seconds)"},
+    {"network", "connection_pool_max_total", "500", "Total pool size across all hosts"},
+    {"network", "connection_pool_eviction_policy", "lru", "Pool eviction policy: lru, fifo, none"},
+    {"network", "connection_pool_health_check_interval", "60", "Connection health check interval (seconds)"},
+    {"network", "connection_pool_reuse_ssl", "true", "Reuse SSL connections from pool"},
     
     // Plugin settings
     {"plugins", "enabled", "true", "Enable plugin system"},
@@ -450,9 +458,28 @@ static gboolean validate_config_section(DeadlightConfig *config, const gchar *se
     if (g_strcmp0(section, "core") == 0) {
         if (!g_key_file_has_key(config->keyfile, section, "port", NULL)) {
             g_key_file_set_integer(config->keyfile, section, "port", DEADLIGHT_DEFAULT_PORT);
+            return FALSE;
         }
     }
     
+    // Validate network pool settings
+    if (g_strcmp0(section, "network") == 0) {
+        gint max_per_host = g_key_file_get_integer(config->keyfile, section, 
+                                                   "connection_pool_size", NULL);
+        if (max_per_host <= 0) {
+            g_set_error(error, G_KEY_FILE_ERROR, G_KEY_FILE_ERROR_INVALID_VALUE,
+                       "connection_pool_size must be > 0");
+            return FALSE;
+        }
+        
+        gint idle_timeout = g_key_file_get_integer(config->keyfile, section,
+                                                   "connection_pool_timeout", NULL);
+        if (idle_timeout < 0) {
+            g_set_error(error, G_KEY_FILE_ERROR, G_KEY_FILE_ERROR_INVALID_VALUE,
+                       "connection_pool_timeout must be >= 0");
+            return FALSE;
+        }
+    }
     return TRUE;
 }
 
@@ -502,6 +529,43 @@ static gboolean create_default_config_file(const gchar *config_path, GError **er
 }
 
 /**
+ * Parse human-readable size strings (e.g., "1GB", "512MB", "64KB")
+ * Returns size in bytes, or default_value on error
+ */
+guint64 deadlight_config_get_size(DeadlightContext *context, const gchar *section,
+                                  const gchar *key, guint64 default_value) {
+    g_return_val_if_fail(context != NULL, default_value);
+    
+    gchar *value_str = deadlight_config_get_string(context, section, key, NULL);
+    if (!value_str) {
+        return default_value;
+    }
+    
+    gchar *endptr;
+    guint64 size = g_ascii_strtoull(value_str, &endptr, 10);
+    
+    if (endptr && *endptr) {
+        switch (g_ascii_toupper(*endptr)) {
+            case 'K':
+                size *= 1024;
+                break;
+            case 'M':
+                size *= 1024 * 1024;
+                break;
+            case 'G':
+                size *= 1024 * 1024 * 1024;
+                break;
+            default:
+                g_warning("Unknown size suffix: %c", *endptr);
+                size = default_value;
+        }
+    }
+    
+    g_free(value_str);
+    return size;
+}
+
+/**
  * Updates the 'hot' cached configuration values directly on the context
  * after a load or reload.
  */
@@ -511,9 +575,14 @@ static void config_update_context_values(DeadlightContext *context) {
     // Free any existing string before assigning the new one
     g_free(context->listen_address);
     context->listen_address = deadlight_config_get_string(context, "core", "bind_address", "0.0.0.0");
-    
     context->max_connections = deadlight_config_get_int(context, "core", "max_connections", DEADLIGHT_DEFAULT_MAX_CONNECTIONS);
-    
+    context->pool_max_per_host = deadlight_config_get_int(context, "network", "connection_pool_size", 10);
+    context->pool_idle_timeout = deadlight_config_get_int(context, "network", "connection_pool_timeout", 300);
+    context->pool_max_total = deadlight_config_get_int(context, "network", "connection_pool_max_total", 500);
+    g_free(context->pool_eviction_policy);
+    context->pool_eviction_policy = deadlight_config_get_string(context, "network", "connection_pool_eviction_policy", "lru");
+    context->pool_health_check_interval = deadlight_config_get_int(context, "network","connection_pool_health_check_interval", 60);
+    context->pool_reuse_ssl = deadlight_config_get_bool(context, "network", "connection_pool_reuse_ssl", TRUE);
     // Set log level
     gchar *log_level = deadlight_config_get_string(context, "core", "log_level", DEADLIGHT_DEFAULT_LOG_LEVEL);
     if (g_strcmp0(log_level, "error") == 0) {
@@ -528,9 +597,51 @@ static void config_update_context_values(DeadlightContext *context) {
         context->log_level = DEADLIGHT_LOG_INFO;
     }
     g_free(log_level);
+
+    // Note: Pool settings aren't stored on context yet, but they should be read
+    // each time from config in network.c. For now, just log on change:
+    gint pool_size = deadlight_config_get_int(context, "network", 
+                                             "connection_pool_size", 10);
+    gint pool_timeout = deadlight_config_get_int(context, "network",
+                                                "connection_pool_timeout", 300);
+    
+    g_info("Connection pool config updated: size=%d, timeout=%d",
+           pool_size, pool_timeout);
+    
+    // TODO: Dynamically reconfigure the pool if it's already running
     
     // SSL interception setting
-    context->ssl_intercept_enabled = deadlight_config_get_bool(context, "ssl", "enabled", TRUE);
+    context->ssl_intercept_enabled =
+        deadlight_config_get_bool(context, "ssl", "enabled", TRUE);
+
+    // ─── POOL CONFIG ───────────────────────────────────────────
+    context->pool_max_per_host =
+        deadlight_config_get_int(context, "network",
+                                 "connection_pool_size", 10);
+    context->pool_idle_timeout =
+        deadlight_config_get_int(context, "network",
+                                 "connection_pool_timeout", 300);
+    context->pool_max_total =
+        deadlight_config_get_int(context, "network",
+                                 "connection_pool_max_total", 500);
+    g_free(context->pool_eviction_policy);
+    context->pool_eviction_policy =
+        deadlight_config_get_string(context, "network",
+                                    "connection_pool_eviction_policy", "lru");
+    context->pool_health_check_interval =
+        deadlight_config_get_int(context, "network",
+                                 "connection_pool_health_check_interval", 60);
+    context->pool_reuse_ssl =
+        deadlight_config_get_bool(context, "network",
+                                  "connection_pool_reuse_ssl", TRUE);
+
+    g_info("Pool config: per_host=%d idle_t=%d total=%d policy=%s health=%d reuse_ssl=%d",
+           context->pool_max_per_host,
+           context->pool_idle_timeout,
+           context->pool_max_total,
+           context->pool_eviction_policy,
+           context->pool_health_check_interval,
+           context->pool_reuse_ssl);
 }
 
 /**

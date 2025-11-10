@@ -75,6 +75,10 @@ void deadlight_context_free(DeadlightContext *ctx) {
     if (ctx->uptime_timer) {
         g_timer_destroy(ctx->uptime_timer);
     }
+    if (ctx->conn_pool)
+        connection_pool_free(ctx->conn_pool);
+
+    g_free(ctx->pool_eviction_policy);
 
     g_mutex_clear(&ctx->stats_mutex);
     

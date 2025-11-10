@@ -34,11 +34,16 @@ static gboolean on_incoming_connection(GSocketService *service,
                                       GObject *source_object,
                                       gpointer user_data);
 static void connection_thread_func(gpointer data, gpointer user_data);
-static void cleanup_connection(DeadlightConnection *conn);
 GSocketConnection* deadlight_network_connect_tcp(DeadlightContext *context, const gchar *host, guint16 port, GError **error);
 void deadlight_network_tunnel_socket_connections(GSocketConnection *conn1, GSocketConnection *conn2);
 static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remove_from_table);
 static void connection_pool_log_stats(ConnectionPool *pool);
+
+static void _destroy_notify_connection (gpointer data)
+{
+    DeadlightConnection *conn = (DeadlightConnection*)data;
+    cleanup_connection_internal(conn, FALSE);
+}
 
 /**
  * Initialize network module
@@ -59,7 +64,7 @@ gboolean deadlight_network_init(DeadlightContext *context, GError **error) {
         g_int64_hash, 
         g_int64_equal,
         g_free,  // Free the guint64* key
-        (GDestroyNotify)cleanup_connection  // Clean up DeadlightConnection value
+        _destroy_notify_connection // value destroy
     );
     // Create worker thread pool
     gint worker_threads = deadlight_config_get_int(context, "core", "worker_threads", 4);
@@ -68,16 +73,18 @@ gboolean deadlight_network_init(DeadlightContext *context, GError **error) {
     if (!context->worker_pool) {
         return FALSE;
     }
-    
+
     // Initialize connection pool
-    gint max_per_host = deadlight_config_get_int(context, "network", 
-                                                "connection_pool_size", 10);
-    gint idle_timeout = deadlight_config_get_int(context, "network", 
-                                                "connection_pool_timeout", 300);
-    context->conn_pool = connection_pool_new(max_per_host, idle_timeout);
-    
-    g_info("Network module initialized with %d worker threads and connection pooling", 
-           worker_threads);
+    context->conn_pool = connection_pool_new(
+        context->pool_max_per_host,
+        context->pool_idle_timeout,
+        context->pool_max_total,
+        context->pool_eviction_policy,
+        context->pool_health_check_interval,
+        context->pool_reuse_ssl
+    );
+    g_info("Network module initialized with %d worker threads and connection pooling",
+            worker_threads);
     return TRUE;
 }
 
@@ -931,185 +938,6 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
     g_free(conn);
 }
 
-
-/**
- * Public cleanup function - used as hash table destructor
- * This is called BY the hash table, so DON'T remove from table
- */
-static void cleanup_connection(DeadlightConnection *conn) {
-    cleanup_connection_internal(conn, FALSE);  // Don't remove from table
-}
-
-/**
- * Worker thread cleanup - DOES remove from table
- * This is called BY worker threads, so DO remove from table
- */
-static void cleanup_connection_and_remove(DeadlightConnection *conn) {
-    cleanup_connection_internal(conn, TRUE);  // Remove from table
-}
-
-gboolean deadlight_tls_tunnel_data(DeadlightConnection *conn, GError **error) {
-    g_return_val_if_fail(conn != NULL, FALSE);
-    g_return_val_if_fail(conn->client_tls != NULL, FALSE);
-    g_return_val_if_fail(conn->upstream_tls != NULL, FALSE);
-    
-    g_info("Connection %lu: Starting TLS tunnel", conn->id);
-    
-    // Get TLS connection properties for debugging
-    gchar *negotiated_protocol = NULL;
-    g_object_get(conn->client_tls, "negotiated-protocol", &negotiated_protocol, NULL);
-    if (negotiated_protocol) {
-        g_debug("Connection %lu: Client negotiated protocol: %s", conn->id, negotiated_protocol);
-        g_free(negotiated_protocol);
-    }
-    
-    GInputStream *client_input = g_io_stream_get_input_stream(G_IO_STREAM(conn->client_tls));
-    GOutputStream *client_output = g_io_stream_get_output_stream(G_IO_STREAM(conn->client_tls));
-    GInputStream *upstream_input = g_io_stream_get_input_stream(G_IO_STREAM(conn->upstream_tls));
-    GOutputStream *upstream_output = g_io_stream_get_output_stream(G_IO_STREAM(conn->upstream_tls));
-    
-    guchar buffer[16384];
-    gboolean running = TRUE;
-    conn->state = DEADLIGHT_STATE_TUNNELING;
-    
-    // Keep track of consecutive empty reads
-    gint empty_reads = 0;
-    const gint MAX_EMPTY_READS = 50; // 50ms timeout if nothing happening
-    
-    // Make sure underlying sockets are in non-blocking mode for better control
-    GSocket *client_socket = NULL;
-    GSocket *upstream_socket = NULL;
-    
-    if (G_IS_SOCKET_CONNECTION(conn->client_connection)) {
-        client_socket = g_socket_connection_get_socket(G_SOCKET_CONNECTION(conn->client_connection));
-        g_socket_set_blocking(client_socket, FALSE);
-    }
-    if (G_IS_SOCKET_CONNECTION(conn->upstream_connection)) {
-        upstream_socket = g_socket_connection_get_socket(G_SOCKET_CONNECTION(conn->upstream_connection));
-        g_socket_set_blocking(upstream_socket, FALSE);
-    }
-    
-    while (running && conn->state == DEADLIGHT_STATE_TUNNELING) {
-        GError *local_error = NULL;
-        gssize bytes_read, bytes_written;
-        gboolean data_transferred = FALSE;
-        gboolean client_would_block = FALSE;
-        gboolean upstream_would_block = FALSE;
-        
-        // Client -> Upstream
-        if (g_pollable_input_stream_is_readable(G_POLLABLE_INPUT_STREAM(client_input))) {
-            bytes_read = g_pollable_input_stream_read_nonblocking(
-                G_POLLABLE_INPUT_STREAM(client_input),
-                buffer, sizeof(buffer),
-                NULL, &local_error
-            );
-            
-            if (bytes_read > 0) {
-                empty_reads = 0;
-                bytes_written = g_output_stream_write_all(
-                    upstream_output, buffer, bytes_read, 
-                    NULL, NULL, &local_error
-                );
-                if (bytes_written) {
-                    conn->bytes_client_to_upstream += bytes_read;
-                    data_transferred = TRUE;
-                    g_output_stream_flush(upstream_output, NULL, NULL);
-                }
-                if (local_error) {
-                    g_debug("Write to upstream error: %s", local_error->message);
-                    g_clear_error(&local_error);
-                }
-            } else if (bytes_read == 0) {
-                // Clean EOF
-                g_debug("Connection %lu: Client closed connection cleanly", conn->id);
-                running = FALSE;
-            } else if (local_error) {
-                if (g_error_matches(local_error, G_IO_ERROR, G_IO_ERROR_WOULD_BLOCK)) {
-                    client_would_block = TRUE;
-                } else if (g_error_matches(local_error, G_TLS_ERROR, G_TLS_ERROR_EOF)) {
-                    g_debug("Connection %lu: Client TLS EOF", conn->id);
-                    running = FALSE;
-                } else {
-                    g_debug("Connection %lu: Client read error: %s", conn->id, local_error->message);
-                    running = FALSE;
-                }
-                g_clear_error(&local_error);
-            }
-        } else {
-            client_would_block = TRUE;
-        }
-        
-        // Upstream -> Client
-        if (g_pollable_input_stream_is_readable(G_POLLABLE_INPUT_STREAM(upstream_input))) {
-            bytes_read = g_pollable_input_stream_read_nonblocking(
-                G_POLLABLE_INPUT_STREAM(upstream_input),
-                buffer, sizeof(buffer),
-                NULL, &local_error
-            );
-            
-            if (bytes_read > 0) {
-                empty_reads = 0;
-                bytes_written = g_output_stream_write_all(
-                    client_output, buffer, bytes_read,
-                    NULL, NULL, &local_error
-                );
-                if (bytes_written) {
-                    conn->bytes_upstream_to_client += bytes_read;
-                    data_transferred = TRUE;
-                    g_output_stream_flush(client_output, NULL, NULL);
-                }
-                if (local_error) {
-                    g_debug("Write to client error: %s", local_error->message);
-                    g_clear_error(&local_error);
-                }
-            } else if (bytes_read == 0) {
-                // Clean EOF
-                g_debug("Connection %lu: Upstream closed connection cleanly", conn->id);
-                running = FALSE;
-            } else if (local_error) {
-                if (g_error_matches(local_error, G_IO_ERROR, G_IO_ERROR_WOULD_BLOCK)) {
-                    upstream_would_block = TRUE;
-                } else if (g_error_matches(local_error, G_TLS_ERROR, G_TLS_ERROR_EOF)) {
-                    g_debug("Connection %lu: Upstream TLS EOF", conn->id);
-                    running = FALSE;
-                } else {
-                    g_debug("Connection %lu: Upstream read error: %s", conn->id, local_error->message);
-                    running = FALSE;
-                }
-                g_clear_error(&local_error);
-            }
-        } else {
-            upstream_would_block = TRUE;
-        }
-        
-        // If both would block and no data transferred, check for timeout
-        if (running && !data_transferred) {
-            if (client_would_block && upstream_would_block) {
-                empty_reads++;
-                if (empty_reads > MAX_EMPTY_READS) {
-                    // Check if connections are still alive
-                    if (client_socket && !g_socket_is_connected(client_socket)) {
-                        g_debug("Connection %lu: Client socket disconnected", conn->id);
-                        running = FALSE;
-                    }
-                    if (upstream_socket && !g_socket_is_connected(upstream_socket)) {
-                        g_debug("Connection %lu: Upstream socket disconnected", conn->id);
-                        running = FALSE;
-                    }
-                }
-            }
-            g_usleep(1000); // 1ms
-        }
-    }
-    
-    g_info("Connection %lu: TLS tunnel closed (client->upstream: %lu B, upstream->client: %lu B)",
-           conn->id, conn->bytes_client_to_upstream, conn->bytes_upstream_to_client);
-    
-    conn->state = DEADLIGHT_STATE_CLOSING;
-    
-    (void)error; // Suppress unused parameter warning
-    return TRUE;
-}
 /**
  * A simple, blocking TCP connection function.
  */

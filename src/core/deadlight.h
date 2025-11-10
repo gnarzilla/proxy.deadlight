@@ -104,6 +104,13 @@ struct _DeadlightContext {
     DeadlightLogLevel log_level;
     gboolean ssl_intercept_enabled;
     ConnectionPool *conn_pool;
+    gint   pool_max_per_host;
+    gint   pool_idle_timeout;
+    gint   pool_max_total;
+    gchar *pool_eviction_policy;
+    gint   pool_health_check_interval;
+    gboolean pool_reuse_ssl;
+
     gchar *auth_endpoint;
     gchar *auth_secret;
     gboolean shutdown_requested;
@@ -207,6 +214,8 @@ gboolean deadlight_config_get_bool(DeadlightContext *context, const gchar *secti
 void deadlight_config_set_int(DeadlightContext *context, const gchar *section, const gchar *key, gint value);
 void deadlight_config_set_string(DeadlightContext *context, const gchar *section, const gchar *key, const gchar *value);
 void deadlight_config_set_bool(DeadlightContext *context, const gchar *section, const gchar *key, gboolean value);
+guint64 deadlight_config_get_size(DeadlightContext *context, const gchar *section,
+                                  const gchar *key, guint64 default_value);
 
 // Logging API
 void deadlight_log_handler(const gchar *log_domain, GLogLevelFlags log_level, const gchar *message, gpointer user_data);
@@ -273,9 +282,14 @@ gchar *deadlight_response_get_header(DeadlightResponse *response, const gchar *n
 void deadlight_response_set_header(DeadlightResponse *response, const gchar *name, const gchar *value); 
 
 // Connection Pool API
-ConnectionPool* connection_pool_new(gint max_per_host, gint idle_timeout);
-void connection_pool_free(ConnectionPool *pool);
-
+ConnectionPool* connection_pool_new(
+    gint         max_per_host,
+    gint         idle_timeout,
+    gint         max_total_idle,
+    const gchar *eviction_policy,
+    gint         health_check_interval,
+    gboolean     reuse_ssl
+);
 GSocketConnection* connection_pool_get(ConnectionPool *pool, 
                                        const gchar *host, 
                                        guint16 port, 
@@ -299,6 +313,8 @@ void connection_pool_get_stats(ConnectionPool *pool,
                               guint64 *total_gets,
                               guint64 *cache_hits,
                               gdouble *hit_rate);
+
+void connection_pool_free(ConnectionPool *pool);
 
 // Testing API
 gboolean deadlight_test_module(const gchar *module_name);

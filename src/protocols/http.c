@@ -143,6 +143,7 @@ static DeadlightHandlerResult handle_plain_http(DeadlightConnection *conn, GErro
         return HANDLER_ERROR;
     }
 }
+
 static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError **error) {
 
     // 1. Get a pointer to the start of the buffer and find the end of the first line.

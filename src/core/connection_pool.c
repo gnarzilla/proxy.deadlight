@@ -20,21 +20,28 @@ typedef struct _PooledConnection {
     guint64 requests_served; 
 } PooledConnection;
 
+
 struct _ConnectionPool {
-    GQueue *idle_connections;
-    GHashTable *active_connections;  // Key: GSocketConnection*, Value: PooledConnection*
-    GMutex mutex;
-    gint max_per_host;
-    gint max_total_idle;
-    gint idle_timeout;
-    guint cleanup_source_id;
-    
+    GQueue         *idle_connections;
+    GHashTable     *active_connections;
+    GMutex          mutex;
+
+    gint            max_per_host;
+    gint            max_total_idle;           // now driven from config
+    gint            idle_timeout;             // seconds before idle evict
+
+    gchar          *eviction_policy;          // "lru", "fifo", "none"
+    gint            health_check_interval;    // how often we scan idle list
+    gboolean        reuse_ssl;                // whether to pool SSL connections
+
     // Statistics
     guint64 total_gets;
     guint64 cache_hits;
     guint64 cache_misses;
     guint64 connections_created;
     guint64 connections_closed;
+
+    guint           cleanup_source_id;
 };
 
 // Forward declarations
@@ -88,29 +95,46 @@ static gboolean connection_is_healthy(GSocketConnection *conn) {
 /**
  * Create new connection pool
  */
-ConnectionPool* connection_pool_new(gint max_per_host, gint idle_timeout) {
+ConnectionPool* connection_pool_new(
+    gint         max_per_host,
+    gint         idle_timeout,
+    gint         max_total_idle,
+    const gchar *eviction_policy,
+    gint         health_check_interval,
+    gboolean     reuse_ssl)
+{
     ConnectionPool *pool = g_new0(ConnectionPool, 1);
-    pool->idle_connections = g_queue_new();
-    
 
-    pool->active_connections = g_hash_table_new_full(
-        g_direct_hash, 
-        g_direct_equal,
-        NULL,  // Key is just a pointer, no cleanup needed
-        (GDestroyNotify)pooled_connection_free  // Value cleanup
-    );
-    
+    pool->idle_connections       = g_queue_new();
+    pool->active_connections     = g_hash_table_new_full(
+                                      g_direct_hash, g_direct_equal,
+                                      NULL, (GDestroyNotify)pooled_connection_free);
     g_mutex_init(&pool->mutex);
-    pool->max_per_host = max_per_host;
-    pool->max_total_idle = max_per_host * 10;  // Global limit
-    pool->idle_timeout = idle_timeout;
-    
-    // Start cleanup timer
-    pool->cleanup_source_id = g_timeout_add_seconds(30, cleanup_idle_connections, pool);
-    
-    g_info("Connection pool created: max_per_host=%d, idle_timeout=%ds", 
-           max_per_host, idle_timeout);
-    
+
+    pool->max_per_host           = max_per_host;
+    pool->idle_timeout           = idle_timeout;
+    pool->max_total_idle         = max_total_idle;
+
+    /* NEW */
+    pool->eviction_policy        = g_strdup(eviction_policy);
+    pool->health_check_interval  = health_check_interval;
+    pool->reuse_ssl              = reuse_ssl;
+
+    /* Use the configured health_check_interval for the cleanup timer */
+    pool->cleanup_source_id = g_timeout_add_seconds(
+        pool->health_check_interval,
+        cleanup_idle_connections,
+        pool);
+
+    g_info("Connection pool created: per_host=%d, idle_timeout=%ds, total_idle=%d, "
+           "policy=%s, health_check=%ds, reuse_ssl=%d",
+           max_per_host,
+           idle_timeout,
+           max_total_idle,
+           eviction_policy,
+           health_check_interval,
+           reuse_ssl);
+
     return pool;
 }
 
@@ -119,26 +143,20 @@ ConnectionPool* connection_pool_new(gint max_per_host, gint idle_timeout) {
  */
 void connection_pool_free(ConnectionPool *pool) {
     if (!pool) return;
-    
-    g_info("Destroying connection pool (stats: gets=%lu, hits=%lu, misses=%lu, created=%lu, closed=%lu)",
-           pool->total_gets, pool->cache_hits, pool->cache_misses,
-           pool->connections_created, pool->connections_closed);
-    
-    // Cancel cleanup timer
-    if (pool->cleanup_source_id) {
+
+    /* stop the timer */
+    if (pool->cleanup_source_id)
         g_source_remove(pool->cleanup_source_id);
-    }
-    
-    // Clean up idle connections
-    PooledConnection *pc;
-    while ((pc = g_queue_pop_head(pool->idle_connections))) {
-        pooled_connection_free(pc);
-    }
-    g_queue_free(pool->idle_connections);
-    
-    // Clean up active connections (destructor handles PooledConnection cleanup)
+
+    /* free idle queue */
+    g_queue_free_full(pool->idle_connections, (GDestroyNotify)pooled_connection_free);
+
+    /* free active table */
     g_hash_table_destroy(pool->active_connections);
-    
+
+    /* free new fields */
+    g_free(pool->eviction_policy);
+
     g_mutex_clear(&pool->mutex);
     g_free(pool);
 }
