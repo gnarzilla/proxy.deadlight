@@ -4,7 +4,7 @@ A high-performance, multi-protocol proxy server written in C using GLib. Feature
 
 [Features](#features) · [Getting Started](#getting-started) · [Usage](#usage) · [Configuration](#configuration) · [Architecture](#architecture) · [Extending Deadlight](#extending-deadlight) · [Use Cases](#use-cases) · [Roadmap](#roadmap) · [License](#license)
 
-![Deadlight Proxy with web UI and CLI logging](assets/proxy_ui_cli_uPi.gif)
+![proxy.deadlight boot to shutdown, cli and ui](assets/proxy.deadlight_cli_ui_boot2shut.gif)
 
 ## Overview
 
@@ -24,7 +24,7 @@ Whether you're setting up a secure home network gateway, bridging protocols for 
 
 Deadlight can run standalone or as part of larger systems, such as the Deadlight Edge Platform for Cloudflare Workers integration (see [edge.deadlight](https://github.com/gnarzilla/edge.deadlight) for details).
 
-![Deadlight Proxy with local web interface](assets/proxy_ui.gif)
+![Deadlight Proxy with web UI and CLI logging](assets/proxy_ui_cli_uPi.gif)
 
 ## Features
 
@@ -266,6 +266,8 @@ Run with `--vpn`, then route traffic:
 sudo ip route add default via 10.8.0.1 dev tun0
 curl http://example.com  # Routed through proxy
 ```
+
+![Deadlight Proxy with local web interface](assets/proxy_ui.gif)
 
 For full request tracing and more, see the [docs](docs/) folder.
 
