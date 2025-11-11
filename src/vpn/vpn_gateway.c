@@ -1599,9 +1599,14 @@ static void handle_udp6_packet(DeadlightVPNManager *vpn, struct ipv6_header *ip6
     log_debug("VPN: IPv6 UDP packet: [%s]:%u -> [%s]:%u payload=%zu",
              client_str, client_port, dest_str, dest_port, payload_len);
     
-    // Create session key FIRST
-    gchar *key = make_session_key(&ip6_hdr->src_addr, client_port,
-                                  &ip6_hdr->dest_addr, dest_port);
+    // Copy addresses to properly aligned variables (fixes packed struct warning)
+    struct in6_addr client_addr, dest_addr;
+    memcpy(&client_addr, &ip6_hdr->src_addr, sizeof(struct in6_addr));
+    memcpy(&dest_addr, &ip6_hdr->dest_addr, sizeof(struct in6_addr));
+    
+    // Create session key using aligned copies
+    gchar *key = make_session_key(&client_addr, client_port,
+                                  &dest_addr, dest_port);
     
     g_mutex_lock(&vpn->sessions_mutex);
     VPNUDPSession *session = g_hash_table_lookup(vpn->udp_sessions_v6, key);
@@ -1703,9 +1708,14 @@ static void handle_tcp6_packet(DeadlightVPNManager *vpn, struct ipv6_header *ip6
     log_debug("VPN: IPv6 TCP packet: [%s]:%u -> [%s]:%u flags=0x%02x seq=%u ack=%u payload=%zu",
              client_str, client_port, dest_str, dest_port, flags, recv_seq, recv_ack, payload_len);
 
-    // Create session key FIRST
-    gchar *key = make_session_key(&ip6_hdr->src_addr, client_port,
-                                  &ip6_hdr->dest_addr, dest_port);
+    // Copy addresses to properly aligned variables (fixes packed struct warning)
+    struct in6_addr client_addr, dest_addr;
+    memcpy(&client_addr, &ip6_hdr->src_addr, sizeof(struct in6_addr));
+    memcpy(&dest_addr, &ip6_hdr->dest_addr, sizeof(struct in6_addr));
+
+    // Create session key using aligned copies
+    gchar *key = make_session_key(&client_addr, client_port,
+                                  &dest_addr, dest_port);
 
     g_mutex_lock(&vpn->sessions_mutex);
     VPNSession *session = g_hash_table_lookup(vpn->sessions_v6, key);
