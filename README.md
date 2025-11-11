@@ -24,8 +24,6 @@ Whether you're setting up a secure home network gateway, bridging protocols for 
 
 Deadlight can run standalone or as part of larger systems, such as the Deadlight Edge Platform for Cloudflare Workers integration (see [edge.deadlight](https://github.com/gnarzilla/edge.deadlight) for details).
 
-![Deadlight Proxy with web UI and CLI logging](assets/proxy_ui_cli_uPi.gif)
-
 ## Features
 
 - **Automatic Protocol Detection**: Peeks at initial connection data to identify and route protocols without configuration.
@@ -115,6 +113,9 @@ Double-click → Install Certificate → Local Machine → Place all certificate
 ```bash
 curl -v --proxy http://localhost:8080 https://httpbin.org/get
 ```
+
+![Deadlight Proxy with local web interface](assets/proxy_ui.gif)
+
 ### Quick Start
 
 Proxy without VPN no plugins:
@@ -266,8 +267,6 @@ Run with `--vpn`, then route traffic:
 sudo ip route add default via 10.8.0.1 dev tun0
 curl http://example.com  # Routed through proxy
 ```
-
-![Deadlight Proxy with local web interface](assets/proxy_ui.gif)
 
 For full request tracing and more, see the [docs](docs/) folder.
 
