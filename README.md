@@ -61,6 +61,8 @@ Deadlight can run standalone or as part of larger systems, such as the Deadlight
    ```
    - For UI support: `make ENABLE_UI=1`
    - For debug builds: `make DEBUG=1`
+  
+![Linux CLI git and make](assets/proxy_git_and_make.png)
 
 3. Install the generated `/.deadlight/ca/ca.crt` in your system's trust store or browser for seamless HTTPS proxying.
 
