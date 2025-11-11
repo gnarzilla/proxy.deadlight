@@ -139,6 +139,49 @@ static void handle_ipv6_packet(DeadlightVPNManager *vpn, guint8 *packet, gsize p
 // Helper functions
 //=============================================================================
 
+static inline void ipv4_to_mapped(guint32 ipv4_be, struct in6_addr *out)
+{
+    memset(out->s6_addr, 0, 16);
+#ifdef __GLIBC__
+    out->__in6_u.__u6_addr8[10] = 0xFF;
+    out->__in6_u.__u6_addr8[11] = 0xFF;
+    memcpy(&out->__in6_u.__u6_addr8[12], &ipv4_be, 4);
+#else
+    out->s6_addr[10] = 0xFF;
+    out->s6_addr[11] = 0xFF;
+    memcpy(&out->s6_addr[12], &ipv4_be, 4);
+#endif
+}
+
+static inline guint32 mapped_to_ipv4(const struct in6_addr *addr)
+{
+    if (IN6_IS_ADDR_V4MAPPED(addr)) {
+#ifdef __GLIBC__
+        return ntohl(*(guint32*)&addr->__in6_u.__u6_addr8[12]);
+#else
+        return ntohl(*(guint32*)&addr->s6_addr[12]);
+#endif
+    }
+    return 0; /* not mapped */
+}
+
+static gchar* make_session_key(const struct in6_addr *src, guint16 sport,
+                               const struct in6_addr *dst, guint16 dport)
+{
+    gchar src_str[INET6_ADDRSTRLEN], dst_str[INET6_ADDRSTRLEN];
+    inet_ntop(AF_INET6, src, src_str, sizeof(src_str));
+    inet_ntop(AF_INET6, dst, dst_str, sizeof(dst_str));
+
+    if (IN6_IS_ADDR_V4MAPPED(src) && IN6_IS_ADDR_V4MAPPED(dst)) {
+        /* IPv4-mapped → use dotted notation (no brackets) */
+        gchar src4[INET_ADDRSTRLEN], dst4[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &src->s6_addr[12], src4, sizeof(src4));
+        inet_ntop(AF_INET, &dst->s6_addr[12], dst4, sizeof(dst4));
+        return g_strdup_printf("%s:%u->%s:%u", src4, sport, dst4, dport);
+    } else {
+        return g_strdup_printf("[%s]:%u->[%s]:%u", src_str, sport, dst_str, dport);
+    }
+}
 
 //=============================================================================
 // TUN Device Management
@@ -482,6 +525,8 @@ static VPNSession *vpn_session_new(DeadlightVPNManager *vpn, guint32 client_ip,
     session->client_ip.__in6_u.__u6_addr8[10] = 0xFF;
     session->client_ip.__in6_u.__u6_addr8[11] = 0xFF;
     guint32 client_ip_net = htonl(client_ip);
+    ipv4_to_mapped(client_ip_net, &session->client_ip);
+    ipv4_to_mapped(htonl(dest_ip), &session->dest_ip);
     memcpy(&session->client_ip.__in6_u.__u6_addr8[12], &client_ip_net, 4);
     
     memset(&session->dest_ip, 0, sizeof(struct in6_addr));
@@ -489,6 +534,8 @@ static VPNSession *vpn_session_new(DeadlightVPNManager *vpn, guint32 client_ip,
     session->dest_ip.__in6_u.__u6_addr8[11] = 0xFF;
     guint32 dest_ip_net = htonl(dest_ip);
     memcpy(&session->dest_ip.__in6_u.__u6_addr8[12], &dest_ip_net, 4);
+    ipv4_to_mapped(htonl(client_ip), &session->client_ip);
+    ipv4_to_mapped(htonl(dest_ip),   &session->dest_ip);
     
     session->client_port = client_port;
     session->dest_port = dest_port;
@@ -502,9 +549,8 @@ static VPNSession *vpn_session_new(DeadlightVPNManager *vpn, guint32 client_ip,
     tmp.s_addr = htonl(dest_ip);
     inet_ntop(AF_INET, &tmp, dest_str, INET_ADDRSTRLEN);
     
-    session->session_key = g_strdup_printf("%s:%u->%s:%u",
-                                          client_str, client_port,
-                                          dest_str, dest_port);
+    session->session_key = make_session_key(&session->client_ip, client_port,
+                                           &session->dest_ip,   dest_port);
     
     session->state = VPN_TCP_CLOSED;
     session->seq = g_random_int();  // Random ISN
@@ -617,12 +663,14 @@ static VPNUDPSession* vpn_udp_session_new(DeadlightVPNManager *vpn,
     session->client_ip.__in6_u.__u6_addr8[10] = 0xFF;
     session->client_ip.__in6_u.__u6_addr8[11] = 0xFF;
     guint32 client_ip_net = htonl(client_ip);
+    guint32 dest_ip_net   = htonl(dest_ip);
+    ipv4_to_mapped(client_ip_net, &session->client_ip);
+    ipv4_to_mapped(dest_ip_net,   &session->dest_ip);
     memcpy(&session->client_ip.__in6_u.__u6_addr8[12], &client_ip_net, 4);
     
     memset(&session->dest_ip, 0, sizeof(struct in6_addr));
     session->dest_ip.__in6_u.__u6_addr8[10] = 0xFF;
     session->dest_ip.__in6_u.__u6_addr8[11] = 0xFF;
-    guint32 dest_ip_net = htonl(dest_ip);
     memcpy(&session->dest_ip.__in6_u.__u6_addr8[12], &dest_ip_net, 4);
     
     session->client_port = client_port;
@@ -637,9 +685,9 @@ static VPNUDPSession* vpn_udp_session_new(DeadlightVPNManager *vpn,
     tmp.s_addr = htonl(dest_ip);
     inet_ntop(AF_INET, &tmp, dest_str, INET_ADDRSTRLEN);
     
-    session->session_key = g_strdup_printf("%s:%u->%s:%u",
-                                          client_str, client_port,
-                                          dest_str, dest_port);
+    session->session_key = make_session_key(&session->client_ip, client_port,
+                                           &session->dest_ip,   dest_port);
+    
     
     session->last_activity = g_get_monotonic_time();
     session->vpn = vpn;
@@ -750,9 +798,8 @@ static void send_tcp_packet(DeadlightVPNManager *vpn, VPNSession *session,
     }
 
     // Extract IPv4 addresses from IPv4-mapped IPv6
-    guint32 client_ip, dest_ip;
-    memcpy(&client_ip, &session->client_ip.__in6_u.__u6_addr8[12], 4);
-    memcpy(&dest_ip, &session->dest_ip.__in6_u.__u6_addr8[12], 4);
+    guint32 client_ip = mapped_to_ipv4(&session->client_ip);
+    guint32 dest_ip   = mapped_to_ipv4(&session->dest_ip);
 
     // Build IP header
     memset(ip_hdr, 0, ip_hdr_len);
@@ -965,9 +1012,8 @@ static void send_udp_packet(DeadlightVPNManager *vpn, VPNUDPSession *session,
     }
     
     // Extract IPv4 addresses from IPv4-mapped IPv6
-    guint32 client_ip, dest_ip;
-    memcpy(&client_ip, &session->client_ip.__in6_u.__u6_addr8[12], 4);
-    memcpy(&dest_ip, &session->dest_ip.__in6_u.__u6_addr8[12], 4);
+    guint32 client_ip = mapped_to_ipv4(&session->client_ip);
+    guint32 dest_ip   = mapped_to_ipv4(&session->dest_ip);
     
     // Build IP header
     memset(ip_hdr, 0, ip_hdr_len);
@@ -1140,9 +1186,8 @@ static void handle_tcp_packet(DeadlightVPNManager *vpn, struct ip_header *ip_hdr
     log_debug("VPN: TCP packet: %s:%u -> %s:%u flags=0x%02x seq=%u ack=%u payload=%zu",
              client_str, client_port, dest_str, dest_port, flags, recv_seq, recv_ack, payload_len);
 
-    gchar *key = g_strdup_printf("%s:%u->%s:%u", 
-                                 client_str, client_port, dest_str, dest_port);
-
+    gchar *key = NULL;
+    
     g_mutex_lock(&vpn->sessions_mutex);
     VPNSession *session = g_hash_table_lookup(vpn->sessions, key);
 
@@ -1156,6 +1201,10 @@ static void handle_tcp_packet(DeadlightVPNManager *vpn, struct ip_header *ip_hdr
         }
         
         session = vpn_session_new(vpn, client_ip, client_port, dest_ip, dest_port);
+        /* now we can safely build the key */
+        g_free(key);
+        key = make_session_key(&session->client_ip, client_port,
+                               &session->dest_ip,   dest_port);
         session->ack = recv_seq + 1;
         session->state = VPN_TCP_SYN_RECEIVED;
 
@@ -1333,7 +1382,11 @@ static void handle_udp_packet(DeadlightVPNManager *vpn, struct ip_header *ip_hdr
     log_debug("VPN: UDP packet: %s:%u -> %s:%u payload=%zu",
              client_str, client_port, dest_str, dest_port, payload_len);
     
-    gchar *key = g_strdup_printf("%s:%u->%s:%u", client_str, client_port, dest_str, dest_port);
+    // Create session key FIRST
+    struct in6_addr client_ip6, dest_ip6;
+    ipv4_to_mapped(htonl(client_ip), &client_ip6);
+    ipv4_to_mapped(htonl(dest_ip), &dest_ip6);
+    gchar *key = make_session_key(&client_ip6, client_port, &dest_ip6, dest_port);
     
     g_mutex_lock(&vpn->sessions_mutex);
     VPNUDPSession *session = g_hash_table_lookup(vpn->udp_sessions, key);
@@ -1546,7 +1599,9 @@ static void handle_udp6_packet(DeadlightVPNManager *vpn, struct ipv6_header *ip6
     log_debug("VPN: IPv6 UDP packet: [%s]:%u -> [%s]:%u payload=%zu",
              client_str, client_port, dest_str, dest_port, payload_len);
     
-    gchar *key = g_strdup_printf("[%s]:%u->[%s]:%u", client_str, client_port, dest_str, dest_port);
+    // Create session key FIRST
+    gchar *key = make_session_key(&ip6_hdr->src_addr, client_port,
+                                  &ip6_hdr->dest_addr, dest_port);
     
     g_mutex_lock(&vpn->sessions_mutex);
     VPNUDPSession *session = g_hash_table_lookup(vpn->udp_sessions_v6, key);
@@ -1648,7 +1703,9 @@ static void handle_tcp6_packet(DeadlightVPNManager *vpn, struct ipv6_header *ip6
     log_debug("VPN: IPv6 TCP packet: [%s]:%u -> [%s]:%u flags=0x%02x seq=%u ack=%u payload=%zu",
              client_str, client_port, dest_str, dest_port, flags, recv_seq, recv_ack, payload_len);
 
-    gchar *key = g_strdup_printf("[%s]:%u->[%s]:%u", client_str, client_port, dest_str, dest_port);
+    // Create session key FIRST
+    gchar *key = make_session_key(&ip6_hdr->src_addr, client_port,
+                                  &ip6_hdr->dest_addr, dest_port);
 
     g_mutex_lock(&vpn->sessions_mutex);
     VPNSession *session = g_hash_table_lookup(vpn->sessions_v6, key);
