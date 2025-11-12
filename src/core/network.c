@@ -559,12 +559,18 @@ void deadlight_network_release_to_pool(DeadlightConnection *conn, const gchar *r
                 conn->id, conn->target_host, conn->target_port);
     }
     
-    // For CONNECT tunnels, we can't reuse because the tunnel is bidirectional
-    // and consumed all data
     if (conn->protocol == DEADLIGHT_PROTOCOL_HTTP && conn->is_connect_tunnel) {
-        should_pool = FALSE;
-        g_debug("Connection %lu: Not pooling: %s:%d (reason=one-way protocol)",
-                conn->id, conn->target_host, conn->target_port);
+        // Check if client negotiated HTTP/2
+        const gchar *alpn = get_negotiated_protocol(conn); // You'd need to implement this
+        if (alpn && g_str_has_prefix(alpn, "h2")) {
+            should_pool = TRUE;  // HTTP/2 can multiplex
+            g_debug("Connection %lu: Pooling HTTP/2 tunnel: %s:%d",
+                    conn->id, conn->target_host, conn->target_port);
+        } else {
+            should_pool = FALSE;
+            g_debug("Connection %lu: Not pooling HTTP/1.x tunnel: %s:%d",
+                    conn->id, conn->target_host, conn->target_port);
+        }
     }
     
     if (should_pool) {

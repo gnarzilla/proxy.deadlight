@@ -31,6 +31,58 @@
 #define TCP_ACK  0x10
 #define TCP_URG  0x20
 
+
+struct icmpv6_header {
+    guint8 type;
+    guint8 code;
+    guint16 checksum;
+    guint32 body;  // Varies by type
+} __attribute__((packed));
+
+// ICMPv6 types
+#define ICMPV6_ECHO_REQUEST  128
+#define ICMPV6_ECHO_REPLY    129
+#define ICMPV6_ROUTER_SOLICIT 133
+#define ICMPV6_ROUTER_ADVERT  134
+#define ICMPV6_NEIGHBOR_SOLICIT 135
+#define ICMPV6_NEIGHBOR_ADVERT  136
+
+struct nd_router_advert {
+    guint8 hop_limit;
+    guint8 flags;  // M and O flags
+    guint16 lifetime;
+    guint32 reachable_time;
+    guint32 retrans_timer;
+} __attribute__((packed));
+
+struct nd_opt_prefix_info {
+    guint8 type;  // 3 for prefix information
+    guint8 length;  // 4 (in units of 8 bytes)
+    guint8 prefix_len;
+    guint8 flags;  // L and A flags
+    guint32 valid_lifetime;
+    guint32 preferred_lifetime;
+    guint32 reserved;
+    struct in6_addr prefix;
+} __attribute__((packed));
+
+struct nd_neighbor_solicit {
+    guint32 reserved;
+    struct in6_addr target;
+} __attribute__((packed));
+
+struct nd_neighbor_advert {
+    guint8 flags;  // R, S, O flags
+    guint8 reserved[3];
+    struct in6_addr target;
+} __attribute__((packed));
+
+struct nd_opt_link_addr {
+    guint8 type;  // 1 for source, 2 for target
+    guint8 length;  // 1 (in units of 8 bytes)
+    guint8 addr[6];  // MAC address
+} __attribute__((packed));
+
 // IP header (simplified, 20 bytes without options)
 struct ip_header {
     guint8 version_ihl;      // Version (4 bits) + IHL (4 bits)
@@ -183,6 +235,223 @@ static gchar* make_session_key(const struct in6_addr *src, guint16 sport,
     }
 }
 
+static void handle_icmpv6_packet(DeadlightVPNManager *vpn, struct ipv6_header *ip6_hdr,
+                                 struct icmpv6_header *icmp_hdr, guint8 *payload,
+                                 gsize payload_len) {
+    gchar src_str[INET6_ADDRSTRLEN];
+    gchar dest_str[INET6_ADDRSTRLEN];
+    inet_ntop(AF_INET6, &ip6_hdr->src_addr, src_str, INET6_ADDRSTRLEN);
+    inet_ntop(AF_INET6, &ip6_hdr->dest_addr, dest_str, INET6_ADDRSTRLEN);
+    
+    log_debug("VPN: ICMPv6 packet: %s -> %s (type=%d, code=%d)",
+             src_str, dest_str, icmp_hdr->type, icmp_hdr->code);
+    
+    // Handle echo requests (ping6)
+    if (icmp_hdr->type == ICMPV6_ECHO_REQUEST) {
+        // Build echo reply
+        guint8 reply_packet[1500];
+        struct ipv6_header *reply_ip6 = (struct ipv6_header *)reply_packet;
+        struct icmpv6_header *reply_icmp = (struct icmpv6_header *)(reply_packet + sizeof(struct ipv6_header));
+        
+        // IPv6 header
+        memset(reply_ip6, 0, sizeof(struct ipv6_header));
+        reply_ip6->version_tc_fl = htonl(0x60000000);
+        reply_ip6->payload_length = htons(sizeof(struct icmpv6_header) + payload_len);
+        reply_ip6->next_header = 58;  // ICMPv6
+        reply_ip6->hop_limit = 64;
+        memcpy(&reply_ip6->src_addr, &ip6_hdr->dest_addr, sizeof(struct in6_addr));
+        memcpy(&reply_ip6->dest_addr, &ip6_hdr->src_addr, sizeof(struct in6_addr));
+        
+        // ICMPv6 header
+        reply_icmp->type = ICMPV6_ECHO_REPLY;
+        reply_icmp->code = 0;
+        reply_icmp->checksum = 0;
+        reply_icmp->body = icmp_hdr->body;  // Copy ID and sequence
+        
+        // Copy payload
+        if (payload_len > 0) {
+            memcpy(reply_packet + sizeof(struct ipv6_header) + sizeof(struct icmpv6_header),
+                   payload, payload_len);
+        }
+        
+        // Calculate checksum using aligned copies (fixes warning)
+        struct in6_addr src_copy, dest_copy;
+        memcpy(&src_copy, &reply_ip6->src_addr, sizeof(struct in6_addr));
+        memcpy(&dest_copy, &reply_ip6->dest_addr, sizeof(struct in6_addr));
+        reply_icmp->checksum = udp6_checksum(&src_copy, &dest_copy,
+                                            reply_icmp, sizeof(struct icmpv6_header) + payload_len);
+        
+        // Send reply
+        gsize total_len = sizeof(struct ipv6_header) + sizeof(struct icmpv6_header) + payload_len;
+        gssize written = write(vpn->tun_fd, reply_packet, total_len);
+        if (written > 0) {
+            log_debug("VPN: Sent ICMPv6 echo reply to %s", src_str);
+        }
+    }
+    // Handle Router Solicitation - send Router Advertisement
+    else if (icmp_hdr->type == ICMPV6_ROUTER_SOLICIT) {
+        log_info("VPN: Sending Router Advertisement in response to solicitation from %s", src_str);
+        
+        guint8 ra_packet[1500];
+        memset(ra_packet, 0, sizeof(ra_packet));
+        
+        struct ipv6_header *ra_ip6 = (struct ipv6_header *)ra_packet;
+        struct icmpv6_header *ra_icmp = (struct icmpv6_header *)(ra_packet + sizeof(struct ipv6_header));
+        struct nd_router_advert *ra = (struct nd_router_advert *)(ra_packet + sizeof(struct ipv6_header) + sizeof(struct icmpv6_header));
+        
+        // IPv6 header
+        ra_ip6->version_tc_fl = htonl(0x60000000);
+        ra_ip6->next_header = 58;  // ICMPv6
+        ra_ip6->hop_limit = 255;  // Must be 255 for ND
+        
+        // Source: link-local address of gateway (fe80::1)
+        memset(&ra_ip6->src_addr, 0, sizeof(struct in6_addr));
+        ra_ip6->src_addr.s6_addr[0] = 0xfe;
+        ra_ip6->src_addr.s6_addr[1] = 0x80;
+        ra_ip6->src_addr.s6_addr[15] = 0x01;
+        
+        // Destination: all-nodes multicast (ff02::1) or source address
+        if (IN6_IS_ADDR_LINKLOCAL(&ip6_hdr->src_addr)) {
+            memcpy(&ra_ip6->dest_addr, &ip6_hdr->src_addr, sizeof(struct in6_addr));
+        } else {
+            // All nodes multicast
+            memset(&ra_ip6->dest_addr, 0, sizeof(struct in6_addr));
+            ra_ip6->dest_addr.s6_addr[0] = 0xff;
+            ra_ip6->dest_addr.s6_addr[1] = 0x02;
+            ra_ip6->dest_addr.s6_addr[15] = 0x01;
+        }
+        
+        // ICMPv6 header
+        ra_icmp->type = ICMPV6_ROUTER_ADVERT;
+        ra_icmp->code = 0;
+        ra_icmp->checksum = 0;
+        
+        // Router Advertisement
+        ra->hop_limit = 64;
+        ra->flags = 0x00;  // No managed/other config
+        ra->lifetime = htons(1800);  // 30 minutes
+        ra->reachable_time = 0;
+        ra->retrans_timer = 0;
+        
+        // Add Prefix Information option
+        struct nd_opt_prefix_info *prefix = (struct nd_opt_prefix_info *)((guint8 *)ra + sizeof(struct nd_router_advert));
+        prefix->type = 3;  // Prefix Information
+        prefix->length = 4;  // 32 bytes / 8
+        prefix->prefix_len = 64;
+        prefix->flags = 0xC0;  // L=1, A=1 (on-link and autonomous)
+        prefix->valid_lifetime = htonl(86400);  // 1 day
+        prefix->preferred_lifetime = htonl(43200);  // 12 hours
+        prefix->reserved = 0;
+        
+        // Set prefix to fd00:dead:beef::/64
+        memset(&prefix->prefix, 0, sizeof(struct in6_addr));
+        prefix->prefix.s6_addr[0] = 0xfd;
+        prefix->prefix.s6_addr[1] = 0x00;
+        prefix->prefix.s6_addr[2] = 0xde;
+        prefix->prefix.s6_addr[3] = 0xad;
+        prefix->prefix.s6_addr[4] = 0xbe;
+        prefix->prefix.s6_addr[5] = 0xef;
+        
+        gsize icmp_len = sizeof(struct icmpv6_header) + sizeof(struct nd_router_advert) + sizeof(struct nd_opt_prefix_info);
+        ra_ip6->payload_length = htons(icmp_len);
+        
+        // Calculate checksum
+        struct in6_addr src_copy, dest_copy;
+        memcpy(&src_copy, &ra_ip6->src_addr, sizeof(struct in6_addr));
+        memcpy(&dest_copy, &ra_ip6->dest_addr, sizeof(struct in6_addr));
+        ra_icmp->checksum = udp6_checksum(&src_copy, &dest_copy, ra_icmp, icmp_len);
+        
+        gsize total_len = sizeof(struct ipv6_header) + icmp_len;
+        gssize written = write(vpn->tun_fd, ra_packet, total_len);
+        if (written > 0) {
+            log_info("VPN: Sent Router Advertisement with prefix fd00:dead:beef::/64");
+        }
+    }
+    // Handle Neighbor Solicitation
+    else if (icmp_hdr->type == ICMPV6_NEIGHBOR_SOLICIT) {
+        struct nd_neighbor_solicit *ns = (struct nd_neighbor_solicit *)payload;
+        gchar target_str[INET6_ADDRSTRLEN];
+        inet_ntop(AF_INET6, &ns->target, target_str, INET6_ADDRSTRLEN);
+        
+        log_debug("VPN: Neighbor solicitation for %s from %s", target_str, src_str);
+        
+        // Check if it's asking for our address (gateway)
+        struct in6_addr gateway_addr;
+        memset(&gateway_addr, 0, sizeof(struct in6_addr));
+        gateway_addr.s6_addr[0] = 0xfe;
+        gateway_addr.s6_addr[1] = 0x80;
+        gateway_addr.s6_addr[15] = 0x01;
+        
+        if (memcmp(&ns->target, &gateway_addr, sizeof(struct in6_addr)) == 0) {
+            // Send Neighbor Advertisement
+            guint8 na_packet[1500];
+            memset(na_packet, 0, sizeof(na_packet));
+            
+            struct ipv6_header *na_ip6 = (struct ipv6_header *)na_packet;
+            struct icmpv6_header *na_icmp = (struct icmpv6_header *)(na_packet + sizeof(struct ipv6_header));
+            struct nd_neighbor_advert *na = (struct nd_neighbor_advert *)((guint8 *)na_icmp + sizeof(struct icmpv6_header));
+            
+            // IPv6 header
+            na_ip6->version_tc_fl = htonl(0x60000000);
+            na_ip6->next_header = 58;
+            na_ip6->hop_limit = 255;
+            memcpy(&na_ip6->src_addr, &gateway_addr, sizeof(struct in6_addr));
+            memcpy(&na_ip6->dest_addr, &ip6_hdr->src_addr, sizeof(struct in6_addr));
+            
+            // ICMPv6 header
+            na_icmp->type = ICMPV6_NEIGHBOR_ADVERT;
+            na_icmp->code = 0;
+            
+            // Neighbor Advertisement
+            na->flags = 0x60;  // Router=0, Solicited=1, Override=1
+            memcpy(&na->target, &gateway_addr, sizeof(struct in6_addr));
+            
+            // Add Target Link-Layer Address option
+            struct nd_opt_link_addr *opt = (struct nd_opt_link_addr *)((guint8 *)na + sizeof(struct nd_neighbor_advert));
+            opt->type = 2;  // Target Link-Layer Address
+            opt->length = 1;  // 8 bytes
+
+            // Use a dummy MAC for TUN device (doesn't actually need MAC)
+            opt->addr[0] = 0x02;
+            opt->addr[1] = 0x00;
+            opt->addr[2] = 0x00;
+            opt->addr[3] = 0x00;
+            opt->addr[4] = 0x00;
+            opt->addr[5] = 0x01;
+            
+            gsize icmp_len = sizeof(struct icmpv6_header) + sizeof(struct nd_neighbor_advert) + sizeof(struct nd_opt_link_addr);
+            na_ip6->payload_length = htons(icmp_len);
+            
+            // Calculate checksum
+            struct in6_addr src_copy, dest_copy;
+            memcpy(&src_copy, &na_ip6->src_addr, sizeof(struct in6_addr));
+            memcpy(&dest_copy, &na_ip6->dest_addr, sizeof(struct in6_addr));
+            na_icmp->checksum = udp6_checksum(&src_copy, &dest_copy, na_icmp, icmp_len);
+            
+            gsize total_len = sizeof(struct ipv6_header) + icmp_len;
+            gssize written = write(vpn->tun_fd, na_packet, total_len);
+            if (written > 0) {
+                log_debug("VPN: Sent Neighbor Advertisement for gateway");
+            }
+        }
+    }
+    // Log other ICMPv6 types for debugging
+    else {
+        const char *type_name = "Unknown";
+        switch (icmp_hdr->type) {
+            case 1: type_name = "Destination Unreachable"; break;
+            case 2: type_name = "Packet Too Big"; break;
+            case 3: type_name = "Time Exceeded"; break;
+            case 4: type_name = "Parameter Problem"; break;
+            case 130: type_name = "Multicast Listener Query"; break;
+            case 131: type_name = "Multicast Listener Report"; break;
+            case 132: type_name = "Multicast Listener Done"; break;
+            case 137: type_name = "Redirect"; break;
+        }
+        log_debug("VPN: ICMPv6 %s (type=%d) from %s", type_name, icmp_hdr->type, src_str);
+    }
+}
+
 //=============================================================================
 // TUN Device Management
 //=============================================================================
@@ -238,6 +507,7 @@ static gboolean configure_tun_device(const gchar *dev_name, const gchar *ip,
     // Bring interface up
     cmd = g_strdup_printf("ip link set %s up", dev_name);
     ret = system(cmd);
+    (void)ret;
     g_free(cmd);
     if (ret != 0) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
@@ -245,9 +515,10 @@ static gboolean configure_tun_device(const gchar *dev_name, const gchar *ip,
         return FALSE;
     }
 
-    // Set IP address
+    // Set IPv4 address
     cmd = g_strdup_printf("ip addr add %s/%s dev %s", ip, netmask, dev_name);
     ret = system(cmd);
+    (void)ret;
     g_free(cmd);
     if (ret != 0) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
@@ -255,7 +526,38 @@ static gboolean configure_tun_device(const gchar *dev_name, const gchar *ip,
         return FALSE;
     }
 
-    log_info("VPN: Configured %s with IP %s/%s", dev_name, ip, netmask);
+    // Add IPv6 address (link-local)
+    cmd = g_strdup_printf("ip -6 addr add fe80::1/64 dev %s", dev_name);
+    ret = system(cmd);
+    (void)ret;
+    g_free(cmd);
+    
+    // Add IPv6 ULA (Unique Local Address) prefix
+    cmd = g_strdup_printf("ip -6 addr add fd00:dead:beef::1/64 dev %s", dev_name);
+    ret = system(cmd);
+    (void)ret;
+    g_free(cmd);
+    
+    // Enable IPv6 forwarding on the interface
+    cmd = g_strdup_printf("sysctl -w net.ipv6.conf.%s.forwarding=1", dev_name);
+    ret = system(cmd);
+    (void)ret;
+    g_free(cmd);
+    
+    // Enable IPv6 router advertisements (optional, we handle manually)
+    cmd = g_strdup_printf("sysctl -w net.ipv6.conf.%s.accept_ra=0", dev_name);
+    ret = system(cmd);
+    (void)ret;
+    g_free(cmd);
+    
+    // Set MTU
+    cmd = g_strdup_printf("ip link set %s mtu 1420", dev_name);
+    ret = system(cmd);
+    (void)ret;
+    g_free(cmd);
+
+    log_info("VPN: Configured %s with IPv4 %s/%s and IPv6 fd00:dead:beef::1/64", 
+             dev_name, ip, netmask);
     return TRUE;
 }
 
@@ -516,6 +818,81 @@ static gboolean parse_destination_from_session_key(const gchar *session_key,
     }
     
     return (*out_port > 0);  // Validation
+}
+
+// Send periodic router advertisements (every 10 seconds)
+static gboolean send_periodic_router_advertisement(gpointer user_data) {
+    DeadlightVPNManager *vpn = user_data;
+    
+    guint8 ra_packet[1500];
+    memset(ra_packet, 0, sizeof(ra_packet));
+    
+    struct ipv6_header *ra_ip6 = (struct ipv6_header *)ra_packet;
+    struct icmpv6_header *ra_icmp = (struct icmpv6_header *)(ra_packet + sizeof(struct ipv6_header));
+    struct nd_router_advert *ra = (struct nd_router_advert *)(ra_packet + sizeof(struct ipv6_header) + sizeof(struct icmpv6_header));
+    
+    // IPv6 header
+    ra_ip6->version_tc_fl = htonl(0x60000000);
+    ra_ip6->next_header = 58;
+    ra_ip6->hop_limit = 255;
+    
+    // Source: link-local fe80::1
+    memset(&ra_ip6->src_addr, 0, sizeof(struct in6_addr));
+    ra_ip6->src_addr.s6_addr[0] = 0xfe;
+    ra_ip6->src_addr.s6_addr[1] = 0x80;
+    ra_ip6->src_addr.s6_addr[15] = 0x01;
+    
+    // Destination: all-nodes multicast ff02::1
+    memset(&ra_ip6->dest_addr, 0, sizeof(struct in6_addr));
+    ra_ip6->dest_addr.s6_addr[0] = 0xff;
+    ra_ip6->dest_addr.s6_addr[1] = 0x02;
+    ra_ip6->dest_addr.s6_addr[15] = 0x01;
+    
+    // ICMPv6 Router Advertisement
+    ra_icmp->type = ICMPV6_ROUTER_ADVERT;
+    ra_icmp->code = 0;
+    
+    // Router Advertisement fields
+    ra->hop_limit = 64;
+    ra->flags = 0x00;
+    ra->lifetime = htons(1800);
+    ra->reachable_time = 0;
+    ra->retrans_timer = 0;
+    
+    // Add prefix option
+    struct nd_opt_prefix_info *prefix = (struct nd_opt_prefix_info *)((guint8 *)ra + sizeof(struct nd_router_advert));
+    prefix->type = 3;
+    prefix->length = 4;
+    prefix->prefix_len = 64;
+    prefix->flags = 0xC0;  // L=1, A=1
+    prefix->valid_lifetime = htonl(86400);
+    prefix->preferred_lifetime = htonl(43200);
+    
+    // fd00:dead:beef::/64 prefix
+    memset(&prefix->prefix, 0, sizeof(struct in6_addr));
+    prefix->prefix.s6_addr[0] = 0xfd;
+    prefix->prefix.s6_addr[1] = 0x00;
+    prefix->prefix.s6_addr[2] = 0xde;
+    prefix->prefix.s6_addr[3] = 0xad;
+    prefix->prefix.s6_addr[4] = 0xbe;
+    prefix->prefix.s6_addr[5] = 0xef;
+    
+    gsize icmp_len = sizeof(struct icmpv6_header) + sizeof(struct nd_router_advert) + sizeof(struct nd_opt_prefix_info);
+    ra_ip6->payload_length = htons(icmp_len);
+    
+    // Calculate checksum
+    struct in6_addr src_copy, dest_copy;
+    memcpy(&src_copy, &ra_ip6->src_addr, sizeof(struct in6_addr));
+    memcpy(&dest_copy, &ra_ip6->dest_addr, sizeof(struct in6_addr));
+    ra_icmp->checksum = udp6_checksum(&src_copy, &dest_copy, ra_icmp, icmp_len);
+    
+    gsize total_len = sizeof(struct ipv6_header) + icmp_len;
+    gssize written = write(vpn->tun_fd, ra_packet, total_len);
+    if (written > 0) {
+        log_debug("VPN: Sent periodic Router Advertisement");
+    }
+    
+    return G_SOURCE_CONTINUE;
 }
 
 
@@ -1589,6 +1966,15 @@ static void handle_ipv6_packet(DeadlightVPNManager *vpn, guint8 *packet, gsize p
         
         handle_udp6_packet(vpn, ip6_hdr, udp_hdr, payload, payload_len_actual);
         
+    } else if (next_header == 58) {  // ICMPv6
+        if (packet_len < sizeof(struct ipv6_header) + sizeof(struct icmpv6_header)) {
+            return;
+        }
+        struct icmpv6_header *icmp_hdr = (struct icmpv6_header *)(packet + sizeof(struct ipv6_header));
+        guint8 *payload = packet + sizeof(struct ipv6_header) + sizeof(struct icmpv6_header);
+        gsize payload_len_actual = packet_len - sizeof(struct ipv6_header) - sizeof(struct icmpv6_header);
+        
+        handle_icmpv6_packet(vpn, ip6_hdr, icmp_hdr, payload, payload_len_actual);
     } else {
         log_debug("VPN: Ignoring IPv6 packet with next_header=%d", next_header);
     }
@@ -1982,6 +2368,7 @@ gboolean deadlight_vpn_gateway_init(DeadlightContext *context, GError **error) {
     // Setup periodic cleanup of idle sessions
     g_timeout_add_seconds(60, cleanup_idle_sessions, vpn);
     g_timeout_add_seconds(10, cleanup_idle_udp_sessions, vpn);  // Run every 10 seconds for UDP
+    g_timeout_add_seconds(10, send_periodic_router_advertisement, vpn);
 
     log_info("VPN: Gateway initialized successfully on %s", vpn->tun_device_name);
     return TRUE;
