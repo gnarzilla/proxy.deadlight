@@ -190,6 +190,10 @@ static gchar* make_session_key(const struct in6_addr *src, guint16 sport,
 static gint create_tun_device(const gchar *dev_name, GError **error) {
     struct ifreq ifr;
     gint fd;
+    gchar *mtu_cmd = g_strdup_printf("ip link set %s mtu 1420", dev_name);
+    int ret = system(mtu_cmd);
+    (void)ret;  
+    g_free(mtu_cmd);
 
     // First, try to delete any existing device with this name
     if (dev_name) {
@@ -618,10 +622,10 @@ static void vpn_session_free(VPNSession *session) {
                 
                 connection_pool_release(
                     session->vpn->context->conn_pool,
-                    session->upstream_conn,
+                    G_IO_STREAM(session->upstream_conn),  // Cast to GIOStream
                     dest_host,
                     dest_port,
-                    FALSE  // VPN doesn't use SSL (app-layer handles it)
+                    CONN_TYPE_PLAIN  // Use proper enum
                 );
                 
                 g_free(dest_host);
@@ -1186,7 +1190,10 @@ static void handle_tcp_packet(DeadlightVPNManager *vpn, struct ip_header *ip_hdr
     log_debug("VPN: TCP packet: %s:%u -> %s:%u flags=0x%02x seq=%u ack=%u payload=%zu",
              client_str, client_port, dest_str, dest_port, flags, recv_seq, recv_ack, payload_len);
 
-    gchar *key = NULL;
+    struct in6_addr client_ip6, dest_ip6;
+    ipv4_to_mapped(htonl(client_ip), &client_ip6);
+    ipv4_to_mapped(htonl(dest_ip), &dest_ip6);
+    gchar *key = make_session_key(&client_ip6, client_port, &dest_ip6, dest_port);
     
     g_mutex_lock(&vpn->sessions_mutex);
     VPNSession *session = g_hash_table_lookup(vpn->sessions, key);
@@ -1213,13 +1220,15 @@ static void handle_tcp_packet(DeadlightVPNManager *vpn, struct ip_header *ip_hdr
                 session->session_key, dest_str, dest_port);
         
         // Try to get from pool
-        session->upstream_conn = connection_pool_get(
+        GIOStream *pooled = connection_pool_get(
             vpn->context->conn_pool,
             dest_str,
             dest_port,
-            FALSE  // No SSL at VPN layer
+            CONN_TYPE_PLAIN  // Use proper enum
         );
-        
+        if (pooled) {
+            session->upstream_conn = G_SOCKET_CONNECTION(pooled);
+        }
         if (session->upstream_conn) {
             log_info("VPN: Reusing pooled connection to %s:%u", dest_str, dest_port);
         } else {
@@ -1248,10 +1257,10 @@ static void handle_tcp_packet(DeadlightVPNManager *vpn, struct ip_header *ip_hdr
             // Register new connection with pool
             connection_pool_register(
                 vpn->context->conn_pool,
-                session->upstream_conn,
+                G_IO_STREAM(session->upstream_conn),  // Cast to GIOStream
                 dest_str,
                 dest_port,
-                FALSE
+                CONN_TYPE_PLAIN  // Use proper enum
             );
         }
 
@@ -2076,15 +2085,20 @@ void deadlight_vpn_gateway_get_stats(DeadlightContext *context,
     
     // Pool statistics (NULL-safe)
     if ((pooled_connections || pool_hit_rate) && context->conn_pool) {
-        guint idle_count = 0;
-        gdouble hit_rate = 0.0;
+        guint idle = 0, active = 0;  // Remove idle_count, use idle
+        guint64 total_gets = 0, cache_hits = 0, evicted = 0, failed = 0;
+        gdouble hit_rate = 0.0;  // Only declare once
         
         connection_pool_get_stats(context->conn_pool,
-                                 &idle_count,
-                                 NULL, NULL, NULL,
-                                 &hit_rate);
+                                 &idle,
+                                 &active,
+                                 &total_gets,
+                                 &cache_hits,
+                                 &hit_rate,
+                                 &evicted,
+                                 &failed);
         
-        if (pooled_connections) *pooled_connections = idle_count;
+        if (pooled_connections) *pooled_connections = idle;
         if (pool_hit_rate) *pool_hit_rate = hit_rate;
     } else {
         if (pooled_connections) *pooled_connections = 0;

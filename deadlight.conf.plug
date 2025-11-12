@@ -13,6 +13,7 @@ buffer_size=65536
 log_level=info
 #Log file path (empty for stdout)
 log_file=
+# /home/thatch/.deadlight/LOGFILE.txt
 #Number of worker threads
 worker_threads=4
 

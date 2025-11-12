@@ -474,7 +474,7 @@ static DeadlightHandlerResult websocket_handle(DeadlightConnection *conn, GError
     }
 
     // Connect to upstream
-    if (!deadlight_network_connect_upstream(conn, host, port, error)) {
+    if (!deadlight_network_connect_upstream(conn, error)) {
         g_free(host);
         g_free(accept_key);
         return HANDLER_ERROR;

@@ -336,7 +336,7 @@ static DeadlightHandlerResult smtp_handle_proxy_mode(DeadlightConnection *conn, 
     g_info("SMTP proxy mode for conn %lu: Forwarding to %s:%d", conn->id, upstream_host, upstream_port);
     
     // Connect to upstream SMTP server
-    if (!deadlight_network_connect_upstream(conn, upstream_host, upstream_port, error)) {
+    if (!deadlight_network_connect_upstream(conn, error)) {
         g_warning("SMTP proxy mode for conn %lu: Failed to connect to %s:%d", conn->id, upstream_host, upstream_port);
         return HANDLER_ERROR;
     }

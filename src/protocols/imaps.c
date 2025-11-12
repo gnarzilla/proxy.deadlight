@@ -82,7 +82,7 @@ static DeadlightHandlerResult imaps_handle(DeadlightConnection *conn, GError **e
     g_info("IMAPS handler for conn %lu: connecting to upstream %s:%d", conn->id, upstream_host, upstream_port);
 
     // Step 1: Establish the plain TCP connection.
-    if (!deadlight_network_connect_upstream(conn, upstream_host, upstream_port, error)) {
+    if (!deadlight_network_connect_upstream(conn, error)) {
         g_warning("IMAPS handler failed to connect upstream for conn %lu", conn->id);
         return HANDLER_ERROR;
     }

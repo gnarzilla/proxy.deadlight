@@ -241,9 +241,28 @@ static gboolean load_ca_certificate(DeadlightSSLManager *ssl_mgr, GError **error
 }
 
 /**
- * Establish an SSL/TLS connection to an upstream server.
+ * Establish an SSL/TLS connection to an upstream server
+ * NOW with pool awareness!
  */
 gboolean deadlight_network_establish_upstream_ssl(DeadlightConnection *conn, GError **error) {
+    // NEW: If TLS already established (from pool), skip handshake
+    if (conn->upstream_tls && conn->ssl_established) {
+        g_info("Connection %lu: Reusing existing TLS session to %s (from pool)",
+               conn->id, conn->target_host);
+        
+        // Verify the connection is still healthy
+        GTlsCertificate *peer_cert = g_tls_connection_get_peer_certificate(conn->upstream_tls);
+        if (peer_cert) {
+            if (conn->upstream_peer_cert) {
+                g_object_unref(conn->upstream_peer_cert);
+            }
+            conn->upstream_peer_cert = g_object_ref(peer_cert);
+            g_debug("Connection %lu: Reused TLS has valid peer certificate", conn->id);
+        }
+        
+        return TRUE;
+    }
+    
     if (!conn->upstream_connection) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, 
                    "Upstream connection is not established; cannot perform TLS handshake.");
@@ -287,8 +306,21 @@ gboolean deadlight_network_establish_upstream_ssl(DeadlightConnection *conn, GEr
     
     g_info("Upstream TLS connection established for conn %lu to host %s", conn->id, conn->target_host);
     conn->ssl_established = TRUE;
+    
+    // Notify pool that this connection is now TLS
+    if (conn->context->conn_pool) {
+        connection_pool_upgrade_to_tls(
+            conn->context->conn_pool,
+            G_IO_STREAM(conn->upstream_connection),  // Old plain stream
+            G_IO_STREAM(conn->upstream_tls),         // New TLS stream
+            conn->target_host,
+            conn->target_port
+        );
+    }
+    
     return TRUE;
 }
+
 
 // Helper to extract X509 from GTlsCertificate
 static X509* extract_x509_from_gtls_certificate(GTlsCertificate *gtls_cert) {
@@ -556,16 +588,17 @@ gboolean deadlight_ssl_intercept_connection(DeadlightConnection *conn, GError **
     g_return_val_if_fail(conn->client_connection != NULL, FALSE);
     g_return_val_if_fail(conn->target_host != NULL, FALSE);
 
+    // Establish upstream TLS (may reuse from pool)
     if (!deadlight_network_establish_upstream_ssl(conn, error)) {
         return FALSE;
     }
 
+    // Generate or retrieve cached certificate
     gchar *pem_data = get_host_certificate(conn->context->ssl, conn->target_host, conn, error);
     if (!pem_data) {
         return FALSE;
     }
     
-    g_file_set_contents("/tmp/test.pem", pem_data, -1, NULL);
 
     GTlsCertificate *tls_cert = g_tls_certificate_new_from_pem(pem_data, -1, error);
     g_free(pem_data);

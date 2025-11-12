@@ -123,7 +123,7 @@ static DeadlightHandlerResult handle_plain_http(DeadlightConnection *conn, GErro
 
     g_info("Connection %lu: HTTP request to %s:%d", conn->id, host, port);
     
-    if (!deadlight_network_connect_upstream(conn, host, port, error)) {
+    if (!deadlight_network_connect_upstream(conn, error)) {
         g_free(host);
         return HANDLER_ERROR;
     }
@@ -207,7 +207,7 @@ static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError *
     conn->target_host = g_strdup(host);
     conn->target_port = port;
 
-    if (!deadlight_network_connect_upstream(conn, host, port, error)) {
+    if (!deadlight_network_connect_upstream(conn, error)) {
         g_free(host);
         return HANDLER_ERROR;
     }

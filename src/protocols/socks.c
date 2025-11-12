@@ -157,7 +157,7 @@ static DeadlightHandlerResult handle_socks4(DeadlightConnection *conn, GError **
     }
     
     // Connect to upstream target
-    if (!deadlight_network_connect_upstream(conn, target_host, target_port, error)) {
+    if (!deadlight_network_connect_upstream(conn, error)) {
         g_warning("Connection %lu: SOCKS4 failed to connect upstream to %s:%u: %s", 
                  conn->id, target_host, target_port, (*error)->message);
         
@@ -391,7 +391,7 @@ static DeadlightHandlerResult handle_socks5(DeadlightConnection *conn, GError **
 
     // --- Phase 4: Upstream Connection ---
     g_debug("SOCKS5 conn %lu: Starting phase 4 (Upstream Connect).", conn->id);
-    if (!deadlight_network_connect_upstream(conn, target_host, target_port, error)) {
+    if (!deadlight_network_connect_upstream(conn, error)) {
         g_warning("SOCKS5 conn %lu: Failed to connect upstream to %s:%u: %s", 
                  conn->id, target_host, target_port, (*error)->message);
         

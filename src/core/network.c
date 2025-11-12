@@ -89,75 +89,6 @@ gboolean deadlight_network_init(DeadlightContext *context, GError **error) {
 }
 
 /**
- * Determine if an upstream connection will use SSL
- * 
- * This function predicts whether the connection will be SSL-secured
- * BEFORE actually connecting, so can look up the correct pool entry.
- * 
- * Accounts for:
- * - Protocol type (HTTPS, IMAPS always SSL)
- * - Target port (443, 993, 995, 465, 989 → likely SSL)
- * - SSL interception settings
- * - Already-negotiated TLS state
- */
-static gboolean network_should_use_ssl(DeadlightProtocol protocol,
-                                       DeadlightConnection *conn) {
-    g_return_val_if_fail(conn != NULL, FALSE);
-    
-    // Already have TLS established
-    if (conn->upstream_tls != NULL) {
-        return TRUE;
-    }
-    
-    switch (protocol) {
-        case DEADLIGHT_PROTOCOL_HTTPS:
-        case DEADLIGHT_PROTOCOL_IMAPS:
-            return TRUE;
-        
-        case DEADLIGHT_PROTOCOL_CONNECT:
-            // CONNECT never auto-establishes SSL
-            // The handler decides later based on interception settings
-            return FALSE;
-        
-        case DEADLIGHT_PROTOCOL_HTTP:
-        {
-            // Plain HTTP never uses SSL on upstream
-            // (HTTPS comes through CONNECT, not HTTP)
-            return FALSE;
-        }
-        
-        // Text protocols: plain initially, might upgrade
-        case DEADLIGHT_PROTOCOL_SMTP:
-        case DEADLIGHT_PROTOCOL_IMAP:
-            return FALSE;
-        
-        // SOCKS: depends on target port
-        case DEADLIGHT_PROTOCOL_SOCKS:
-        case DEADLIGHT_PROTOCOL_SOCKS4:
-        case DEADLIGHT_PROTOCOL_SOCKS5:
-        {
-            if (conn->target_port > 0) {
-                return conn->target_port == 443 ||
-                       conn->target_port == 993 ||
-                       conn->target_port == 995 ||
-                       conn->target_port == 465 ||
-                       conn->target_port == 989;
-            }
-            return FALSE;
-        }
-        
-        case DEADLIGHT_PROTOCOL_WEBSOCKET:
-            return conn->target_port == 443;
-        
-        case DEADLIGHT_PROTOCOL_FTP:
-            return conn->target_port == 989;
-        
-        default:
-            return FALSE;
-    }
-}
-
-/**
  * Start network listener
  */
 gboolean deadlight_network_start_listener(DeadlightContext *context, gint port, GError **error) {
@@ -505,151 +436,168 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
         // Use the function that removes from table
         cleanup_connection_internal(conn, TRUE);
 }
-    
-// ==============================================================
-// Upstream connection with pool 
-// ==============================================================
+
 /**
- * Connect to upstream server
- * 
- * UPDATED: SSL-aware pooling with protocol-specific logic
- * 
- * This function:
- * 1. Determines if SSL will be used based on protocol
- * 2. Checks the pool for a matching connection (with correct SSL status)
- * 3. Creates a new connection if pool miss
- * 4. Registers the connection for tracking
- * 5. Establishes SSL if needed
+ * Connect to upstream server (with pool support)
  */
-gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, 
-                                          const gchar *host, 
-                                          guint16 port,
-                                          GError **error) {
+gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, GError **error) {
     g_return_val_if_fail(conn != NULL, FALSE);
-    g_return_val_if_fail(host != NULL, FALSE);
-    g_return_val_if_fail(port > 0, FALSE);
+    g_return_val_if_fail(conn->target_host != NULL, FALSE);
     
-    DeadlightContext *context = conn->context;
+    // Determine connection type we need
+    ConnectionType desired_type = conn->will_use_ssl ? CONN_TYPE_CLIENT_TLS : CONN_TYPE_PLAIN;
     
-    // === STEP 1: Store target info ===
-    if (!conn->target_host) {
-        conn->target_host = g_strdup(host);
-    }
-    conn->target_port = port;
-    
-    // === STEP 2: Already connected to same target? ===
-    if (conn->upstream_connection) {
-        if (g_strcmp0(conn->target_host, host) == 0 && 
-            conn->target_port == port) {
-            g_debug("Connection %lu: Upstream already connected to %s:%d",
-                   conn->id, host, port);
-            return TRUE;
-        }
-        
-        // Different target (shouldn't happen in normal flow)
-        g_warning("Connection %lu: Changing upstream target from %s:%d to %s:%d",
-                 conn->id, conn->target_host, conn->target_port, host, port);
-        g_object_unref(conn->upstream_connection);
-        conn->upstream_connection = NULL;
-    }
-    
-    // === STEP 3: Determine SSL requirement AT THIS MOMENT ===
-    gboolean will_use_ssl = network_should_use_ssl(conn->protocol, conn);
-    
-    g_debug("Connection %lu: Upstream lookup: %s:%d (protocol=%s, will_ssl=%d)",
-           conn->id, host, port,
-           deadlight_protocol_to_string(conn->protocol), will_use_ssl);
-    
-    // === STEP 4: Check pool ===
-    GSocketConnection *pooled = connection_pool_get(
-        context->conn_pool, host, port, will_use_ssl);
+    // Try to get from pool first
+    GIOStream *pooled = connection_pool_get(
+        conn->context->conn_pool,
+        conn->target_host,
+        conn->target_port,
+        desired_type
+    );
     
     if (pooled) {
-        conn->upstream_connection = pooled;
-        g_info("Connection %lu: Pool HIT: Reused %s:%d (SSL=%d)",
-               conn->id, host, port, will_use_ssl);
-        
-        // For SSL connections from pool, ensure TLS is established
-        if (will_use_ssl && !conn->upstream_tls) {
-            g_debug("Connection %lu: Establishing SSL on pooled connection", conn->id);
-            if (!deadlight_network_establish_upstream_ssl(conn, error)) {
-                g_warning("Connection %lu: SSL failed on pooled connection: %s",
-                         conn->id, error && *error ? (*error)->message : "unknown");
-                // Don't return to pool - this connection is broken
-                g_object_unref(conn->upstream_connection);
-                conn->upstream_connection = NULL;
-                return FALSE;
+        if (conn->will_use_ssl) {
+            // Reuse TLS connection
+            conn->upstream_tls = G_TLS_CONNECTION(g_object_ref(pooled));
+            
+            // Get the base socket connection for compatibility
+            GIOStream *base = NULL;
+            g_object_get(conn->upstream_tls, "base-io-stream", &base, NULL);
+            if (G_IS_SOCKET_CONNECTION(base)) {
+                conn->upstream_connection = G_SOCKET_CONNECTION(g_object_ref(base));
             }
+            
+            conn->ssl_established = TRUE;
+            
+            g_info("Connection %lu: Reusing TLS connection to %s:%d from pool",
+                   conn->id, conn->target_host, conn->target_port);
+        } else {
+            // Reuse plain connection
+            conn->upstream_connection = G_SOCKET_CONNECTION(g_object_ref(pooled));
+            
+            g_info("Connection %lu: Reusing plain connection to %s:%d from pool",
+                   conn->id, conn->target_host, conn->target_port);
         }
         
         return TRUE;
     }
     
-    // === STEP 5: Pool miss - create new connection ===
+    // Pool miss - create new connection
     g_debug("Connection %lu: Pool MISS - creating new connection to %s:%d",
-           conn->id, host, port);
+            conn->id, conn->target_host, conn->target_port);
     
     GSocketClient *client = g_socket_client_new();
+    g_socket_client_set_timeout(client, 30);
     
-    // Get timeout from config
-    gint timeout = deadlight_config_get_int(context, "network", 
-                                           "upstream_timeout", 30);
-    g_socket_client_set_timeout(client, timeout);
-    
-    // Check IPv6 preference
-    gboolean ipv6_enabled = deadlight_config_get_bool(context, "network", 
-                                                     "ipv6_enabled", TRUE);
-    g_socket_client_set_enable_proxy(client, FALSE);
-    if (!ipv6_enabled) {
-        g_socket_client_set_family(client, G_SOCKET_FAMILY_IPV4);
-    }
-    
-    // Attempt connection
     conn->upstream_connection = g_socket_client_connect_to_host(
-        client, host, port, NULL, error);
+        client,
+        conn->target_host,
+        conn->target_port,
+        NULL,
+        error
+    );
+    
     g_object_unref(client);
     
     if (!conn->upstream_connection) {
         g_warning("Connection %lu: Failed to connect to %s:%d: %s",
-                 conn->id, host, port,
-                 error && *error ? (*error)->message : "unknown");
+                  conn->id, conn->target_host, conn->target_port,
+                  error && *error ? (*error)->message : "unknown error");
         return FALSE;
     }
     
-    // === STEP 6: Register with pool for future reuse ===
-    connection_pool_register(context->conn_pool, 
-                            conn->upstream_connection,
-                            host, port, will_use_ssl);
-    
-    // === STEP 7: Configure socket options ===
-    GSocket *socket = g_socket_connection_get_socket(conn->upstream_connection);
-    g_socket_set_blocking(socket, FALSE);
-    
-    gint optval = 1;
-    g_socket_set_option(socket, SOL_SOCKET, SO_KEEPALIVE, optval, NULL);
-    
-    if (deadlight_config_get_bool(context, "network", "tcp_nodelay", TRUE)) {
-        g_socket_set_option(socket, IPPROTO_TCP, TCP_NODELAY, optval, NULL);
-    }
-    
-    // === STEP 8: Establish SSL if needed ===
-    if (will_use_ssl) {
-        g_debug("Connection %lu: Establishing SSL for new connection", conn->id);
-        if (!deadlight_network_establish_upstream_ssl(conn, error)) {
-            g_warning("Connection %lu: Failed to establish SSL: %s",
-                     conn->id, error && *error ? (*error)->message : "unknown");
-            // Connection broken, close it
-            g_object_unref(conn->upstream_connection);
-            conn->upstream_connection = NULL;
-            return FALSE;
-        }
-    }
+    // Register with pool (will upgrade to TLS later if needed)
+    connection_pool_register(
+        conn->context->conn_pool,
+        G_IO_STREAM(conn->upstream_connection),
+        conn->target_host,
+        conn->target_port,
+        CONN_TYPE_PLAIN
+    );
     
     g_info("Connection %lu: Connected to %s:%d (SSL=%d)",
-           conn->id, host, port, will_use_ssl);
+           conn->id, conn->target_host, conn->target_port, conn->will_use_ssl);
     
     return TRUE;
 }
+
+/**
+ * Release connection back to pool (called instead of closing)
+ */
+/**
+ * Release connection back to pool (called instead of closing)
+ */
+void deadlight_network_release_to_pool(DeadlightConnection *conn, const gchar *reason) {
+    if (!conn || !conn->context || !conn->context->conn_pool) return;
+    
+    // Determine what we're releasing
+    GIOStream *stream_to_release = NULL;
+    ConnectionType type = CONN_TYPE_PLAIN;
+    gboolean should_pool = TRUE;
+    
+    if (conn->upstream_tls) {
+        stream_to_release = G_IO_STREAM(conn->upstream_tls);
+        type = CONN_TYPE_CLIENT_TLS;
+    } else if (conn->upstream_connection) {
+        stream_to_release = G_IO_STREAM(conn->upstream_connection);
+        type = CONN_TYPE_PLAIN;
+    }
+    
+    if (!stream_to_release) {
+        return;  // Nothing to release
+    }
+    
+    // Check if we should pool this connection
+    // Don't pool if:
+    // - Connection had errors
+    // - Protocol is one-way (CONNECT tunnel)
+    // - State is not CONNECTED
+    
+    if (conn->state != DEADLIGHT_STATE_CONNECTED && conn->state != DEADLIGHT_STATE_TUNNELING) {
+        should_pool = FALSE;
+        g_debug("Connection %lu: Not pooling: %s:%d (reason=bad state)",
+                conn->id, conn->target_host, conn->target_port);
+    }
+    
+    // For CONNECT tunnels, we can't reuse because the tunnel is bidirectional
+    // and consumed all data
+    if (conn->protocol == DEADLIGHT_PROTOCOL_HTTP && conn->is_connect_tunnel) {
+        should_pool = FALSE;
+        g_debug("Connection %lu: Not pooling: %s:%d (reason=one-way protocol)",
+                conn->id, conn->target_host, conn->target_port);
+    }
+    
+    if (should_pool) {
+        // Release to pool
+        connection_pool_release(
+            conn->context->conn_pool,
+            stream_to_release,
+            conn->target_host,
+            conn->target_port,
+            type
+        );
+        
+        g_debug("Connection %lu: Released %s connection to %s:%d to pool",
+                conn->id,
+                type == CONN_TYPE_CLIENT_TLS ? "TLS" : "plain",
+                conn->target_host,
+                conn->target_port);
+        
+        // Don't unref - pool now owns it
+        conn->upstream_tls = NULL;
+        conn->upstream_connection = NULL;
+    } else {
+        // Just close it
+        g_debug("Connection %lu: Closing %s connection to %s:%d (not pooling: %s)",
+                conn->id,
+                type == CONN_TYPE_CLIENT_TLS ? "TLS" : "plain",
+                conn->target_host,
+                conn->target_port,
+                reason ? reason : "unknown");
+        
+        // Will be cleaned up in connection cleanup
+    }
+} 
 
 /**
  * Internal cleanup with proper NULL checks and safe object handling
@@ -773,10 +721,10 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
             
             connection_pool_release(
                 conn->context->conn_pool,
-                conn->upstream_connection,
+                G_IO_STREAM(conn->upstream_connection), 
                 conn->target_host,
                 conn->target_port,
-                use_ssl
+                use_ssl ? CONN_TYPE_CLIENT_TLS : CONN_TYPE_PLAIN 
             );
             
             // Pool now owns the reference - clear our pointer but don't unref
@@ -1101,9 +1049,9 @@ static void connection_pool_log_stats(ConnectionPool *pool) {
     guint64 total_gets = 0;
     guint64 cache_hits = 0;
     gdouble hit_rate = 0.0;
-
-    connection_pool_get_stats(pool, &idle, &active, &total_gets, &cache_hits, &hit_rate);
-
+    guint64 evicted = 0, failed = 0;
+    
+    connection_pool_get_stats(pool, &idle, &active, &total_gets, &cache_hits, &hit_rate, &evicted, &failed);
     g_info("Pool Statistics: "
            "Hits: %lu, Misses: %lu, Hit Rate: %.1f%%, "
            "Active: %u, Idle: %u, Total: %u, "

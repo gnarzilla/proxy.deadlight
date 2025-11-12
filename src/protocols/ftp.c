@@ -449,7 +449,7 @@ static DeadlightHandlerResult ftp_handle(DeadlightConnection *conn, GError **err
     }
     
     // Connect to upstream
-    if (!deadlight_network_connect_upstream(conn, host, port, error)) {
+    if (!deadlight_network_connect_upstream(conn, error)) {
         g_warning("Connection %lu: Failed to connect to FTP upstream %s:%d", 
                   conn->id, host, port);
         

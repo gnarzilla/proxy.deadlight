@@ -11,6 +11,15 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if !GLIB_CHECK_VERSION(2, 62, 0)
+// g_tls_connection_get_base_io_stream was added in GLib 2.62
+// For older versions, we need a workaround
+static inline GIOStream* g_tls_connection_get_base_io_stream(GTlsConnection *conn) {
+    GIOStream *base_io_stream = NULL;
+    g_object_get(conn, "base-io-stream", &base_io_stream, NULL);
+    return base_io_stream;
+}
+#endif
 
 //===[ MACROS AND DEFINES ]===
 #define DEADLIGHT_VERSION_MAJOR 1
@@ -37,6 +46,12 @@ typedef enum {
     DEADLIGHT_STATE_CONNECTED, DEADLIGHT_STATE_TUNNELING, DEADLIGHT_STATE_CLOSING,
     DEADLIGHT_STATE_CLOSED
 } DeadlightConnectionState;
+
+typedef enum {
+    CONN_TYPE_PLAIN,       // Regular GSocketConnection
+    CONN_TYPE_CLIENT_TLS,  // GTlsClientConnection (upstream)
+    CONN_TYPE_SERVER_TLS   // GTlsServerConnection (client-side interception)
+} ConnectionType;
 
 typedef enum {
     DEADLIGHT_LOG_ERROR = 0, DEADLIGHT_LOG_WARNING, DEADLIGHT_LOG_INFO, DEADLIGHT_LOG_DEBUG
@@ -135,6 +150,8 @@ struct _DeadlightConnection {
     GTlsConnection *client_tls;
     GTlsConnection *upstream_tls;
     gboolean ssl_established;
+    gboolean will_use_ssl;
+    gboolean is_connect_tunnel;
     GByteArray *client_buffer;
     GByteArray *upstream_buffer;
     guint64 bytes_client_to_upstream;
@@ -226,12 +243,17 @@ void deadlight_logging_cleanup(DeadlightContext *context);
 gboolean deadlight_network_init(DeadlightContext *context, GError **error);
 gboolean deadlight_network_start_listener(DeadlightContext *context, gint port, GError **error);
 void deadlight_network_stop(DeadlightContext *context);
-// In deadlight.h (or a private header if you prefer)
+gboolean deadlight_network_connect_upstream(
+    DeadlightConnection *conn,
+    GError **error
+);
+void deadlight_network_release_to_pool(
+    DeadlightConnection *conn,
+    const gchar *reason
+);
 DeadlightConnection *deadlight_connection_new(DeadlightContext *context, 
                                              GSocketConnection *client_connection,
                                              gchar *client_address_str);
-
-gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, const gchar *host, guint16 port, GError **error);
 gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error);
 gboolean deadlight_tls_tunnel_data(DeadlightConnection *conn, GError **error);
 void deadlight_connection_free(DeadlightConnection *conn);
@@ -281,7 +303,14 @@ gboolean deadlight_response_parse_headers(DeadlightResponse *response, const gch
 gchar *deadlight_response_get_header(DeadlightResponse *response, const gchar *name);
 void deadlight_response_set_header(DeadlightResponse *response, const gchar *name, const gchar *value); 
 
-// Connection Pool API
+// Testing API
+gboolean deadlight_test_module(const gchar *module_name);
+
+// Utility API
+const gchar *deadlight_protocol_to_string(DeadlightProtocol protocol);
+gchar *deadlight_format_bytes(guint64 bytes);
+
+// Cconnection Pool API
 ConnectionPool* connection_pool_new(
     gint         max_per_host,
     gint         idle_timeout,
@@ -290,39 +319,44 @@ ConnectionPool* connection_pool_new(
     gint         health_check_interval,
     gboolean     reuse_ssl
 );
-GSocketConnection* connection_pool_get(ConnectionPool *pool, 
-                                       const gchar *host, 
-                                       guint16 port, 
-                                       gboolean is_ssl);
-
-void connection_pool_release(ConnectionPool *pool, 
-                            GSocketConnection *connection, 
-                            const gchar *host, 
-                            guint16 port, 
-                            gboolean is_ssl);
-
-gboolean connection_pool_register(ConnectionPool *pool,
-                                  GSocketConnection *connection,
-                                  const gchar *host,
-                                  guint16 port,
-                                  gboolean is_ssl);
-
-void connection_pool_get_stats(ConnectionPool *pool,
-                              guint *idle_count,
-                              guint *active_count,
-                              guint64 *total_gets,
-                              guint64 *cache_hits,
-                              gdouble *hit_rate);
-
 void connection_pool_free(ConnectionPool *pool);
-
-// Testing API
-gboolean deadlight_test_module(const gchar *module_name);
-
-// Utility API
-const gchar *deadlight_protocol_to_string(DeadlightProtocol protocol);
-gchar *deadlight_format_bytes(guint64 bytes);
-
+GIOStream* connection_pool_get(
+    ConnectionPool *pool,
+    const gchar *host,
+    guint16 port,
+    ConnectionType type
+);
+void connection_pool_release(
+    ConnectionPool *pool,
+    GIOStream *stream,
+    const gchar *host,
+    guint16 port,
+    ConnectionType type
+);
+gboolean connection_pool_register(
+    ConnectionPool *pool,
+    GIOStream *stream,
+    const gchar *host,
+    guint16 port,
+    ConnectionType type
+);
+gboolean connection_pool_upgrade_to_tls(
+    ConnectionPool *pool,
+    GIOStream *plain_stream,
+    GIOStream *tls_stream,
+    const gchar *host,
+    guint16 port
+);
+void connection_pool_get_stats(
+    ConnectionPool *pool,
+    guint *idle_count,
+    guint *active_count,
+    guint64 *total_gets,
+    guint64 *cache_hits,
+    gdouble *hit_rate,
+    guint64 *evicted,
+    guint64 *failed
+);
 
 #ifdef __cplusplus
 }

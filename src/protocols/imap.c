@@ -78,7 +78,7 @@ static DeadlightHandlerResult imap_handle(DeadlightConnection *conn, GError **er
 
     g_info("IMAP handler for conn %lu: connecting to upstream %s:%d", conn->id, upstream_host, upstream_port);
 
-    if (!deadlight_network_connect_upstream(conn, upstream_host, upstream_port, error)) {
+    if (!deadlight_network_connect_upstream(conn, error)) {
         g_warning("IMAP handler failed to connect upstream for conn %lu", conn->id);
         return HANDLER_ERROR;
     }
