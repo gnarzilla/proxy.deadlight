@@ -221,6 +221,8 @@ For VPN mode (requires root):
 sudo ./bin/deadlight -c deadlight.conf.vpn
 ```
 
+![proxy.deadlight make to shutdown, cli and ui](assets/make_to_shut.gif)
+
 ## Usage
 
 Configure your applications or system to use `localhost:8080` as the proxy. Deadlight auto-detects protocols, so no per-protocol setup is needed.
