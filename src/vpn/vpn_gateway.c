@@ -311,8 +311,10 @@ static void handle_icmpv6_packet(DeadlightVPNManager *vpn, struct ipv6_header *i
         ra_ip6->src_addr.s6_addr[15] = 0x01;
         
         // Destination: all-nodes multicast (ff02::1) or source address
-        if (IN6_IS_ADDR_LINKLOCAL(&ip6_hdr->src_addr)) {
-            memcpy(&ra_ip6->dest_addr, &ip6_hdr->src_addr, sizeof(struct in6_addr));
+        struct in6_addr src_addr_copy;
+        memcpy(&src_addr_copy, &ip6_hdr->src_addr, sizeof(struct in6_addr));
+        if (IN6_IS_ADDR_LINKLOCAL(&src_addr_copy)) {
+            memcpy(&ra_ip6->dest_addr, &src_addr_copy, sizeof(struct in6_addr));
         } else {
             // All nodes multicast
             memset(&ra_ip6->dest_addr, 0, sizeof(struct in6_addr));
