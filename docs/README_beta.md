@@ -9,7 +9,7 @@ A high-performance, multi-protocol proxy server built for **real-world condition
 
 [Quick Start](#quick-start) · [Features](#features) · [Configuration](#configuration) · [Documentation](docs/) · [Contributing](docs/CONTRIBUTING.md)
 
-![Deadlight Proxy Web UI](assets/proxy_ui.gif)
+![Deadlight Proxy Web UI](assets/proxy.deadlight_cli_ui_boot2shut.gif)
 
 ---
 
@@ -53,7 +53,7 @@ make UI=1           # With web UI
 ```
 
 **Requirements:** GLib 2.0+, OpenSSL 1.1+, GCC/Clang  
-**Optional:** `libmicrohttpd` (for web UI), `UI=1` flag
+**Optional:** libmicrohttpd for web UI (build with `make UI=1`)
 
 ---
 
@@ -96,7 +96,7 @@ sudo update-ca-trust
 - **Windows:** Double-click → Install → Trusted Root Certification Authorities
 - **Firefox:** `about:preferences#privacy` → Certificates → Authorities → Import
 
-⚠️ **Security Note:** Only install on devices you control. Breaks certificate pinning on some sites (GitHub, Mozilla, banks). Use responsibly.
+**Security Note:** Only install on devices you control. Breaks certificate pinning on some sites (GitHub, Mozilla, banks). Use responsibly.
 
 ---
 
@@ -154,6 +154,14 @@ docker run -d \
   --cap-add=NET_ADMIN \
   -p 8080:8080 \
   gnarzilla/proxy-deadlight
+```
+### As SMTP Proxy
+Configure email client to `localhost:8080—it` auto-tunnels to upstream.
+
+### VPN Mode (Route Traffic)
+```bash
+sudo ip route add default via 10.8.0.1 dev tun0
+curl http://example.com  # Routed through proxy
 ```
 
 ### Command-Line Options
