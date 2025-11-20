@@ -1,317 +1,275 @@
 # Deadlight Proxy
 
-A high-performance, multi-protocol proxy server written in C using GLib. Features include a kernel-integrated VPN gateway, deep packet inspection, automatic protocol detection, and extensible plugins for custom functionality.
+A high-performance, multi-protocol proxy server built for **real-world conditions**: intermittent connectivity, resource constraints, and hostile networks. Written in C with GLib, featuring automatic protocol detection, TLS interception, VPN gateway mode, and a lightweight web UI.
 
-[Features](#features) · [Getting Started](#getting-started) · [Usage](#usage) · [Configuration](#configuration) · [Architecture](#architecture) · [Extending Deadlight](#extending-deadlight) · [Use Cases](#use-cases) · [Roadmap](#roadmap) · [License](#license)
+**Multi-protocol in one binary** · **17.6 MB Docker image** · **Works on ARM64** · **Edge-native design**
 
-![proxy.deadlight boot to shutdown, cli and ui](assets/proxy.deadlight_cli_ui_boot2shut.gif)
+[![Docker Pulls](https://img.shields.io/docker/pulls/gnarzilla/proxy-deadlight)](https://hub.docker.com/r/gnarzilla/proxy-deadlight)
+[![GitHub](https://img.shields.io/github/license/gnarzilla/proxy.deadlight)](LICENSE)
 
-## Overview
+[Quick Start](#quick-start) · [Features](#features) · [Configuration](#configuration) · [Documentation](docs/) · [Contributing](docs/CONTRIBUTING.md)
 
-Deadlight Proxy is a versatile, standalone proxy server designed for efficiency and extensibility. Built in C with the GLib ecosystem, it handles a wide range of network protocols through a unified architecture. Key capabilities include automatic protocol detection, TLS interception for secure traffic analysis, plugin-based customization, and a built-in VPN gateway mode. It also features a simple web UI for real-time monitoring and control.
+![Deadlight Proxy Web UI](assets/proxy.deadlight_cli_ui_boot2shut.gif)
 
-Whether you're setting up a secure home network gateway, bridging protocols for modern applications, or adding custom filters to your traffic, Deadlight provides a lightweight, scalable solution.
-
-### What Makes Deadlight Unique?
-
-- **Multi-Protocol Support in One Binary**: Seamlessly handles HTTP/HTTPS, SOCKS4/5, WebSocket, SMTP, IMAP/IMAPS, FTP, and more—without needing separate daemons.
-- **Kernel-Level VPN Integration**: Operates as a true Layer 3 VPN using Linux TUN devices, routing any TCP/IP traffic transparently with kernel-optimized performance.
-- **Intelligent TLS Interception**: Dynamically generates certificates that mimic upstream servers for transparent HTTPS inspection (with security considerations—see below).
-- **Plugin Extensibility**: Easily add features like ad blocking, rate limiting, or custom filters via modular plugins.
-- **Stateless Design**: Offloads state management (e.g., no local databases or queues), making it lightweight and easy to deploy.
-- **Secure Connectivity Options**: Integrates with tools like Tailscale for mesh networking, keeping your setup private and firewall-friendly.
-- **Performance-Focused**: Includes connection pooling, worker threads, async I/O, and graceful shutdown for high-throughput scenarios.
-
-Deadlight can run standalone or as part of larger systems, such as the Deadlight Edge Platform for Cloudflare Workers integration (see [edge.deadlight](https://github.com/gnarzilla/edge.deadlight) for details).
-
-## Features
-
-- **Automatic Protocol Detection**: Peeks at initial connection data to identify and route protocols without configuration.
-- **TLS/SSL Interception**: Supports man-in-the-middle inspection with certificate caching and system trust validation.
-- **Connection Pooling**: Reuses upstream connections for efficiency, with health checks and idle timeouts.
-- **Plugin System**: Hooks for request/response modification, connection events, and config changes (e.g., built-in ad blocker and rate limiter).
-- **VPN Gateway Mode**: Kernel-integrated tunneling for full IP routing, ideal for secure gateways.
-- **Web UI Dashboard**: Real-time stats, connection monitoring, and control (optional, enabled via build flag).
-- **Config Hot-Reloading**: Monitors config file for changes and applies them without restart.
-- **Comprehensive Logging and Stats**: Tracks connections, bytes transferred, and plugin metrics.
-- **Security Tools**: Built-in loop prevention, rate limiting, and extensible filters.
-
-## Getting Started
-
-### Prerequisites
-
-- Linux (recommended for VPN features; other OSes supported for basic proxying)
-- GLib 2.0+ and GIO
-- OpenSSL 1.1+ (for TLS support)
-- GCC or Clang for building
-
-### Installation
-
-1. Clone the repository:
-   ```
-   git clone https://github.com/gnarzilla/proxy.deadlight.git
-   cd proxy.deadlight
-   ```
-
-2. Build the project:
-   ```
-   make
-   ```
-   - For UI support: `make ENABLE_UI=1`
-   - For debug builds: `make DEBUG=1`
-
-3. Install the generated `/.deadlight/ca/ca.crt` in your system's trust store or browser for seamless HTTPS proxying.
-
-### Installing the Deadlight CA (required for TLS interception)
-
-Deadlight can inspect HTTPS traffic by acting as a man-in-the-middle.  
-For this to work **without browser warnings**, the Deadlight root CA must be
-trusted by the client OS or browser.
-
-> **WARNING** Only install the CA on devices *you control*.  
-> Interception breaks certificate pinning on some sites (GitHub, Mozilla, etc.)
-> and must be used responsibly.
-
-#### 1. The CA is generated upon initial launch on the proxy host
-
-```bash
-# The proxy creates, if they do not exist:
-/etc/deadlight/ca.crt      # public certificate (install on clients)
-/etc/deadlight/ca.key      # private key (keep secret, never share)
-```
-
-#### 2. Install on Linux (system-wide)
-
-```bash
-# Debian/Ubuntu
-sudo cp /etc/deadlight/ca/ca.crt /usr/local/share/ca-certificates/deadlight.crt
-sudo update-ca-certificates
-
-# Fedora/RHEL
-sudo cp /etc/deadlight/ca.crt /etc/pki/ca-trust/source/anchors/deadlight.crt
-sudo update-ca-trust
-```
-Restart any service that caches certs (systemctl restart docker etc.).
-
-#### 3. Install on macOS
-
-```bash
-sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain /etc/deadlight/ca.crt
-```
-
-#### 4. Install on Windows
-
-Copy `ca.crt` to the client.
-Double-click → Install Certificate → Local Machine → Place all certificates in the following store → Trusted Root Certification Authorities.
-
-#### 5. Install in Firefox
-
-`about:preferences#privacy` → View Certificates → Authorities → Import → select `ca.crt` → check Trust this CA to identify websites.
-
-#### 6. Verify
-
-```bash
-curl -v --proxy http://localhost:8080 https://httpbin.org/get
-```
-
-![Deadlight Proxy with local web interface](assets/proxy_ui.gif)
+---
 
 ## Quick Start
 
-### Docker Quick Start
+### Docker (Recommended)
 
-#### Run the proxy
 ```bash
+# Pull and run
 docker run -d \
   --name deadlight-proxy \
   -p 8080:8080 \
   -p 8081:8081 \
-  deadlight/proxy:latest
+  gnarzilla/proxy-deadlight:latest
+
+# Access proxy at localhost:8080
+# Web UI at http://localhost:8081
 ```
-Access
-Proxy: Configure your browser/system to use http://localhost:8080
-Web UI: Visit http://localhost:8081
-#### With VPN mode (requires privileged)
-docker run -d \
-  --name deadlight-proxy-vpn \
-  --privileged \
-  --cap-add=NET_ADMIN \
-  -p 8080:8080 \
-  -p 8081:8081 \
-  deadlight/proxy:latest
 
-#### Extract CA certificate
-```bash
-docker run --rm deadlight/proxy:latest cat /etc/deadlight/ca.crt > deadlight-ca.crt
-```
-Then install deadlight-ca.crt in your system/browser
-
-
-#### **Create Docker Compose File** (For Easy Deployment)
-
-Save this as `docker-compose.yml`:
-
+**Docker Compose:**
 ```yaml
 version: '3.8'
-
 services:
   proxy:
-    image: deadlight/proxy:latest
-    container_name: deadlight-proxy
+    image: gnarzilla/proxy-deadlight:latest
     ports:
-      - "8080:8080"   # Proxy port
-      - "8081:8081"   # Web UI
+      - "8080:8080"
+      - "8081:8081"
     restart: unless-stopped
-    # Uncomment for VPN mode:
-    # privileged: true
-    # cap_add:
-    #   - NET_ADMIN
-    
-    # Optional: Mount custom config
-    # volumes:
-    #   - ./deadlight.conf:/etc/deadlight/deadlight.conf:ro
 ```
 
-#### Usage:
+**Platforms:** `linux/amd64`, `linux/arm64` (Raspberry Pi, ARM servers, Apple Silicon)
+
+### Build from Source
+
 ```bash
-docker-compose up -d      # Start
-docker-compose logs -f    # View logs
-docker-compose down       # Stop
+git clone https://github.com/gnarzilla/proxy.deadlight.git
+cd proxy.deadlight
+make UI=1           # With web UI
+./bin/deadlight -v  # Start with verbose logging
 ```
 
-Test with curl:
+**Requirements:** GLib 2.0+, OpenSSL 1.1+, GCC/Clang  
+**Optional:** libmicrohttpd for web UI (build with `make UI=1`)
+
+---
+
+## Features
+
+| Feature | Description |
+|---------|-------------|
+| **Multi-Protocol** | HTTP/S, SOCKS4/5, WebSocket, SMTP, IMAP/S, FTP—auto-detected |
+| **TLS Interception** | Man-in-the-middle HTTPS inspection with upstream cert mimicry |
+| **Connection Pooling** | Reuses upstream connections with health checks |
+| **VPN Gateway** | Kernel-integrated TUN device for Layer 3 routing |
+| **Plugins** | Ad blocking, rate limiting, custom filters |
+| **Web UI** | Real-time monitoring at `:8081` |
+| **Resource-Efficient** | 17.6 MB Docker image, minimal RAM usage |
+
+---
+
+## TLS Interception Setup
+
+For HTTPS inspection without browser warnings, install the Deadlight CA certificate.
+
+### Docker (Extract CA)
 ```bash
-# from other terminal
-curl -x http://localhost:8080 http://example.com
+docker run --rm gnarzilla/proxy-deadlight:latest cat /etc/deadlight/ca.crt > deadlight-ca.crt
 ```
 
-For VPN mode (requires root):
+### Install CA (Linux)
+```bash
+# Debian/Ubuntu
+sudo cp deadlight-ca.crt /usr/local/share/ca-certificates/
+sudo update-ca-certificates
+
+# Fedora/RHEL
+sudo cp deadlight-ca.crt /etc/pki/ca-trust/source/anchors/
+sudo update-ca-trust
 ```
-sudo ./bin/deadlight -c deadlight.conf.vpn
+
+### Install CA (Other Platforms)
+- **macOS:** `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain deadlight-ca.crt`
+- **Windows:** Double-click → Install → Trusted Root Certification Authorities
+- **Firefox:** `about:preferences#privacy` → Certificates → Authorities → Import
+
+**Security Note:** Only install on devices you control. Breaks certificate pinning on some sites (GitHub, Mozilla, banks). Use responsibly.
+
+---
+
+## Configuration
+
+### Default Config Locations
+- **Docker:** `/etc/deadlight/deadlight.conf` (auto-generated)
+- **Native:** `/etc/deadlight/deadlight.conf`
+
+### Key Sections
+```ini
+[core]
+port = 8080
+max_connections = 500
+worker_threads = 4
+
+[ssl]
+enabled = true
+ca_cert_file = /etc/deadlight/ca.crt
+ca_key_file = /etc/deadlight/ca.key
+
+[plugins]
+enabled = true
+autoload = adblocker,ratelimiter
+
+[vpn]
+enabled = false  # Requires root + --privileged
+tun_device = tun0
 ```
 
-![proxy.deadlight make to shutdown, cli and ui](assets/make_to_shut.gif)
+**Hot-reload:** Config changes apply automatically (no restart needed).
 
-## Usage
+Example configs: [`deadlight.conf.example`](deadlight.conf.example), [`deadlight.conf.docker`](deadlight.conf.docker)
 
-Configure your applications or system to use `localhost:8080` as the proxy. Deadlight auto-detects protocols, so no per-protocol setup is needed.
+---
 
-### Command-Line Options
+## Usage Examples
 
-- `-c, --config FILE`: Specify configuration file (default: `/etc/deadlight/deadlight.conf`).
-- `-p, --port PORT`: Listening port (overrides config).
-- `-d, --daemon`: Run in background as a daemon.
-- `-v, --verbose`: Enable debug logging.
-- `--pid-file FILE`: PID file for daemon mode.
-- `-t, --test MODULE`: Run tests for a specific module (e.g., "network", "all").
-- `-h, --help`: Display usage information.
-
-### Examples
-
-#### HTTP Proxy with TLS Interception
-Trust the CA first, then:
-```
+### As HTTP/HTTPS Proxy
+```bash
+# Configure browser/system to use http://localhost:8080
 curl -x http://localhost:8080 https://example.com
 ```
 
-#### SOCKS5 Proxy
-```
+### As SOCKS Proxy
+```bash
 curl --socks5 localhost:8080 http://example.com
 ```
 
-#### SMTP Tunneling
-Use an email client configured to `localhost:8080` as the SMTP server—it will tunnel to the upstream.
+### With VPN Mode (Docker)
+```bash
+docker run -d \
+  --name proxy-vpn \
+  --privileged \
+  --cap-add=NET_ADMIN \
+  -p 8080:8080 \
+  gnarzilla/proxy-deadlight
+```
+### As SMTP Proxy
+Configure email client to `localhost:8080—it` auto-tunnels to upstream.
 
-#### FTP Proxy
-```
-lftp -p 8080 ftp://ftp.example.com
-```
-
-#### API Status Check
-```
-curl http://localhost:8080/api/status
-```
-
-#### VPN Gateway
-Run with `--vpn`, then route traffic:
-```
+### VPN Mode (Route Traffic)
+```bash
 sudo ip route add default via 10.8.0.1 dev tun0
 curl http://example.com  # Routed through proxy
 ```
 
-For full request tracing and more, see the [docs](docs/) folder.
-
-## Configuration
-
-Copy the example config:
+### Command-Line Options
 ```
-cp deadlight.conf.example /etc/deadlight/deadlight.conf
+-c, --config FILE   Config file (default: /etc/deadlight/deadlight.conf)
+-p, --port PORT     Override listening port
+-v, --verbose       Enable debug logging
+-d, --daemon        Run as background daemon
+-h, --help          Show usage
 ```
 
-Key sections:
-- `[core]`: Port, max connections, worker threads.
-- `[ssl]`: Enable interception, CA paths.
-- `[network]`: Pool size, timeouts.
-- `[plugins]`: Enable/disable (e.g., ratelimiter.enabled=true).
-- `[vpn]`: TUN device, IP range.
-
-Deadlight monitors the file for changes and reloads automatically.
+---
 
 ## Architecture
 
-Deadlight's design emphasizes modularity and performance:
+```
+┌─────────────────┐
+│  GSocketService │ ← Connection acceptance
+└────────┬────────┘
+         │
+    ┌────▼─────┐
+    │  Workers │ ← Thread pool
+    └────┬─────┘
+         │
+    ┌────▼──────────┐
+    │  Detection    │ ← Protocol auto-detection
+    └────┬──────────┘
+         │
+    ┌────▼─────────────────────────┐
+    │  Protocol Handlers           │ ← HTTP, SOCKS, SMTP, etc.
+    │  ├─ TLS Interception         │
+    │  ├─ Connection Pool          │
+    │  └─ Plugin Hooks             │
+    └──────────────────────────────┘
+```
 
-1. **Connection Acceptance**: Main loop with GSocketService.
-2. **Worker Pool**: Threads handle detection and initial processing.
-3. **Protocol Detection**: Rule-based peeking assigns handlers.
-4. **Handlers**: Protocol-specific logic (e.g., tunneling, interception).
-5. **Plugins**: Intervene at hooks (e.g., on_request_headers for rate limiting).
-6. **VPN Mode**: TUN interface for Layer 3 routing, integrated with pooling.
+**Design Philosophy:**
+- **Stateless core** (no local DB/queues)
+- **Edge-native** (optimized for intermittent connectivity)
+- **Plugin-extensible** (modify behavior without core changes)
+- **Performance-focused** (connection pooling, async I/O, worker threads)
 
-Stateless core offloads to external services; plugins extend without core mods.
-
-**Security Considerations**: TLS interception requires trusting the CA and can break pinned sites. Use responsibly and legally—intended for personal/controlled networks.
-
-## Extending Deadlight
-
-Add protocols or plugins easily:
-
-### New Protocol
-1. Add handler in `src/protocols/`.
-2. Implement detect/handle/cleanup.
-3. Update enum, table, and Makefile.
-4. Rebuild.
-
-### New Plugin
-1. Add in `src/plugins/`.
-2. Define DeadlightPlugin with hooks.
-3. Export via G_MODULE_EXPORT.
-4. Register in plugins.c.
-
-See docs for examples.
+---
 
 ## Use Cases
 
-- **Home Network Gateway**: Secure all traffic via VPN without exposing ports.
-- **Development Proxy**: Inspect/modify API calls with plugins.
-- **Email Bridge**: Tunnel SMTP/IMAP to modern APIs.
-- **Privacy Tool**: SOCKS with ad blocking for anonymous browsing.
-- **Enterprise Filter**: Rate limit and inspect corporate traffic.
+| Scenario | How Deadlight Helps |
+|----------|---------------------|
+| **Home Gateway** | Secure all devices via VPN without exposing ports |
+| **Development** | Inspect/modify API calls with TLS interception + plugins |
+| **Email Bridge** | Tunnel legacy SMTP/IMAP to modern APIs |
+| **Privacy Tool** | SOCKS proxy with built-in ad blocking |
+| **Edge Networks** | Works on mesh/satellite/2G with intermittent connectivity |
+
+---
+
+## Extending Deadlight
+
+### Add a Protocol Handler
+1. Create `src/protocols/myprotocol.c`
+2. Implement `detect`, `handle`, `cleanup` functions
+3. Register in `src/core/protocols.c`
+4. Rebuild: `make`
+
+### Add a Plugin
+1. Create `src/plugins/myplugin.c`
+2. Define hooks (`on_request_headers`, `on_response`, etc.)
+3. Export with `G_MODULE_EXPORT`
+4. Enable in config: `[plugins] autoload = myplugin`
+
+See [docs/EXTENDING.md](docs/EXTENDING.md) for details.
+
+---
 
 ## Roadmap
 
-- Dynamic plugin loading (no rebuild).
-- IPv6 full support.
-- Advanced plugins (e.g., ML-based anomaly detection).
-- Windows/macOS portability.
-- Containerization (Docker).
+- [ ] Dynamic plugin loading (no rebuild required)
+- [ ] Full IPv6 support
+- [ ] Windows/macOS native builds
+- [ ] Advanced plugins (ML-based anomaly detection)
+- [ ] ActivityPub federation support
+- [ ] HF radio transport layer
 
-Contributions welcome—see [CONTRIBUTING.md](docs/CONTRIBUTING.md).
+---
+
+## Part of the Deadlight Ecosystem
+
+This proxy is designed for **resilient, edge-native infrastructure** where connectivity is intermittent and resources are constrained. Part of the broader [Deadlight project](https://github.com/gnarzilla/edge.deadlight).
+
+**Related Projects:**
+- [blog.deadlight](https://github.com/gnarzilla/blog.deadlight) - Cloudflare Workers blog (<10 KB pages)
+- [meshtastic.deadlight](https://github.com/gnarzilla/meshtastic.deadlight) - Internet-over-LoRa gateway
+- [edge.deadlight](https://github.com/gnarzilla/edge.deadlight) - Unified edge platform
+
+---
 
 ## License
 
-MIT License—see [LICENSE](docs/LICENSE).
+MIT License - see [LICENSE](docs/LICENSE)
 
 ## Support
 
-If you find Deadlight useful, consider supporting development: [ko-fi/gnarzilla](https://ko-fi.com/gnarzilla). Issues/PRs on GitHub appreciated!
+- **Issues:** [GitHub Issues](https://github.com/gnarzilla/proxy.deadlight/issues)
+- **Donate:** [ko-fi.com/gnarzilla](https://ko-fi.com/gnarzilla)
+- **Email:** gnarzilla@deadlight.boo
+
+**Contributions welcome!** See [CONTRIBUTING.md](docs/CONTRIBUTING.md)
+
+---
+
+**Built for the 80% of the planet without datacenter-grade connectivity.**
