@@ -1,0 +1,74 @@
+# Build artifacts
+bin/
+obj/
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+
+# Compiled binary
+deadlight
+proxy
+
+# Generated files
+src/ui/assets.c
+
+# Docker
+.dockerignore
+
+# Logs
+*.log
+/var/log/deadlight/
+
+# Configuration (keep examples, ignore local configs)
+deadlight.conf
+!deadlight.conf.example
+!deadlight.conf.docker
+!deadlight.conf.nplug
+!deadlight.conf.vpn
+!deadlight.conf.plug
+!deadlight.conf.LOGFILE
+
+# SSL/TLS certificates and keys (NEVER commit these!)
+*.key
+*.crt
+*.pem
+*.p12
+*.pfx
+ca/
+/etc/deadlight/ca/
+
+# Cache directories
+/tmp/deadlight_*
+/var/cache/deadlight/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS
+Thumbs.db
+.directory
+
+# Local development
+*.local
+.env
+.env.local
+
+# Test artifacts
+test_results/
+coverage/
+
+# Dependency managers (if you add any)
+node_modules/
+vendor/
+
+# Documentation builds
+docs/_build/
+docs/.buildinfo
+
