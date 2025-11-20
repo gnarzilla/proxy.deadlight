@@ -5,7 +5,7 @@ A high-performance, multi-protocol proxy server built for **real-world condition
 **Multi-protocol in one binary** · **17.6 MB Docker image** · **Works on ARM64** · **Edge-native design**
 
 [![Docker Pulls](https://img.shields.io/docker/pulls/gnarzilla/proxy-deadlight)](https://hub.docker.com/r/gnarzilla/proxy-deadlight)
-[![GitHub](https://img.shields.io/github/license/gnarzilla/proxy.deadlight)](LICENSE)
+[![GitHub](https://img.shields.io/github/license/gnarzilla/proxy.deadlight/docs)](LICENSE)
 
 [Quick Start](#quick-start) · [Features](#features) · [Configuration](#configuration) · [Documentation](docs/) · [Contributing](docs/CONTRIBUTING.md)
 
