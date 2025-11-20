@@ -1,0 +1,35 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Documentation
+README.md
+docs/
+*.md
+
+# Build artifacts (shouldn't be there, but just in case)
+bin/
+obj/
+*.o
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tests
+tests/
+test_results/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
