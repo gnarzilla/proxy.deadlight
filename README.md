@@ -244,10 +244,11 @@ See [docs/EXTENDING.md](docs/EXTENDING.md) for details.
 - [ ] Advanced plugins (ML-based anomaly detection)
 - [ ] ActivityPub federation support
 - [ ] HF radio transport layer
-  Enables global IP-over-HF connectivity (5–30 kbit/s) for resilient, infrastructure-free networking using open modems like VARA and ARDOP—perfect for intermittent edge scenarios like remote ops or disaster response.
-  Start with RX-only testing via RTL-SDR + upconverter and GNU Radio demodulators, piping decoded streams (e.g., KISS/UDP) directly into Deadlight for protocol handling.
-  Adding TX (e.g., HackRF or Hermes-Lite) is a simple flowgraph swap, unlocking bidirectional transport without core changes.
-  Targets 2026 delivery for Tier 2 (robust digital modes); full wideband OFDM is future stretch.
+
+  -Enables global IP-over-HF connectivity (5–30 kbit/s) for resilient, infrastructure-free networking using open modems like VARA and ARDOP—perfect for intermittent edge scenarios like remote ops or disaster response.
+  - Start with RX-only testing via RTL-SDR + upconverter and GNU Radio demodulators, piping decoded streams (e.g., KISS/UDP) directly into Deadlight for protocol handling.
+  - Adding TX (e.g., HackRF or Hermes-Lite) is a simple flowgraph swap, unlocking bidirectional transport without core changes.
+  - Targets 2026 delivery for Tier 2 (robust digital modes); full wideband OFDM is future stretch.
 
 ---
 
