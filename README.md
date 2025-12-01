@@ -7,7 +7,7 @@ A high-performance, multi-protocol proxy server built for **real-world condition
 [![Docker Pulls](https://img.shields.io/docker/pulls/gnarzilla/proxy-deadlight)](https://hub.docker.com/r/gnarzilla/proxy-deadlight)
 [![GitHub](https://img.shields.io/github/license/gnarzilla/proxy.deadlight)](LICENSE)
 
-[Quick Start](#quick-start) · [Features](#features) · [Configuration](#configuration) · [Documentation](docs/) · [Usage Examples](#usage-examples) · [Architecture](#architecture) · [Contributing](docs/CONTRIBUTING.md)
+[Quick Start](#quick-start) · [Features](#features) · [Configuration](#configuration) · [Documentation](docs/) · [Usage Examples](#usage-examples) · [Architecture](#architecture) · [Roadmap](#roadmap) · [Contributing](docs/CONTRIBUTING.md)
 
 ![Deadlight Proxy Web UI](assets/proxy.deadlight_cli_ui_boot2shut.gif)
 
@@ -244,6 +244,10 @@ See [docs/EXTENDING.md](docs/EXTENDING.md) for details.
 - [ ] Advanced plugins (ML-based anomaly detection)
 - [ ] ActivityPub federation support
 - [ ] HF radio transport layer
+  - Enables global IP-over-HF connectivity (5–30 kbit/s) for resilient, infrastructure-free networking using open modems like VARA and ARDOP—perfect for intermittent edge scenarios like remote ops or disaster response.
+  - Start with RX-only testing via RTL-SDR + upconverter and GNU Radio demodulators, piping decoded streams (e.g., KISS/UDP) directly into Deadlight for protocol handling.
+  - Adding TX (e.g., HackRF or Hermes-Lite) is a simple flowgraph swap, unlocking bidirectional transport without core changes.
+  - Targets 2026 delivery for Tier 2 (robust digital modes); full wideband OFDM is future stretch.
 
 ---
 
