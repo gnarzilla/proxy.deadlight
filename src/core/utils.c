@@ -2,6 +2,28 @@
 #include "utils.h"
 #include <gio/gio.h>
 #include <string.h>
+#include <glib.h>
+
+gboolean validate_hmac(const gchar *auth_header, const gchar *payload, const gchar *secret)
+{
+    if (!auth_header || !g_str_has_prefix(auth_header, "HMAC "))
+        return FALSE;
+
+    const gchar *received_hmac = auth_header + 5;  // Skip "HMAC "
+
+    GChecksum *checksum = g_checksum_new(G_CHECKSUM_SHA256);
+    if (!checksum) return FALSE;
+
+    g_checksum_update(checksum, (const guchar*)payload, strlen(payload));
+    if (secret)
+        g_checksum_update(checksum, (const guchar*)secret, strlen(secret));
+
+    const gchar *computed = g_checksum_get_string(checksum);
+    gboolean valid = g_str_equal(computed, received_hmac);
+
+    g_checksum_free(checksum);
+    return valid;
+}
 
 gchar *get_external_ip(void) {
     GError *error = NULL;

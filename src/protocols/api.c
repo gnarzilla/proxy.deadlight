@@ -3,6 +3,7 @@
 #include <json-glib/json-glib.h>
 #include <time.h>
 #include "core/utils.h"
+#include "smtp.h"
 
 static gsize api_detect(const guint8 *data, gsize len);
 static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **error);
@@ -11,11 +12,17 @@ static DeadlightHandlerResult api_handle_system_endpoint(DeadlightConnection *co
 static DeadlightHandlerResult api_handle_federation_endpoint(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
 static DeadlightHandlerResult api_handle_email_endpoint(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
 static DeadlightHandlerResult api_handle_blog_endpoint(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
+static DeadlightHandlerResult api_handle_outbound_email(DeadlightConnection *conn,
+                                                        DeadlightRequest *request,
+                                                        GError **error);
 static DeadlightHandlerResult api_send_404(DeadlightConnection *conn, GError **error);
 static DeadlightHandlerResult api_send_json_response(DeadlightConnection *conn, gint status_code, const gchar *status_text, const gchar *json_body, GError **error);
 static DeadlightHandlerResult api_federation_send(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
 static DeadlightHandlerResult api_federation_receive(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
 static DeadlightHandlerResult api_handle_metrics_endpoint(DeadlightConnection *conn, GError **error);
+static gboolean email_send_via_mailchannels(const gchar *from, const gchar *to,
+                                            const gchar *subject, const gchar *body,
+                                            GError **error);
 
 static const DeadlightProtocolHandler api_protocol_handler = {
     .name = "API",
@@ -102,6 +109,8 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
         result = api_handle_system_endpoint(conn, request, error);
     } else if (g_str_has_prefix(request->uri, "/api/email/")) {
         result = api_handle_email_endpoint(conn, request, error);
+    } else if (g_str_has_prefix(request->uri, "/api/outbound/email")) {
+        result = api_handle_outbound_email(conn, request, error);
     } else if (g_str_has_prefix(request->uri, "/api/blog/")) {
         result = api_handle_blog_endpoint(conn, request, error);
     } else if (g_str_has_prefix(request->uri, "/api/federation/")) {
@@ -228,26 +237,144 @@ static DeadlightHandlerResult api_send_json_response(DeadlightConnection *conn, 
     return success ? HANDLER_SUCCESS_CLEANUP_NOW : HANDLER_ERROR;
 }
 
-static DeadlightHandlerResult api_handle_email_endpoint(DeadlightConnection *conn, DeadlightRequest *request, GError **error) {
-    g_info("API email endpoint for conn %lu: %s %s", conn->id, request->method, request->uri);
-    
+static DeadlightHandlerResult api_handle_email_endpoint(DeadlightConnection *conn, 
+                                                       DeadlightRequest *request, 
+                                                       GError **error) {
     if (g_str_equal(request->method, "POST") && g_str_has_suffix(request->uri, "/send")) {
-        // Handle email sending
-        const gchar *json_response = "{\"status\":\"success\",\"message\":\"Email queued for sending\"}";
-        return api_send_json_response(conn, 200, "OK", json_response, error);
+        // Parse JSON body (existing code)
+        const gchar *body_start = strstr((gchar*)conn->client_buffer->data, "\r\n\r\n");
+        if (!body_start) {
+            return api_send_json_response(conn, 400, "Bad Request", 
+                                         "{\"error\":\"No request body\"}", error);
+        }
+        body_start += 4;
         
-    } else if (g_str_equal(request->method, "POST") && g_str_has_suffix(request->uri, "/receive")) {
-        // Handle incoming email (from SMTP bridge)
-        const gchar *json_response = "{\"status\":\"success\",\"message\":\"Email received and processed\"}";
-        return api_send_json_response(conn, 200, "OK", json_response, error);
+        JsonParser *parser = json_parser_new();
+        if (!json_parser_load_from_data(parser, body_start, -1, error)) {
+            g_object_unref(parser);
+            return api_send_json_response(conn, 400, "Bad Request", 
+                                         "{\"error\":\"Invalid JSON\"}", error);
+        }
         
-    } else if (g_str_equal(request->method, "GET") && g_str_has_suffix(request->uri, "/status")) {
-        // Email system status
-        const gchar *json_response = "{\"status\":\"running\",\"queue_size\":0,\"last_processed\":null}";
-        return api_send_json_response(conn, 200, "OK", json_response, error);
+        JsonNode *root = json_parser_get_root(parser);
+        JsonObject *obj = json_node_get_object(root);
+        
+        const gchar *to = json_object_get_string_member(obj, "to");
+        const gchar *from = json_object_has_member(obj, "from") ? 
+                           json_object_get_string_member(obj, "from") : 
+                           "noreply@deadlight.boo";
+        const gchar *subject = json_object_has_member(obj, "subject") ? 
+                              json_object_get_string_member(obj, "subject") : 
+                              "Message from Deadlight";
+        const gchar *body = json_object_get_string_member(obj, "body");
+        
+        // Send via MailChannels API (port 443 HTTPS - never blocked!)
+        GError *send_error = NULL;
+        if (email_send_via_mailchannels(from, to, subject, body, &send_error)) {
+            g_object_unref(parser);
+            return api_send_json_response(conn, 200, "OK", 
+                "{\"status\":\"success\",\"message\":\"Email sent via MailChannels\"}", 
+                error);
+        } else {
+            gchar *err_json = g_strdup_printf(
+                "{\"status\":\"error\",\"message\":\"Email send failed: %s\"}", 
+                send_error ? send_error->message : "unknown error");
+            
+            if (send_error) g_error_free(send_error);
+            g_object_unref(parser);
+            
+            DeadlightHandlerResult result = api_send_json_response(conn, 500, 
+                "Internal Server Error", err_json, error);
+            g_free(err_json);
+            return result;
+        }
     }
     
     return api_send_404(conn, error);
+}
+
+static DeadlightHandlerResult api_handle_outbound_email(DeadlightConnection *conn,
+                                                        DeadlightRequest *request,
+                                                        GError **error)
+{
+    if (!g_str_equal(request->method, "POST")) {
+        return api_send_json_response(conn, 405, "Method Not Allowed",
+                                      "{\"error\":\"POST required\"}", error);
+    }
+
+    g_info("API: Outbound email request from %s", conn->client_address);
+
+    // Extract body (use request->body if populated, else fallback)
+    gchar *body_str = NULL;
+    if (request->body && request->body->len > 0) {
+        body_str = g_strndup((gchar*)request->body->data, request->body->len);
+    } else {
+        // Fallback: find \r\n\r\n manually
+        const gchar *buf = (const gchar*)conn->client_buffer->data;
+        gsize len = conn->client_buffer->len;
+        const gchar *body_start = g_strstr_len(buf, len, "\r\n\r\n");
+        if (!body_start) {
+            return api_send_json_response(conn, 400, "Bad Request",
+                                          "{\"error\":\"No body found\"}", error);
+        }
+        gsize offset = (body_start - buf) + 4;
+        body_str = g_strndup(buf + offset, len - offset);
+    }
+
+    // Parse JSON
+    JsonParser *parser = json_parser_new();
+    if (!json_parser_load_from_data(parser, body_str, -1, error)) {
+        g_free(body_str);
+        g_object_unref(parser);
+        return api_send_json_response(conn, 400, "Bad Request",
+                                      "{\"error\":\"Invalid JSON\"}", error);
+    }
+
+    JsonNode *root = json_parser_get_root(parser);
+    if (!JSON_NODE_HOLDS_OBJECT(root)) {
+        g_free(body_str);
+        g_object_unref(parser);
+        return api_send_json_response(conn, 400, "Bad Request",
+                                      "{\"error\":\"JSON root must be object\"}", error);
+    }
+
+    JsonObject *obj = json_node_get_object(root);
+    const gchar *from = json_object_get_string_member(obj, "from");
+    const gchar *to = json_object_get_string_member(obj, "to");
+    const gchar *subject = json_object_get_string_member(obj, "subject");
+    const gchar *body = json_object_get_string_member(obj, "body");
+
+    if (!from || !to || !subject || !body || strlen(to) == 0) {
+        g_free(body_str);
+        g_object_unref(parser);
+        return api_send_json_response(conn, 400, "Bad Request",
+                                      "{\"error\":\"Missing required fields: from, to, subject, body\"}", error);
+    }
+
+    // Auth: HMAC using auth_secret from context
+    const gchar *auth_header = deadlight_request_get_header(request, "Authorization");
+    if (!auth_header || !validate_hmac(auth_header, body_str, conn->context->auth_secret)) {
+        g_warning("API: Invalid or missing HMAC for outbound email");
+        g_free(body_str);
+        g_object_unref(parser);
+        return api_send_json_response(conn, 401, "Unauthorized",
+                                      "{\"error\":\"Invalid credentials\"}", error);
+    }
+
+    // Send email
+    gboolean sent = email_send_via_mailchannels(from, to, subject, body, error);
+    g_free(body_str);
+    g_object_unref(parser);
+
+    if (!sent) {
+        g_warning("API: Failed to send email via MailChannels: %s", error && *error ? (*error)->message : "unknown");
+        return api_send_json_response(conn, 502, "Bad Gateway",
+                                      "{\"error\":\"Email provider failed\"}", error);
+    }
+
+    g_info("API: Email sent successfully to %s", to);
+    return api_send_json_response(conn, 202, "Accepted",
+                                  "{\"status\":\"sent\",\"provider\":\"mailchannels\"}", error);
 }
 
 static DeadlightHandlerResult api_handle_blog_endpoint(DeadlightConnection *conn, DeadlightRequest *request, GError **error) {
@@ -290,7 +417,134 @@ static DeadlightHandlerResult api_federation_receive(DeadlightConnection *conn, 
     return api_send_json_response(conn, 200, "OK", json_response, error);
 }
 
-// Add this new function implementation:
+static gboolean email_send_via_mailchannels(const gchar *from, const gchar *to,
+                                            const gchar *subject, const gchar *body,
+                                            GError **error) {
+    
+    g_info("Email: Sending via MailChannels API to %s", to);
+    
+    // Build JSON payload
+    JsonBuilder *builder = json_builder_new();
+    json_builder_begin_object(builder);
+    
+    // Personalizations
+    json_builder_set_member_name(builder, "personalizations");
+    json_builder_begin_array(builder);
+    json_builder_begin_object(builder);
+    json_builder_set_member_name(builder, "to");
+    json_builder_begin_array(builder);
+    json_builder_begin_object(builder);
+    json_builder_set_member_name(builder, "email");
+    json_builder_add_string_value(builder, to);
+    json_builder_end_object(builder);
+    json_builder_end_array(builder);
+    json_builder_end_object(builder);
+    json_builder_end_array(builder);
+    
+    // From
+    json_builder_set_member_name(builder, "from");
+    json_builder_begin_object(builder);
+    json_builder_set_member_name(builder, "email");
+    json_builder_add_string_value(builder, from);
+    json_builder_set_member_name(builder, "name");
+    json_builder_add_string_value(builder, "Deadlight Blog");
+    json_builder_end_object(builder);
+    
+    // Subject
+    json_builder_set_member_name(builder, "subject");
+    json_builder_add_string_value(builder, subject);
+    
+    // Content
+    json_builder_set_member_name(builder, "content");
+    json_builder_begin_array(builder);
+    json_builder_begin_object(builder);
+    json_builder_set_member_name(builder, "type");
+    json_builder_add_string_value(builder, "text/plain");
+    json_builder_set_member_name(builder, "value");
+    json_builder_add_string_value(builder, body);
+    json_builder_end_object(builder);
+    json_builder_end_array(builder);
+    
+    json_builder_end_object(builder);
+    
+    // Generate JSON
+    JsonGenerator *gen = json_generator_new();
+    JsonNode *root_node = json_builder_get_root(builder);
+    json_generator_set_root(gen, root_node);
+    gchar *json_payload = json_generator_to_data(gen, NULL);
+    
+    // Connect to MailChannels API (HTTPS - port 443)
+    GSocketClient *client = g_socket_client_new();
+    g_socket_client_set_tls(client, TRUE);
+    g_socket_client_set_timeout(client, 30);
+    
+    GSocketConnection *connection = g_socket_client_connect_to_host(
+        client, "api.mailchannels.net", 443, NULL, error);
+    
+    if (!connection) {
+        g_free(json_payload);
+        json_node_unref(root_node);
+        g_object_unref(gen);
+        g_object_unref(builder);
+        g_object_unref(client);
+        return FALSE;
+    }
+    
+    GOutputStream *out = g_io_stream_get_output_stream(G_IO_STREAM(connection));
+    GInputStream *in = g_io_stream_get_input_stream(G_IO_STREAM(connection));
+    
+    // Build HTTP request
+    GString *request = g_string_new("");
+    g_string_printf(request,
+        "POST /tx/v1/send HTTP/1.1\r\n"
+        "Host: api.mailchannels.net\r\n"
+        "Content-Type: application/json\r\n"
+        "Content-Length: %zu\r\n"
+        "User-Agent: Deadlight-Proxy/1.0\r\n"
+        "X-Auth-Domain: deadlight.boo\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "%s",
+        strlen(json_payload), json_payload);
+    
+    // Send request
+    gboolean success = g_output_stream_write_all(out, request->str, request->len, 
+                                                 NULL, NULL, error);
+    
+    if (success) {
+        // Read response
+        gchar response[4096];
+        gssize bytes_read = g_input_stream_read(in, response, sizeof(response) - 1, 
+                                                NULL, error);
+        
+        if (bytes_read > 0) {
+            response[bytes_read] = '\0';
+            
+            // Check for HTTP 202 Accepted
+            if (strstr(response, "HTTP/1.1 202") || strstr(response, "HTTP/1.1 200")) {
+                g_info("Email: Successfully sent via MailChannels");
+                success = TRUE;
+            } else {
+                g_warning("Email: MailChannels API error: %s", response);
+                g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                           "MailChannels API rejected request");
+                success = FALSE;
+            }
+        }
+    }
+    
+    // Cleanup
+    g_string_free(request, TRUE);
+    g_free(json_payload);
+    json_node_unref(root_node);
+    g_object_unref(gen);
+    g_object_unref(builder);
+    g_object_unref(connection);
+    g_object_unref(client);
+    
+    return success;
+}
+
 static DeadlightHandlerResult api_handle_metrics_endpoint(DeadlightConnection *conn, GError **error) {
     DeadlightContext *ctx = conn->context;
     g_info("API metrics endpoint for conn %lu", conn->id);

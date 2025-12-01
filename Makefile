@@ -14,7 +14,7 @@ PREFIX = /usr/local
 CC = gcc
 CFLAGS = -std=c99 -Wall -Wextra -pedantic -O2 -g
 LDFLAGS = -Wl,--as-needed
-LIBS = -lssl -lcrypto -lpthread
+LIBS = -lssl -lcrypto -lpthread -lresolv
 
 # Package config for GLib/GIO
 GLIB_CFLAGS = $(shell pkg-config --cflags glib-2.0 gio-2.0 gio-unix-2.0 json-glib-1.0 gmodule-2.0)
