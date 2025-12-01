@@ -171,7 +171,8 @@ blocked_domains=
 max_request_size=10MB
 #Maximum header size
 max_header_size=8KB
-
+# HMAC secret for API authentication (64+ chars recommended)
+auth_secret=gross-window-proxy.deadlight-birthday-shit
 
 [smtp]
 # Bridge mode disabled (we're sending, not receiving)
