@@ -4,24 +4,41 @@
 #include <string.h>
 #include <glib.h>
 
-gboolean validate_hmac(const gchar *auth_header, const gchar *payload, const gchar *secret)
+gboolean validate_hmac(const gchar *auth_header,
+                       const gchar *payload,
+                       gsize payload_len,
+                       const gchar *secret)
 {
     if (!auth_header || !g_str_has_prefix(auth_header, "HMAC "))
         return FALSE;
 
-    const gchar *received_hmac = auth_header + 5;  // Skip "HMAC "
+    const gchar *received = auth_header + 5;
+
+    if (!secret || !secret[0]) {
+        g_warning("auth_secret not configured");
+        return FALSE;
+    }
 
     GChecksum *checksum = g_checksum_new(G_CHECKSUM_SHA256);
-    if (!checksum) return FALSE;
+    g_checksum_update(checksum, (const guchar*)payload, payload_len);
+    g_checksum_update(checksum, (const guchar*)secret, strlen(secret));
 
-    g_checksum_update(checksum, (const guchar*)payload, strlen(payload));
-    if (secret)
-        g_checksum_update(checksum, (const guchar*)secret, strlen(secret));
+    guchar digest[32];
+    g_checksum_get_digest(checksum, digest, &(gsize){32});
 
-    const gchar *computed = g_checksum_get_string(checksum);
-    gboolean valid = g_str_equal(computed, received_hmac);
+    gchar computed[65];
+    for (int i = 0; i < 32; i++)
+        g_snprintf(computed + i*2, 3, "%02x", digest[i]);
+    computed[64] = '\0';
 
     g_checksum_free(checksum);
+
+    gboolean valid = (g_strcmp0(computed, received) == 0);
+
+    if (!valid) {
+        g_info("HMAC mismatch — expected: %s  received: %s", computed, received);
+    }
+
     return valid;
 }
 

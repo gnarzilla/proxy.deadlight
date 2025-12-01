@@ -351,16 +351,35 @@ static DeadlightHandlerResult api_handle_outbound_email(DeadlightConnection *con
                                       "{\"error\":\"Missing required fields: from, to, subject, body\"}", error);
     }
 
-    // Auth: HMAC using auth_secret from context
+    // ─── CRITICAL FIX: Populate request->body so HMAC uses real payload ──────
+    if (!request->body || request->body->len == 0) {
+        // We already have the exact body in body_str (null-terminated)
+        // But we need the raw bytes without trailing null for HMAC
+        gsize real_len = strlen(body_str);  // this is correct — body_str has no trailing junk
+        request->body = g_byte_array_sized_new(real_len);
+        g_byte_array_append(request->body, (const guint8*)body_str, real_len);
+        g_info("Fixed empty request->body — restored %zu bytes for HMAC", real_len);
+    }
+
+    // ─── FINAL WORKING HMAC AUTH (NO MORE EXCUSES) ─────────────────────────────
     const gchar *auth_header = deadlight_request_get_header(request, "Authorization");
-    if (!auth_header || !validate_hmac(auth_header, body_str, conn->context->auth_secret)) {
-        g_warning("API: Invalid or missing HMAC for outbound email");
+
+    // Use the body we already extracted and KNOW is correct
+    const gchar *payload_for_hmac = body_str;
+    gsize payload_len = strlen(body_str);  // body_str is already null-terminated and exact
+
+    if (!auth_header || !validate_hmac(auth_header, payload_for_hmac, payload_len, conn->context->auth_secret)) {
+        g_info("HMAC validation failed");
+        g_info("  → Received: %s", auth_header ? auth_header : "missing");
+        g_info("  → Payload (%zu bytes): %s", payload_len, payload_for_hmac);
         g_free(body_str);
         g_object_unref(parser);
         return api_send_json_response(conn, 401, "Unauthorized",
                                       "{\"error\":\"Invalid credentials\"}", error);
     }
 
+    g_info("HMAC validated successfully — sending email");
+    // ─────────────────────────────────────────────────────────────────────────────
     // Send email
     gboolean sent = email_send_via_mailchannels(from, to, subject, body, error);
     g_free(body_str);

@@ -598,6 +598,17 @@ static void config_update_context_values(DeadlightContext *context) {
     }
     g_free(log_level);
 
+    // ─── SECURITY: API AUTH SECRET ─────────────────────────────────────
+    g_free(context->auth_secret);
+    context->auth_secret = deadlight_config_get_string(context, "security", "auth_secret", NULL);
+    if (context->auth_secret && strlen(context->auth_secret) > 0) {
+        g_info("API auth_secret loaded (%zu chars)", strlen(context->auth_secret));
+    } else {
+        g_warning("No auth_secret configured in [security] — /api/outbound/email will reject all requests");
+        g_free(context->auth_secret);
+        context->auth_secret = NULL;
+    }
+
     // Note: Pool settings aren't stored on context yet, but they should be read
     // each time from config in network.c. For now, just log on change:
     gint pool_size = deadlight_config_get_int(context, "network", 
