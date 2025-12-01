@@ -86,6 +86,18 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
         GOutputStream *client_os = g_io_stream_get_output_stream(G_IO_STREAM(conn->client_connection));
         g_output_stream_write_all(client_os, response, strlen(response), NULL, NULL, error);
         result = HANDLER_SUCCESS_CLEANUP_NOW;
+    } else if (g_str_equal(request->uri, "/api/health")) {
+        g_info("API health check for conn %lu", conn->id);
+        
+        // Simple health check response
+        gchar *json_response = g_strdup_printf(
+            "{\"status\":\"ok\",\"version\":\"%s\",\"timestamp\":%ld,\"proxy\":\"deadlight\"}",
+            DEADLIGHT_VERSION_STRING,
+            time(NULL)
+        );
+        
+        result = api_send_json_response(conn, 200, "OK", json_response, error);
+        g_free(json_response);
     } else if (g_str_has_prefix(request->uri, "/api/system/")) {
         result = api_handle_system_endpoint(conn, request, error);
     } else if (g_str_has_prefix(request->uri, "/api/email/")) {

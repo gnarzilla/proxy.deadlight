@@ -7,7 +7,7 @@ worker_threads = 4
 
 [ssl]
 enabled = true
-ca_key_file = /home/thatch/.deadlight/ca/ca.key
+ca_key_file = /home/thatch/.deadlight/ca.key
 cert_cache_dir = /tmp/deadlight_certs
 
 [protocols]
