@@ -3,40 +3,31 @@
 #include <gio/gio.h>
 #include <string.h>
 #include <glib.h>
+#include <openssl/hmac.h>
 
-gboolean validate_hmac(const gchar *auth_header,
-                       const gchar *payload,
-                       gsize payload_len,
-                       const gchar *secret)
+gboolean validate_hmac(const gchar *auth_header, const gchar *payload, const gchar *secret)
 {
     if (!auth_header || !g_str_has_prefix(auth_header, "HMAC "))
         return FALSE;
 
     const gchar *received = auth_header + 5;
 
-    if (!secret || !secret[0]) {
-        g_warning("auth_secret not configured");
-        return FALSE;
-    }
-
-    GChecksum *checksum = g_checksum_new(G_CHECKSUM_SHA256);
-    g_checksum_update(checksum, (const guchar*)payload, payload_len);
-    g_checksum_update(checksum, (const guchar*)secret, strlen(secret));
-
-    guchar digest[32];
-    g_checksum_get_digest(checksum, digest, &(gsize){32});
+    unsigned char md[SHA256_DIGEST_LENGTH];
+    unsigned int md_len;
+    HMAC(EVP_sha256(), secret, strlen(secret), (unsigned char*)payload, strlen(payload), md, &md_len);
 
     gchar computed[65];
-    for (int i = 0; i < 32; i++)
-        g_snprintf(computed + i*2, 3, "%02x", digest[i]);
+    for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
+        g_snprintf(computed + i*2, 3, "%02x", md[i]);
+    }
     computed[64] = '\0';
-
-    g_checksum_free(checksum);
 
     gboolean valid = (g_strcmp0(computed, received) == 0);
 
     if (!valid) {
         g_info("HMAC mismatch — expected: %s  received: %s", computed, received);
+    } else {
+        g_info("HMAC validated successfully");
     }
 
     return valid;

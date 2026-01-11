@@ -524,9 +524,6 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, GError **
 /**
  * Release connection back to pool (called instead of closing)
  */
-/**
- * Release connection back to pool (called instead of closing)
- */
 void deadlight_network_release_to_pool(DeadlightConnection *conn, const gchar *reason) {
     if (!conn || !conn->context || !conn->context->conn_pool) return;
     
@@ -874,7 +871,7 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
                 conn->context->active_connections--;
                 g_mutex_unlock(&conn->context->network->connection_mutex);
                 
-                // CRITICAL FIX: Return here since destructor freed the connection
+                // Return here since destructor freed the connection
                 return;
             }
             
