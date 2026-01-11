@@ -21,13 +21,12 @@ static DeadlightHandlerResult api_federation_send(DeadlightConnection *conn, Dea
 static DeadlightHandlerResult api_federation_receive(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
 static DeadlightHandlerResult api_handle_metrics_endpoint(DeadlightConnection *conn, GError **error);
 static gboolean
-email_send_via_mailchannels(DeadlightContext *context,
+email_send_via_mailchannels(DeadlightConnection *conn,
                             const gchar *from,
                             const gchar *to,
                             const gchar *subject,
                             const gchar *body,
                             GError **error);
-
 static const DeadlightProtocolHandler api_protocol_handler = {
     .name = "API",
     .protocol_id = DEADLIGHT_PROTOCOL_API, // Reuse HTTP protocol ID
@@ -295,7 +294,7 @@ api_handle_email_endpoint(DeadlightConnection *conn,
         const gchar *body    = json_object_get_string_member(obj, "body");
 
         GError *send_error = NULL;
-        if (email_send_via_mailchannels(conn->context, from, to, subject, body, &send_error)) {
+        if (email_send_via_mailchannels(conn, from, to, subject, body, &send_error)) {
             g_object_unref(parser);
             return api_send_json_response(conn, 200, "OK",
                 "{\"status\":\"sent\",\"provider\":\"mailchannels\"}", error);
@@ -375,17 +374,15 @@ static DeadlightHandlerResult api_handle_outbound_email(DeadlightConnection *con
                                       "{\"error\":\"Missing required fields: from, to, subject, body\"}", error);
     }
 
-    // ─── CRITICAL FIX: Populate request->body so HMAC uses real payload ──────
+    // ─── Populate request->body so HMAC uses real payload ──────
     if (!request->body || request->body->len == 0) {
-        // We already have the exact body in body_str (null-terminated)
-        // But we need the raw bytes without trailing null for HMAC
-        gsize real_len = strlen(body_str);  // this is correct — body_str has no trailing junk
+        gsize real_len = strlen(body_str);  // body_str has no trailing junk
         request->body = g_byte_array_sized_new(real_len);
         g_byte_array_append(request->body, (const guint8*)body_str, real_len);
         g_info("Fixed empty request->body — restored %zu bytes for HMAC", real_len);
     }
 
-    // ─── FINAL WORKING HMAC AUTH (NO MORE EXCUSES) ─────────────────────────────
+    // ─── FINAL WORKING HMAC AUTH ─────────────────────────────
     const gchar *auth_header = deadlight_request_get_header(request, "Authorization");
 
     // Use the body we already extracted and KNOW is correct
@@ -405,7 +402,7 @@ static DeadlightHandlerResult api_handle_outbound_email(DeadlightConnection *con
     g_info("HMAC validated successfully — sending email");
     // ─────────────────────────────────────────────────────────────────────────────
     // Send email
-    gboolean sent = email_send_via_mailchannels(conn->context, from, to, subject, body, error);
+    gboolean sent = email_send_via_mailchannels(conn, from, to, subject, body, error);
     g_free(body_str);
     g_object_unref(parser);
 
@@ -461,7 +458,7 @@ static DeadlightHandlerResult api_federation_receive(DeadlightConnection *conn, 
 }
 
 static gboolean
-email_send_via_mailchannels(DeadlightContext *context,
+email_send_via_mailchannels(DeadlightConnection *conn, // Changed from Context to Connection
                             const gchar *from,
                             const gchar *to,
                             const gchar *subject,
@@ -470,14 +467,41 @@ email_send_via_mailchannels(DeadlightContext *context,
 {
     g_info("Email: Sending via MailChannels API to %s", to);
 
-    const gchar *api_key = deadlight_config_get_string(context, "smtp", "mailchannels_api_key", NULL);
+    const gchar *api_key = deadlight_config_get_string(conn->context, "smtp", "mailchannels_api_key", NULL);
     if (!api_key || api_key[0] == '\0') {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
                     "Missing mailchannels_api_key in [smtp] section");
         return FALSE;
     }
 
-    /* Build JSON payload */
+    // 1. Configure the connection for the Upstream (MailChannels)
+    // We reuse the existing DeadlightConnection object, effectively temporarily 
+    // turning this "Client->Proxy" connection into a "Proxy->MailChannels" agent.
+    if (conn->target_host) g_free(conn->target_host);
+    conn->target_host = g_strdup("api.mailchannels.net");
+    conn->target_port = 443;
+    conn->will_use_ssl = TRUE; // Force SSL for the pool/connector
+    
+    // 2. Connect (Uses the Pool automatically!)
+    if (!deadlight_network_connect_upstream(conn, error)) {
+        g_prefix_error(error, "Failed to pool/connect to MailChannels: ");
+        return FALSE;
+    }
+
+    // 3. Determine which stream to use (TLS or Plain)
+    // deadlight_network_connect_upstream handles the SSL handshake if needed
+    GIOStream *upstream_io = NULL;
+    if (conn->upstream_tls) {
+        upstream_io = G_IO_STREAM(conn->upstream_tls);
+    } else {
+        // This shouldn't happen for MailChannels port 443, but safety first
+        upstream_io = G_IO_STREAM(conn->upstream_connection);
+    }
+
+    GOutputStream *out = g_io_stream_get_output_stream(upstream_io);
+    GInputStream  *in  = g_io_stream_get_input_stream(upstream_io);
+
+    // 4. Build Payload (JSON)
     JsonBuilder *builder = json_builder_new();
     json_builder_begin_object(builder);
 
@@ -522,57 +546,50 @@ email_send_via_mailchannels(DeadlightContext *context,
     json_generator_set_root(gen, root);
     gchar *json_payload = json_generator_to_data(gen, NULL);
 
-    /* Connect to MailChannels */
-    GSocketClient *client = g_socket_client_new();
-    g_socket_client_set_tls(client, TRUE);
-
-    GSocketConnection *conn = g_socket_client_connect_to_host(client,
-        "api.mailchannels.net", 443, NULL, error);
-    if (!conn) {
-        g_prefix_error(error, "Failed to connect to api.mailchannels.net: ");
-        goto cleanup;
-    }
-
-    GOutputStream *out = g_io_stream_get_output_stream(G_IO_STREAM(conn));
-    GInputStream  *in  = g_io_stream_get_input_stream (G_IO_STREAM(conn));
-
-    /* NUCLEAR FIX — EXACT WORKING REQUEST */
-    GString *request = NULL;
-    request = g_string_new(NULL);
+    // 5. Build HTTP Request
+    GString *request = g_string_new(NULL);
     g_string_append(request, "POST /tx/v1/send HTTP/1.1\r\n");
     g_string_append(request, "Host: api.mailchannels.net\r\n");
     g_string_append(request, "Content-Type: application/json\r\n");
     g_string_append_printf(request, "Content-Length: %zu\r\n", strlen(json_payload));
     g_string_append_printf(request, "Authorization: Bearer %s\r\n", api_key);
-    g_string_append(request, "Connection: close\r\n");
+    // Keep-Alive allows the connection to be returned to the pool!
+    g_string_append(request, "Connection: keep-alive\r\n"); 
     g_string_append(request, "\r\n");
     g_string_append(request, json_payload);
 
-    g_info("Email: Sending with Authorization: Bearer %s", api_key);
-    g_info("Email: Sending request to path: /tx/v1/send");
+    g_info("Email: Sending %zu bytes to MailChannels (Pool-aware)", request->len);
 
-    g_info("Email: Sending with Bearer token (ends with ...%s)", 
-           strlen(api_key) >= 6 ? api_key + strlen(api_key) - 6 : "???");
-
+    gboolean success = FALSE;
     gsize written;
-    if (!g_output_stream_write_all(out, request->str, request->len, &written, NULL, error))
+    
+    // 6. Send
+    if (!g_output_stream_write_all(out, request->str, request->len, &written, NULL, error)) {
         goto cleanup;
+    }
 
-    /* Read response */
+    // 7. Read Response
+    // Since we are doing manual HTTP over a stream, we just read enough to check status
     gchar buf[8192] = {0};
-    gssize read_len = g_input_stream_read(in, buf, sizeof(buf)-1, NULL, NULL);
+    gssize read_len = g_input_stream_read(in, buf, sizeof(buf)-1, NULL, error);
+    
     if (read_len > 0) {
         buf[read_len] = '\0';
         if (strstr(buf, "202 Accepted") || strstr(buf, "200 OK")) {
             g_info("Email: Successfully sent via MailChannels");
-            g_clear_error(error);
-            goto cleanup;
+            success = TRUE;
+            
+            // 8. Release to Pool!
+            // Since we used Keep-Alive and the request succeeded, we can reuse this SSL socket.
+            // We set state to CONNECTED so the release logic accepts it.
+            conn->state = DEADLIGHT_STATE_CONNECTED; 
+            deadlight_network_release_to_pool(conn, "API Email Sent");
+        } else {
+            g_warning("Email: MailChannels rejected request:\n%s", buf);
+            g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "MailChannels rejected the email");
+            // If failed, we don't pool it (default cleanup will close it)
         }
     }
-
-    g_warning("Email: MailChannels rejected request:\n%s", read_len > 0 ? buf : "(no response)");
-    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                "MailChannels rejected the email");
 
 cleanup:
     if (request) g_string_free(request, TRUE);
@@ -580,10 +597,11 @@ cleanup:
     json_node_unref(root);
     g_object_unref(gen);
     g_object_unref(builder);
-    if (conn) g_object_unref(conn);
-    g_object_unref(client);
+    
+    // NOTE: We do NOT unref the conn->upstream_connection here because 
+    // deadlight_network_release_to_pool took ownership or cleanup will handle it.
 
-    return (error == NULL || *error == NULL);
+    return success;
 }
 
 static DeadlightHandlerResult api_handle_metrics_endpoint(DeadlightConnection *conn, GError **error) {
