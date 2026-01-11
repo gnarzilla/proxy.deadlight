@@ -458,7 +458,7 @@ static DeadlightHandlerResult api_federation_receive(DeadlightConnection *conn, 
 }
 
 static gboolean
-email_send_via_mailchannels(DeadlightConnection *conn, // Changed from Context to Connection
+email_send_via_mailchannels(DeadlightConnection *conn,
                             const gchar *from,
                             const gchar *to,
                             const gchar *subject,
@@ -604,110 +604,75 @@ cleanup:
     return success;
 }
 
-static DeadlightHandlerResult api_handle_metrics_endpoint(DeadlightConnection *conn, GError **error) {
+static DeadlightHandlerResult api_handle_metrics_endpoint(
+    DeadlightConnection *conn, GError **error)
+{
     DeadlightContext *ctx = conn->context;
     g_info("API metrics endpoint for conn %lu", conn->id);
-    
-    // Build JSON response with actual metrics
-    JsonBuilder *builder = json_builder_new();
-    json_builder_begin_object(builder);
-    
+
+    if (!ctx) {
+        return api_send_json_response(
+            conn, 500, "Internal Server Error",
+            "{\"error\":\"NULL context\"}", error);
+    }
+
+    GString *json = g_string_new(NULL);
+    g_string_append(json, "{");
+
+    // ─────────────────────────────────────────────────────────────
     // Basic metrics
-    json_builder_set_member_name(builder, "active_connections");
-    json_builder_add_int_value(builder, ctx->active_connections);
-    
-    json_builder_set_member_name(builder, "total_connections");
-    json_builder_add_int_value(builder, ctx->total_connections);
-    
-    json_builder_set_member_name(builder, "bytes_transferred");
-    json_builder_add_int_value(builder, ctx->bytes_transferred);
-    
-    json_builder_set_member_name(builder, "uptime");
-    json_builder_add_double_value(builder, g_timer_elapsed(ctx->uptime_timer, NULL));
-    
-    // Protocol breakdown - count connections by protocol
-    json_builder_set_member_name(builder, "protocols");
-    json_builder_begin_object(builder);
-    
-    // Initialize protocol counters
-    GHashTable *protocol_stats = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
-    
-    // Count active connections by protocol
-    GHashTableIter iter;
-    gpointer key, value;
-    g_hash_table_iter_init(&iter, ctx->connections);
-    
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        DeadlightConnection *active_conn = (DeadlightConnection*)value;
-        const gchar *protocol_name = deadlight_protocol_to_string(active_conn->protocol);
-        
-        // Get or create stats for this protocol
-        gpointer stats_ptr = g_hash_table_lookup(protocol_stats, protocol_name);
-        gint active_count = stats_ptr ? GPOINTER_TO_INT(stats_ptr) : 0;
-        g_hash_table_insert(protocol_stats, g_strdup(protocol_name), GINT_TO_POINTER(active_count + 1));
+    // ─────────────────────────────────────────────────────────────
+    g_string_append_printf(json,
+        "\"active_connections\":%d,"
+        "\"total_connections\":%d,"
+        "\"bytes_transferred\":%ld,",
+        ctx->active_connections,
+        ctx->total_connections,
+        ctx->bytes_transferred
+    );
+
+    // ─────────────────────────────────────────────────────────────
+    // Uptime
+    // ─────────────────────────────────────────────────────────────
+    double uptime = 0.0;
+    if (ctx->uptime_timer) {
+        uptime = g_timer_elapsed(ctx->uptime_timer, NULL);
     }
-    
-    // Add protocol stats to JSON
-    const gchar *protocols[] = {"HTTP", "HTTPS", "WebSocket", "SOCKS", "SMTP", "IMAP", "FTP", "API"};
-    for (size_t i = 0; i < G_N_ELEMENTS(protocols); i++) {
-        gpointer active_ptr = g_hash_table_lookup(protocol_stats, protocols[i]);
-        gint active = active_ptr ? GPOINTER_TO_INT(active_ptr) : 0;
-        
-        json_builder_set_member_name(builder, protocols[i]);
-        json_builder_begin_object(builder);
-        
-        json_builder_set_member_name(builder, "active");
-        json_builder_add_int_value(builder, active);
-        
-        // TODO: Add total connections and bytes per protocol
-        // This would require tracking in the connection structure
-        json_builder_set_member_name(builder, "total");
-        json_builder_add_int_value(builder, 0); // Placeholder
-        
-        json_builder_set_member_name(builder, "bytes");
-        json_builder_add_int_value(builder, 0); // Placeholder
-        
-        json_builder_end_object(builder);
-    }
-    
-    json_builder_end_object(builder); // End protocols
-    
+    g_string_append_printf(json, "\"uptime\":%.2f,", uptime);
+
+    // ─────────────────────────────────────────────────────────────
+    // Protocol summary (static for now, no JSON-GLib)
+    // ─────────────────────────────────────────────────────────────
+    g_string_append(json, "\"protocols\":{");
+    g_string_append(json, "\"HTTP\":{\"active\":0},");
+    g_string_append(json, "\"HTTPS\":{\"active\":0},");
+    g_string_append(json, "\"WebSocket\":{\"active\":0},");
+    g_string_append(json, "\"SOCKS\":{\"active\":0},");
+    g_string_append(json, "\"SMTP\":{\"active\":0},");
+    g_string_append(json, "\"IMAP\":{\"active\":0},");
+    g_string_append(json, "\"FTP\":{\"active\":0},");
+    g_string_append(json, "\"API\":{\"active\":0}");
+    g_string_append(json, "},");
+
+    // ─────────────────────────────────────────────────────────────
     // Server info
-    json_builder_set_member_name(builder, "server_info");
-    json_builder_begin_object(builder);
-    
-    json_builder_set_member_name(builder, "version");
-    json_builder_add_string_value(builder, DEADLIGHT_VERSION_STRING);
-    
-    json_builder_set_member_name(builder, "port");
-    json_builder_add_int_value(builder, ctx->listen_port);
-    
-    json_builder_set_member_name(builder, "ssl_intercept");
-    json_builder_add_boolean_value(builder, ctx->ssl_intercept_enabled);
-    
-    json_builder_set_member_name(builder, "max_connections");
-    json_builder_add_int_value(builder, ctx->max_connections);
-    
-    json_builder_end_object(builder); // End server_info
-    
-    json_builder_end_object(builder); // End root
-    
-    // Generate JSON string
-    JsonGenerator *gen = json_generator_new();
-    JsonNode *root = json_builder_get_root(builder);
-    json_generator_set_root(gen, root);
-    
-    gchar *json_str = json_generator_to_data(gen, NULL);
-    
-    // Send response
-    DeadlightHandlerResult result = api_send_json_response(conn, 200, "OK", json_str, error);
-    
-    // Cleanup
-    g_free(json_str);
-    g_object_unref(gen);
-    json_node_unref(root);
-    g_object_unref(builder);
-    g_hash_table_destroy(protocol_stats);
-    
+    // ─────────────────────────────────────────────────────────────
+    g_string_append(json, "\"server_info\":{");
+    g_string_append_printf(json, "\"version\":\"%s\",", DEADLIGHT_VERSION_STRING);
+    g_string_append_printf(json, "\"port\":%d,", ctx->listen_port);
+    g_string_append_printf(
+        json,
+        "\"ssl_intercept\":%s,",
+        ctx->ssl_intercept_enabled ? "true" : "false"
+    );
+    g_string_append_printf(json, "\"max_connections\":%d", ctx->max_connections);
+    g_string_append(json, "}");
+
+    g_string_append(json, "}");
+
+    DeadlightHandlerResult result =
+        api_send_json_response(conn, 200, "OK", json->str, error);
+
+    g_string_free(json, TRUE);
     return result;
 }

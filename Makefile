@@ -47,7 +47,7 @@ CORE_SOURCES = main.c config.c context.c logging.c network.c ssl.c \
                protocols.c protocol_detection.c plugins.c request.c \
                utils.c ssl_tunnel.c connection_pool.c
 
-PROTOCOL_SOURCES = http.c imap.c imaps.c socks.c smtp.c websocket.c ftp.c api.c
+PROTOCOL_SOURCES = http.c imap.c imaps.c socks.c smtp.c websocket.c ftp.c api.c federation.c
 
 VPN_SOURCES = vpn_gateway.c
 
@@ -92,15 +92,11 @@ $(MAIN_TARGET): $(ALL_OBJECTS)
 	@$(CC) $(LDFLAGS) -o $@ $^ $(ALL_LIBS)
 	@echo "Built $(PROJECT) v$(VERSION)"
 
-# === THIS IS THE ONLY RULE YOU NEED FOR COMPILING .o FILES ===
-# 'make' will use VPATH to find the .c file in the correct subdirectory.
 $(OBJDIR)/%.o: %.c
 		@echo "Compiling $<..."
 		@mkdir -p $(dir $@)
 		@$(CC) $(ALL_CFLAGS) -c $< -o $@
 
-# Let's make this dependency more specific so it only runs when needed.
-# This says that assets.o depends on assets.c, which in turn depends on index.html
 $(OBJDIR)/assets.o: src/ui/assets.c
 
 src/ui/assets.c: src/ui/index.html
