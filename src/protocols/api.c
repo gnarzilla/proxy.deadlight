@@ -52,24 +52,13 @@ static gsize api_detect(const guint8 *data, gsize len) {
         return 100; 
     }
 
-    // 2. Robust Path: Check Absolute Form (Proxy access)
-    // This covers: GET http://localhost:8080/api/...
-    // We look for the first line and check if "/api/" exists before the HTTP version
-    
-    // Create a temporary view of the first line (up to \r\n or len)
     const guint8 *ptr = data;
-    const guint8 *end = data + MIN(len, 512); // Don't scan too far
-    
-    // Scan for the request target
+    const guint8 *end = data + MIN(len, 512); 
+
     while (ptr < end && *ptr != '\r' && *ptr != '\n') {
-        // Look for " /api/" (space before slash ensures it's the path start)
-        // OR Look for ".com/api/" or ":8080/api/" 
-        // Simplest robust check: look for "/api/" occurring after the Method
         
         if (ptr + 5 < end && memcmp(ptr, "/api/", 5) == 0) {
-            // Verify this is actually the path, not part of a query param?
-            // For high-speed detection, just finding /api/ in the first line is usually enough 
-            // to claim priority over standard HTTP.
+
             g_debug("API Detect: Found absolute URI match");
             return 100;
         }
@@ -82,7 +71,6 @@ static gsize api_detect(const guint8 *data, gsize len) {
 static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **error) {
     g_info("API handler for connection %lu", conn->id);
     
-    // Debug: Show the raw request
     gchar *request_preview = g_strndup((gchar*)conn->client_buffer->data, 
                                        MIN(conn->client_buffer->len, 200));
     g_debug("API conn %lu: Raw request preview: %s", conn->id, request_preview);
@@ -94,7 +82,6 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
     // Convert buffer to string for parsing
     gchar *request_str = g_strndup((gchar*)conn->client_buffer->data, conn->client_buffer->len);
 
-    // Debug: Log the parsed URI
     g_debug("API conn %lu: Parsed URI: '%s', Method: '%s'", 
             conn->id, request->uri, request->method);
     
@@ -157,7 +144,7 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
 static DeadlightHandlerResult api_handle_system_endpoint(DeadlightConnection *conn, DeadlightRequest *request, GError **error) {
     if (g_str_equal(request->uri, "/api/system/ip")) {
         // Return current external IP
-        gchar *ip = get_external_ip(); // Can implement this
+        gchar *ip = get_external_ip();
         gchar *json_response = g_strdup_printf("{\"external_ip\":\"%s\",\"port\":8080}", ip);
         DeadlightHandlerResult result = api_send_json_response(conn, 200, "OK", json_response, error);
         g_free(json_response);
@@ -170,7 +157,6 @@ static DeadlightHandlerResult api_handle_system_endpoint(DeadlightConnection *co
 static DeadlightHandlerResult api_handle_federation_endpoint(DeadlightConnection *conn, 
                                                            DeadlightRequest *request, 
                                                            GError **error) {
-    // This is where the magic happens for decentralized social media!
     // Handle instance-to-instance communication via email protocols
     
     if (g_str_equal(request->uri, "/api/federation/send")) {
@@ -252,7 +238,6 @@ static DeadlightHandlerResult api_send_json_response(DeadlightConnection *conn, 
         "\r\n"
         "%s", status_code, status_text, strlen(json_body), json_body);
 
-    // Add this debug logging
     g_debug("API conn %lu: Sending response (%zu bytes):\n%s", 
             conn->id, strlen(response), response);
     
@@ -387,14 +372,29 @@ static DeadlightHandlerResult api_handle_outbound_email(DeadlightConnection *con
         g_info("Fixed empty request->body — restored %zu bytes for HMAC", real_len);
     }
 
-    // ─── FINAL WORKING HMAC AUTH ─────────────────────────────
+    // ─── HMAC AUTH ─────────────────────────────
     const gchar *auth_header = deadlight_request_get_header(request, "Authorization");
 
-    // Use the body we already extracted and KNOW is correct
-    const gchar *payload_for_hmac = body_str;
-    gsize payload_len = strlen(body_str);  // body_str is already null-terminated and exact
+    const gchar *payload_for_hmac = (const gchar *)request->body->data;
+    gsize payload_len = request->body->len;
 
-    if (!auth_header || !validate_hmac(auth_header, payload_for_hmac, conn->context->auth_secret)) {
+    // 1. Dump secret (byte-exact)
+    g_info("DEBUG HMAC: secret_len=%zu '%.30s' ... '%.20s'", 
+        strlen(conn->context->auth_secret), 
+        conn->context->auth_secret, 
+        conn->context->auth_secret + strlen(conn->context->auth_secret) - 20);
+
+    // 2. Extracted HMAC from header (simulate validate_hmac)
+    const gchar *bearer_pos = g_strstr_len(auth_header, -1, "Bearer ");
+    gchar *candidate_hmac = bearer_pos ? g_strdup(bearer_pos + 7) : g_strdup("");
+    g_strcanon(candidate_hmac, "0123456789abcdefABCDEF", g_ascii_tolower);  // Normalize hex
+    g_info("DEBUG HMAC: extracted_candidate='%s' (len=%zu)", candidate_hmac, strlen(candidate_hmac));
+    g_free(candidate_hmac);
+
+    // 3. Call & log result (if you have compute_hmac_hex fn, else in validate_hmac)
+    
+
+    if (!auth_header || !validate_hmac_bytes(auth_header,request->body->data,request->body->len,conn->context->auth_secret)) {
         g_info("HMAC validation failed");
         g_info("  → Received: %s", auth_header ? auth_header : "missing");
         g_info("  → Payload (%zu bytes): %s", payload_len, payload_for_hmac);
@@ -495,13 +495,13 @@ email_send_via_mailchannels(DeadlightConnection *conn,
 
     // 3. Determine which stream to use (TLS or Plain)
     // deadlight_network_connect_upstream handles the SSL handshake if needed
-    GIOStream *upstream_io = NULL;
-    if (conn->upstream_tls) {
-        upstream_io = G_IO_STREAM(conn->upstream_tls);
-    } else {
-        // This shouldn't happen for MailChannels port 443, but safety first
-        upstream_io = G_IO_STREAM(conn->upstream_connection);
+   if (!conn->upstream_tls) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                    "TLS not established for HTTPS upstream");
+        return FALSE;
     }
+
+    GIOStream *upstream_io = G_IO_STREAM(conn->upstream_tls);
 
     GOutputStream *out = g_io_stream_get_output_stream(upstream_io);
     GInputStream  *in  = g_io_stream_get_input_stream(upstream_io);

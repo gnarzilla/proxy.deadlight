@@ -5,33 +5,82 @@
 #include <glib.h>
 #include <openssl/hmac.h>
 
-gboolean validate_hmac(const gchar *auth_header, const gchar *payload, const gchar *secret)
+gboolean validate_hmac_bytes(const gchar *auth_header,
+                             const guint8 *payload,
+                             gsize payload_len,
+                             const gchar *secret)
 {
-    if (!auth_header || !g_str_has_prefix(auth_header, "HMAC "))
+    if (!auth_header || !payload || !secret)
         return FALSE;
 
-    const gchar *received = auth_header + 5;
+    const gchar *received = NULL;
+    gsize prefix_len = 0;
 
+    /* Accept Bearer (standard name) or HMAC (legacy) */
+    if (g_str_has_prefix(auth_header, "Bearer ")) {
+        prefix_len = 7;
+    } else if (g_str_has_prefix(auth_header, "HMAC ")) {
+        prefix_len = 5;
+    } else {
+        g_info("HMAC invalid prefix: '%s'", auth_header);
+        return FALSE;
+    }
+
+    received = auth_header + prefix_len;
+
+    /* Trim leading whitespace */
+    while (*received && g_ascii_isspace(*received)) {
+        received++;
+    }
+
+    /* Copy & trim trailing whitespace (\r\n from headers) */
+    gchar *received_clean = g_strchomp(g_strdup(received));
+
+    /* Compute HMAC-SHA256(secret, payload[bytes]) */
     unsigned char md[SHA256_DIGEST_LENGTH];
-    unsigned int md_len;
-    HMAC(EVP_sha256(), secret, strlen(secret), (unsigned char*)payload, strlen(payload), md, &md_len);
+    unsigned int md_len = 0;
 
-    gchar computed[65];
+    HMAC(EVP_sha256(),
+         secret,
+         strlen(secret),
+         payload,
+         payload_len,
+         md,
+         &md_len);
+
+    /* Convert digest to lowercase hex */
+    gchar computed[SHA256_DIGEST_LENGTH * 2 + 1];
     for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
-        g_snprintf(computed + i*2, 3, "%02x", md[i]);
+        g_snprintf(computed + (i * 2), 3, "%02x", md[i]);
     }
     computed[64] = '\0';
 
-    gboolean valid = (g_strcmp0(computed, received) == 0);
+    gboolean valid = (g_strcmp0(computed, received_clean) == 0);
 
-    if (!valid) {
-        g_info("HMAC mismatch — expected: %s  received: %s", computed, received);
-    } else {
+    if (!valid && g_getenv("DEADLIGHT_VERBOSE")) {
+        g_info("HMAC mismatch — expected: %s  received: %s",
+               computed, received_clean);
+    } else if (valid) {
         g_info("HMAC validated successfully");
     }
 
+    g_free(received_clean);
     return valid;
 }
+
+gboolean validate_hmac(const gchar *auth_header,
+                       const gchar *payload,
+                       const gchar *secret)
+{
+    if (!payload)
+        return FALSE;
+
+    return validate_hmac_bytes(auth_header,
+                               (const guint8 *)payload,
+                               strlen(payload),
+                               secret);
+}
+
 
 gchar *get_external_ip(void) {
     GError *error = NULL;
@@ -39,7 +88,7 @@ gchar *get_external_ip(void) {
     GSocketConnection *connection = NULL;
     gchar *result = NULL;
     
-    // Try to connect to a simple IP checking service
+    // connect to a simple IP checking service
     connection = g_socket_client_connect_to_host(client, 
                                                   "api.ipify.org", 80, 
                                                   NULL, &error);
@@ -81,7 +130,7 @@ gchar *get_external_ip(void) {
 
 gboolean deadlight_test_module(const gchar *module_name) {
     (void)module_name; // Mark as unused for now
-    g_print("Testing module system...\n");
+    g_print("Testing module system...NOT IMPLEMENTED\n");
     // ... implementation ...
     return TRUE;
 }
@@ -99,7 +148,6 @@ gchar *deadlight_format_bytes(guint64 bytes) {
 }
 
 gchar *deadlight_format_duration(gint64 seconds) {
-    // [FIX] Change %f to %ld
     if (seconds < 60) {
         return g_strdup_printf("%.1ld seconds", seconds);
     } else if (seconds < 3600) {
@@ -114,48 +162,40 @@ gchar *deadlight_format_duration(gint64 seconds) {
 gboolean deadlight_parse_host_port(const gchar *host_port, gchar **host, guint16 *port) {
     if (!host_port || !host || !port) return FALSE;
 
-    // Initialize host to NULL. We will check this at the end to determine success.
     *host = NULL;
 
-    if (host_port[0] == '[') { // IPv6 address like [::1]:8080
-        // 'end' is declared here, so it's only visible inside this 'if' block.
+    if (host_port[0] == '[') { 
         const gchar *end = strchr(host_port, ']');
-        if (!end) return FALSE; // Malformed, no closing bracket
+        if (!end) return FALSE; 
 
         *host = g_strndup(host_port + 1, end - (host_port + 1));
 
-        // Check for a port after the ']'
         if (*(end + 1) == ':') {
             gulong p = strtoul(end + 2, NULL, 10);
-            // [FIX] Validate the parsed port is in the valid range
             if (p > 0 && p <= 65535) {
                 *port = (guint16)p;
             } else {
-                // Invalid port, so we fail parsing.
                 g_free(*host);
                 *host = NULL;
             }
         }
-        // If no port is specified, we just keep the default value that was passed in.
 
-    } else { // IPv4 or hostname like 127.0.0.1:8080 or example.com
+    } else { 
         const gchar *colon = strrchr(host_port, ':');
-        if (colon) { // A port is specified
+        if (colon) { 
             *host = g_strndup(host_port, colon - host_port);
 
             gulong p = strtoul(colon + 1, NULL, 10);
-            // [FIX] Validate the parsed port for this case as well
             if (p > 0 && p <= 65535) {
                 *port = (guint16)p;
             } else {
                 g_free(*host);
                 *host = NULL;
             }
-        } else { // No port is specified
+        } else {
             *host = g_strdup(host_port);
         }
     }
 
-    // The function is successful if we managed to allocate a non-empty host string.
     return (*host != NULL && strlen(*host) > 0);
 }

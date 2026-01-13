@@ -30,7 +30,7 @@ deadlight.conf
 !deadlight.conf.plug
 !deadlight.conf.LOGFILE
 
-# SSL/TLS certificates and keys (NEVER commit these!)
+# SSL/TLS certificates and keys
 *.key
 *.crt
 *.pem
@@ -63,8 +63,9 @@ Thumbs.db
 # Test artifacts
 test_results/
 coverage/
+test_email.sh
 
-# Dependency managers (if you add any)
+# Dependency managers
 node_modules/
 vendor/
 
