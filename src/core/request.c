@@ -5,6 +5,7 @@
 
 // Forward declarations for helpers used only in this file
 static gboolean local_parse_http_request_line(const gchar *line, DeadlightRequest *request);
+static gchar *extract_path_from_uri(const gchar *uri);
 
 // --- Public API ---
 
@@ -59,7 +60,7 @@ gboolean deadlight_request_parse_headers(DeadlightRequest *request, const gchar 
         return FALSE;
     }
 
-    // Parse the first line (e.g., "GET /path HTTP/1.1")
+    // Parse the first line (e.g., "GET /path HTTP/1.1" or "GET http://host/path HTTP/1.1")
     if (!local_parse_http_request_line(lines[0], request)) {
         g_strfreev(lines);
         return FALSE;
@@ -96,15 +97,70 @@ void deadlight_request_set_header(DeadlightRequest *request, const gchar *name, 
 
 // --- Helper Functions ---
 
+/**
+ * Extract the path portion from a URI.
+ * Handles both origin-form (/path) and absolute-form (http://host/path)
+ * 
+ * Examples:
+ *   "/api/health" -> "/api/health"
+ *   "http://localhost:8080/api/health" -> "/api/health"
+ *   "https://example.com:443/path?query" -> "/path?query"
+ *   "http://example.com" -> "/"
+ */
+static gchar *extract_path_from_uri(const gchar *uri) {
+    if (!uri) return g_strdup("/");
+    
+    // If it's already a path (starts with /), return as-is
+    if (uri[0] == '/') {
+        return g_strdup(uri);
+    }
+    
+    // Handle absolute URIs: http://host:port/path or https://host:port/path
+    if (g_str_has_prefix(uri, "http://") || g_str_has_prefix(uri, "https://")) {
+        // Skip the scheme (http:// or https://)
+        const gchar *after_scheme = strchr(uri + 8, '/');
+        
+        if (after_scheme) {
+            // Found the path portion
+            return g_strdup(after_scheme);
+        } else {
+            // No path in URI (e.g., "http://example.com")
+            return g_strdup("/");
+        }
+    }
+    
+    // For any other form, treat as-is (shouldn't happen in HTTP)
+    return g_strdup(uri);
+}
+
 static gboolean local_parse_http_request_line(const gchar *line, DeadlightRequest *request) {
     gchar **parts = g_strsplit(line, " ", 3);
     if (g_strv_length(parts) < 3) {
         g_strfreev(parts);
         return FALSE;
     }
+    
     request->method = g_strdup(parts[0]);
-    request->uri = g_strdup(parts[1]);
+    
+    // Extract path from URI (handles both origin-form and absolute-form)
+    gchar *full_uri = parts[1];
+    request->uri = extract_path_from_uri(full_uri);
+    
+    // Store the host if it's an absolute URI
+    if (g_str_has_prefix(full_uri, "http://") || g_str_has_prefix(full_uri, "https://")) {
+        // Extract host:port from absolute URI
+        const gchar *host_start = full_uri + (g_str_has_prefix(full_uri, "https://") ? 8 : 7);
+        const gchar *host_end = strchr(host_start, '/');
+        
+        if (host_end) {
+            request->host = g_strndup(host_start, host_end - host_start);
+        } else {
+            request->host = g_strdup(host_start);
+        }
+    }
+    
     request->version = g_strdup(parts[2]);
+    
     g_strfreev(parts);
     return TRUE;
 }

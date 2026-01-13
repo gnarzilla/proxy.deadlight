@@ -12,9 +12,9 @@ buffer_size=65536
 #Log level: error, warning, info, debug
 log_level=info
 #Log file path (empty for stdout)
-log_file=/home/thatch/.deadlight/LOGFILE.txt
+log_file=
 #Number of worker threads
-worker_threads=6
+worker_threads=4
 
 [ssl]
 #Enable SSL interception
@@ -26,7 +26,7 @@ ca_key_file=/home/thatch/.deadlight/ca.key
 #Certificate cache directory
 cert_cache_dir=/tmp/deadlight_certs
 #Maximum cached certificates
-cert_cache_size=5000
+cert_cache_size=1000
 #Generated certificate validity period
 cert_validity_days=30
 #Allowed cipher suites
@@ -70,11 +70,11 @@ tcp_nodelay=true
 #Enable TCP keepalive
 tcp_keepalive=true
 #Max connections per upstream host
-connection_pool_size=20
+connection_pool_size=10
 #Idle connection timeout (seconds)
 connection_pool_timeout=300
 #Total pool size across all hosts
-connection_pool_max_total=2500
+connection_pool_max_total=500
 #Pool eviction policy: lru, fifo, none
 connection_pool_eviction_policy=lru
 #Connection health check interval (seconds)
@@ -171,22 +171,19 @@ blocked_domains=
 max_request_size=10MB
 #Maximum header size
 max_header_size=8KB
+# HMAC secret for API authentication (64+ chars recommended)
+auth_secret = "gross-window-birthday-shit"
+
+[smtp]
+# Bridge mode disabled (we're sending, not receiving)
+bridge_mode = false
+
+# Default sender for outgoing emails
+default_from = noreply@deadlight.boo
+
+# Enable SMTP client mode
+client_mode = true
+mailchannels_api_key = MQCF5IjfM76vCh09b3q0egSW0lqinNVw
 
 [vpn]
-# Enable VPN gateway (requires root privileges)
 enabled=true
-device = tun0
-tun_device=tun0
-address = 10.8.0.1
-netmask = 255.255.255.0
-upstream_interface = 172.29.16.1 dev eth0 src 172.29.16.185 uid 1000
-gateway_ip=10.8.0.1
-client_subnet=10.8.0.0/24
-# TUN device configuration
-device = tun0
-address = 10.8.0.1
-netmask = 255.255.255.0
-# Client IP range
-client_network = 10.8.0.0/24
-# DNS servers to provide to clients (optional)
-dns_servers = 8.8.8.8,8.8.4.4

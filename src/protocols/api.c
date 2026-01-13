@@ -93,6 +93,10 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
     
     // Convert buffer to string for parsing
     gchar *request_str = g_strndup((gchar*)conn->client_buffer->data, conn->client_buffer->len);
+
+    // Debug: Log the parsed URI
+    g_debug("API conn %lu: Parsed URI: '%s', Method: '%s'", 
+            conn->id, request->uri, request->method);
     
     if (!deadlight_request_parse_headers(request, request_str, strlen(request_str))) {
         g_free(request_str);
@@ -110,7 +114,7 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
             "HTTP/1.1 200 OK\r\n"
             "Access-Control-Allow-Origin: https://deadlight.boo\r\n"
             "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
-            "Access-Control-Allow-Headers: Content-Type, X-API-Key\r\n"
+            "Access-Control-Allow-Headers: Content-Type, X-API-Key, Authorization\r\n"
             "Content-Length: 0\r\n"
             "\r\n";
         
@@ -142,6 +146,7 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
     } else if (g_str_has_prefix(request->uri, "/api/metrics")) {
         result = api_handle_metrics_endpoint(conn, error);
     } else {
+        g_debug("API handler: No route matched for URI: %s", request->uri);
         result = api_send_404(conn, error);
     }
     
@@ -240,7 +245,7 @@ static DeadlightHandlerResult api_send_json_response(DeadlightConnection *conn, 
         "Content-Length: %zu\r\n"
         "Access-Control-Allow-Origin: https://deadlight.boo\r\n"
         "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
-        "Access-Control-Allow-Headers: Content-Type, X-API-Key\r\n"
+        "Access-Control-Allow-Headers: Content-Type, X-API-Key, Authorization\r\n"
         "Content-Encoding: identity\r\n"  // Explicitly disable compression
         "Cache-Control: no-cache\r\n"     // Prevent caching issues
         "Connection: close\r\n"
