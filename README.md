@@ -133,10 +133,10 @@ Example configs: [`deadlight.conf.example`](deadlight.conf.example), [`deadlight
 
 ---
 
-## Usage Examples
-
 ![Deadlight Proxy web UI with email send](assets/webui-term-emailsend.gif)
 
+
+## Usage Examples
 
 ### As HTTP/HTTPS Proxy
 ```bash
