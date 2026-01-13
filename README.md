@@ -131,7 +131,7 @@ tun_device = tun0
 
 Example configs: [`deadlight.conf.example`](deadlight.conf.example), [`deadlight.conf.docker`](deadlight.conf.docker)
 
----
+
 
 ![Deadlight Proxy web UI with email send](assets/webui-term-emailsend.gif)
 
