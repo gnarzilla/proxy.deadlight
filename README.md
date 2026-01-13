@@ -135,6 +135,9 @@ Example configs: [`deadlight.conf.example`](deadlight.conf.example), [`deadlight
 
 ## Usage Examples
 
+![Deadlight Proxy web UI with email send](assets/webui-term-emailsend.gif)
+
+
 ### As HTTP/HTTPS Proxy
 ```bash
 # Configure browser/system to use http://localhost:8080
