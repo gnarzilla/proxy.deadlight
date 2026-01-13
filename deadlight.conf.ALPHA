@@ -175,6 +175,8 @@ max_header_size=8KB
 auth_secret = gross-window-birthday-shit
 
 [smtp]
+mailchannels_api_key = MQCF5IjfM76vCh09b3q0egSW0lqinNVw
+
 # Bridge mode disabled (we're sending, not receiving)
 bridge_mode = false
 
@@ -183,7 +185,6 @@ default_from = noreply@deadlight.boo
 
 # Enable SMTP client mode
 client_mode = true
-mailchannels_api_key = MQCF5IjfM76vCh09b3q0egSW0lqinNVw
 
 [vpn]
 enabled=true

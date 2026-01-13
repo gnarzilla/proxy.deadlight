@@ -405,13 +405,11 @@ static DeadlightHandlerResult api_handle_outbound_email(DeadlightConnection *con
     }
 
     g_info("HMAC validated successfully — sending email");
+    
     // ─────────────────────────────────────────────────────────────────────────────
     // Send email
     gboolean sent = email_send_via_mailchannels(conn, from, to, subject, body, error);
-    g_free(body_str);
-    g_object_unref(parser);
-
-    if (!sent) {
+        if (!sent) {
         g_warning("API: Failed to send email via MailChannels: %s", error && *error ? (*error)->message : "unknown");
         return api_send_json_response(conn, 502, "Bad Gateway",
                                       "{\"error\":\"Email provider failed\"}", error);
@@ -420,6 +418,8 @@ static DeadlightHandlerResult api_handle_outbound_email(DeadlightConnection *con
     g_info("API: Email sent successfully to %s", to);
     return api_send_json_response(conn, 202, "Accepted",
                                   "{\"status\":\"sent\",\"provider\":\"mailchannels\"}", error);
+    g_free(body_str);
+    g_object_unref(parser);
 }
 
 static DeadlightHandlerResult api_handle_blog_endpoint(DeadlightConnection *conn, DeadlightRequest *request, GError **error) {
@@ -557,7 +557,7 @@ email_send_via_mailchannels(DeadlightConnection *conn,
     g_string_append(request, "Host: api.mailchannels.net\r\n");
     g_string_append(request, "Content-Type: application/json\r\n");
     g_string_append_printf(request, "Content-Length: %zu\r\n", strlen(json_payload));
-    g_string_append_printf(request, "Authorization: Bearer %s\r\n", api_key);
+    g_string_append_printf(request, "X-API-Key: %s\r\n", api_key);
     // Keep-Alive allows the connection to be returned to the pool!
     g_string_append(request, "Connection: keep-alive\r\n"); 
     g_string_append(request, "\r\n");
