@@ -11,7 +11,6 @@ A high-performance, multi-protocol proxy server built for **real-world condition
 
 ![Deadlight Proxy Web UI](assets/proxy.deadlight_cli_ui_boot2shut.gif)
 
----
 
 ## Quick Start
 
@@ -131,7 +130,10 @@ tun_device = tun0
 
 Example configs: [`deadlight.conf.example`](deadlight.conf.example), [`deadlight.conf.docker`](deadlight.conf.docker)
 
----
+
+
+![Deadlight Proxy web UI with email send](assets/webui-term-emailsend.gif)
+
 
 ## Usage Examples
 
