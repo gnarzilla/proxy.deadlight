@@ -11,8 +11,6 @@ A high-performance, multi-protocol proxy server built for **real-world condition
 
 ![Deadlight Proxy Web UI](assets/proxy.deadlight_cli_ui_boot2shut.gif)
 
----
-
 ## Quick Start
 
 ### Docker (Recommended)
@@ -44,6 +42,7 @@ services:
     volumes:
       - ./config:/etc/deadlight
       - ./federation:/var/lib/deadlight/federation
+      - ./blog-cache:/var/lib/deadlight/blog 
     restart: unless-stopped
 ```
 
@@ -60,8 +59,6 @@ make UI=1           # With web UI
 
 **Requirements:** GLib 2.0+, OpenSSL 1.1+, GCC/Clang  
 **Optional:** libmicrohttpd for web UI (build with `make UI=1`)
-
----
 
 ## Features
 
@@ -107,9 +104,7 @@ curl -X POST http://localhost:8080/api/federation/send \
   -d '{"target_domain":"other.deadlight.boo","content":"Hello!","author":"alice"}'
 ```
 
-📖 **Full API Documentation:** [docs/API.md](docs/API.md)
-
----
+ **Full API Documentation:** [docs/API.md](docs/API.md)
 
 ## REST API
 
@@ -130,6 +125,24 @@ curl -X POST http://localhost:8080/api/federation/send \
 - `GET /api/federation/posts` - List all stored posts
 - `GET /api/federation/status` - Federation system status
 - `GET /api/federation/test/{domain}` - Test domain connectivity
+
+#### Blog Integration (with blog.deadlight)
+- `GET /api/blog/posts` - List blog posts (cached locally, syncs from Workers)
+- `GET /api/blog/status` - Blog system status
+- `POST /api/blog/publish` - Publish new post (coming soon)
+
+**Caching:** Blog posts are cached locally for 5 minutes (configurable). When Workers is offline, the proxy serves stale cache with a warning, ensuring resilience on intermittent networks.
+
+**Configuration:**
+```ini
+[blog]
+workers_url = https://deadlight.boo
+cache_ttl = 300
+enable_cache = true
+cache_dir = /var/lib/deadlight/blog
+```
+
+**Performance:** Cache HITs are ~400x faster than fetching from Workers (10ms vs 4000ms).
 
 #### Blog (Stubs)
 - `GET /api/blog/status` - Blog backend status
@@ -182,8 +195,6 @@ sudo update-ca-trust
 
 **Security Note:** Only install on devices you control. Breaks certificate pinning on some sites (GitHub, Mozilla, banks). Use responsibly.
 
----
-
 ## Configuration
 
 ### Default Config Locations
@@ -218,8 +229,6 @@ tun_device = tun0
 **Hot-reload:** Config changes apply automatically (no restart needed).
 
 Example configs: [`deadlight.conf.example`](deadlight.conf.example), [`deadlight.conf.docker`](deadlight.conf.docker)
-
----
 
 ## Usage Examples
 
@@ -277,8 +286,6 @@ curl http://localhost:8080/api/federation/posts | jq
 -h, --help          Show usage
 ```
 
----
-
 ## Architecture
 
 ```
@@ -314,8 +321,6 @@ curl http://localhost:8080/api/federation/posts | jq
 - **Performance-focused** (connection pooling, async I/O, worker threads)
 - **API-first** (RESTful interface for programmatic control)
 
----
-
 ## Use Cases
 
 | Scenario | How Deadlight Helps |
@@ -328,8 +333,6 @@ curl http://localhost:8080/api/federation/posts | jq
 | **Federation Node** | Inter-instance communication for distributed systems |
 | **Monitoring Hub** | Real-time metrics via REST API for dashboards |
 
----
-
 ## Documentation
 
 - **[API Reference](docs/API.md)** - Complete REST API documentation
@@ -337,8 +340,6 @@ curl http://localhost:8080/api/federation/posts | jq
 - **[Architecture](docs/ARCHITECTURE.md)** - Technical deep dive
 - **[Extending Deadlight](docs/EXTENDING.md)** - Plugin and protocol development
 - **[Contributing](docs/CONTRIBUTING.md)** - How to contribute
-
----
 
 ## Extending Deadlight
 
@@ -356,16 +357,15 @@ curl http://localhost:8080/api/federation/posts | jq
 
 See [docs/EXTENDING.md](docs/EXTENDING.md) for details.
 
----
-
 ## Roadmap
 
 ### Near-term (2025)
 - [x] REST API with email sending
 - [x] Federation system (experimental)
 - [x] Connection pool metrics
+- [x] Blog caching with offline fallback
 - [ ] HMAC authentication fixes
-- [ ] Blog backend integration
+- [x] Blog backend integration (read-through cache)
 - [ ] API rate limiting
 - [ ] WebSocket support for real-time updates
 
@@ -384,8 +384,6 @@ See [docs/EXTENDING.md](docs/EXTENDING.md) for details.
   - Adding TX (e.g., HackRF or Hermes-Lite) is a simple flowgraph swap, unlocking bidirectional transport without core changes.
   - Targets 2026 delivery for Tier 2 (robust digital modes); full wideband OFDM is future stretch.
 
----
-
 ## Part of the Deadlight Ecosystem
 
 This proxy is designed for **resilient, edge-native infrastructure** where connectivity is intermittent and resources are constrained. Part of the broader [Deadlight project](https://github.com/gnarzilla/edge.deadlight).
@@ -396,8 +394,6 @@ This proxy is designed for **resilient, edge-native infrastructure** where conne
 - [edge.deadlight](https://github.com/gnarzilla/edge.deadlight) - Unified edge platform
 
 **API Integration:** The Deadlight Proxy API is designed to integrate seamlessly with blog.deadlight for content publishing and federation.
-
----
 
 ## License
 
