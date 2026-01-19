@@ -188,3 +188,14 @@ client_mode = true
 
 [vpn]
 enabled=true
+
+[blog]
+# URL of your Workers instance
+workers_url = https://deadlight.boo
+# How often to sync cache (seconds)
+cache_ttl = 300
+# Enable read-through caching
+enable_cache = true
+# Local cache directory
+cache_dir = /var/lib/deadlight/blog
+sync_mode = write

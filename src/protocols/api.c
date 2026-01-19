@@ -1,6 +1,7 @@
 #include "api.h"
 #include <string.h>
 #include <json-glib/json-glib.h>
+#include <glib/gstdio.h>
 #include <time.h>
 #include "core/utils.h"
 #include "smtp.h"
@@ -27,6 +28,10 @@ static gboolean email_send_via_mailchannels(DeadlightConnection *conn, const gch
 // Helper functions
 static JsonObject* parse_request_body(DeadlightConnection *conn, GError **error);
 static gboolean validate_json_fields(JsonObject *obj, const gchar **required_fields, gsize num_fields, GError **error);
+static gchar* fetch_from_workers(const gchar *workers_url, const gchar *endpoint, GError **error);
+static gboolean is_cache_fresh(const gchar *cache_file, gint ttl_seconds);
+static gchar* read_cache_file(const gchar *cache_file, GError **error);
+static gboolean write_cache_file(const gchar *cache_file, const gchar *content, GError **error);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PROTOCOL HANDLER REGISTRATION
@@ -172,7 +177,7 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
     // Debug: Show raw request
     gchar *request_preview = g_strndup((gchar*)conn->client_buffer->data, 
                                        MIN(conn->client_buffer->len, 500));
-    g_debug("API conn %lu: Raw request (%zu bytes):\n%s", 
+    g_debug("API conn %lu: Raw request (%u bytes):\n%s", 
             conn->id, conn->client_buffer->len, request_preview);
     g_free(request_preview);
 
@@ -187,7 +192,7 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
         return HANDLER_ERROR;
     }
     
-    g_debug("API conn %lu: Parsed - Method: '%s', URI: '%s', Body length: %zu", 
+    g_debug("API conn %lu: Parsed - Method: '%s', URI: '%s', Body length: %u", 
             conn->id, request->method, request->uri, 
             request->body ? request->body->len : 0);
     
@@ -484,7 +489,7 @@ static DeadlightHandlerResult api_handle_outbound_email(DeadlightConnection *con
     if (g_getenv("DEADLIGHT_DEBUG_HMAC")) {
         g_info("HMAC Debug Info:");
         g_info("  Auth header: %s", auth_header ? auth_header : "NULL");
-        g_info("  Body length: %zu bytes", request->body->len);
+        g_info("  Body length: %u bytes", request->body->len);
         g_info("  Secret length: %zu bytes", strlen(conn->context->auth_secret));
         
         // Show first 50 bytes of body
@@ -531,23 +536,137 @@ static DeadlightHandlerResult api_handle_blog_endpoint(DeadlightConnection *conn
                                                        GError **error) {
     g_info("API blog endpoint for conn %lu: %s %s", conn->id, request->method, request->uri);
     
-    // TODO: Integrate with blog.deadlight Cloudflare Workers backend
-    // TODO: Add authentication for write operations
+    // Check if caching is enabled
+    gboolean enable_cache = deadlight_config_get_bool(conn->context, "blog", "enable_cache", FALSE);
+    const gchar *cache_dir = deadlight_config_get_string(conn->context, "blog", "cache_dir", 
+                                                         "/var/lib/deadlight/blog");
+    gint cache_ttl = deadlight_config_get_int(conn->context, "blog", "cache_ttl", 300);
     
+    // Handle /api/blog/posts with caching
+    if (g_str_equal(request->method, "GET") && g_str_has_suffix(request->uri, "/posts")) {
+        gchar *cache_file = g_build_filename(cache_dir, "posts.json", NULL);
+        gchar *response_body = NULL;
+        
+        // Try cache first if enabled
+        if (enable_cache && is_cache_fresh(cache_file, cache_ttl)) {
+            g_info("Blog: Cache HIT for /posts (age < %d seconds)", cache_ttl);
+            GError *read_error = NULL;
+            response_body = read_cache_file(cache_file, &read_error);
+            
+            if (response_body) {
+                DeadlightHandlerResult result = api_send_json_response(conn, 200, "OK", 
+                                                                       response_body, error);
+                g_free(response_body);
+                g_free(cache_file);
+                return result;
+            }
+            
+            if (read_error) {
+                g_warning("Blog: Cache read failed: %s", read_error->message);
+                g_error_free(read_error);
+            }
+        }
+        
+        // Cache miss or stale - fetch from Workers
+        g_info("Blog: Cache MISS for /posts, fetching from Workers");
+        const gchar *workers_url = deadlight_config_get_string(conn->context, "blog", 
+                                                               "workers_url", NULL);
+        
+        if (!workers_url) {
+            g_free(cache_file);
+            return api_send_json_response(conn, 200, "OK", 
+                "{\"posts\":[],\"total\":0,\"note\":\"Workers URL not configured\"}", error);
+        }
+        
+        GError *fetch_error = NULL;
+        response_body = fetch_from_workers(workers_url, "/api/blog/posts", &fetch_error);
+        
+        if (response_body) {
+            // Update cache if enabled
+            if (enable_cache) {
+                g_mkdir_with_parents(cache_dir, 0755);
+                if (write_cache_file(cache_file, response_body, NULL)) {
+                    g_info("Blog: Updated cache for /posts");
+                }
+            }
+            
+            DeadlightHandlerResult result = api_send_json_response(conn, 200, "OK", 
+                                                                   response_body, error);
+            g_free(response_body);
+            g_free(cache_file);
+            return result;
+        }
+        
+        // Fetch failed - try serving stale cache as fallback
+        if (enable_cache) {
+            g_warning("Blog: Workers fetch failed, trying stale cache: %s", 
+                     fetch_error ? fetch_error->message : "unknown");
+            
+            GError *read_error = NULL;
+            response_body = read_cache_file(cache_file, &read_error);
+            
+            if (response_body) {
+                g_info("Blog: Serving STALE cache (offline mode)");
+                gchar *response_with_warning = g_strdup_printf(
+                    "{\"posts\":%s,\"_warning\":\"Served from stale cache (Workers offline)\"}", 
+                    response_body);
+                
+                DeadlightHandlerResult result = api_send_json_response(conn, 200, "OK", 
+                                                                       response_with_warning, error);
+                g_free(response_with_warning);
+                g_free(response_body);
+                g_free(cache_file);
+                if (read_error) g_error_free(read_error);
+                if (fetch_error) g_error_free(fetch_error);
+                return result;
+            }
+            
+            if (read_error) g_error_free(read_error);
+        }
+        
+        if (fetch_error) g_error_free(fetch_error);
+        g_free(cache_file);
+        
+        return api_send_json_response(conn, 503, "Service Unavailable",
+            "{\"error\":\"Workers unreachable and no cache available\"}", error);
+    }
+    
+    // Handle /api/blog/status
+    if (g_str_equal(request->method, "GET") && g_str_has_suffix(request->uri, "/status")) {
+        const gchar *workers_url = deadlight_config_get_string(conn->context, "blog", 
+                                                               "workers_url", NULL);
+        gboolean workers_connected = FALSE;
+        
+        if (workers_url) {
+            // Quick health check
+            GError *fetch_error = NULL;
+            gchar *health = fetch_from_workers(workers_url, "/api/health", &fetch_error);
+            if (health) {
+                workers_connected = TRUE;
+                g_free(health);
+            }
+            if (fetch_error) g_error_free(fetch_error);
+        }
+        
+        gchar *json_response = g_strdup_printf(
+            "{\"status\":\"running\",\"version\":\"4.0.0\",\"backend\":\"%s\","
+            "\"cache_enabled\":%s,\"cache_ttl\":%d}", 
+            workers_connected ? "connected" : "offline",
+            enable_cache ? "true" : "false",
+            cache_ttl);
+        
+        DeadlightHandlerResult result = api_send_json_response(conn, 200, "OK", 
+                                                               json_response, error);
+        g_free(json_response);
+        return result;
+    }
+    
+    // Handle /api/blog/publish
     if (g_str_equal(request->method, "POST") && g_str_has_suffix(request->uri, "/publish")) {
         const gchar *json_response = 
             "{\"status\":\"success\",\"message\":\"Post published successfully\","
             "\"note\":\"Blog integration not yet implemented\"}";
         return api_send_json_response(conn, 501, "Not Implemented", json_response, error);
-    }
-    else if (g_str_equal(request->method, "GET") && g_str_has_suffix(request->uri, "/posts")) {
-        const gchar *json_response = "{\"posts\":[],\"total\":0}";
-        return api_send_json_response(conn, 200, "OK", json_response, error);
-    }
-    else if (g_str_equal(request->method, "GET") && g_str_has_suffix(request->uri, "/status")) {
-        const gchar *json_response = 
-            "{\"status\":\"running\",\"version\":\"4.0.0\",\"backend\":\"not_connected\"}";
-        return api_send_json_response(conn, 200, "OK", json_response, error);
     }
     
     return api_send_404(conn, error);
@@ -584,8 +703,8 @@ static DeadlightHandlerResult api_handle_metrics_endpoint(DeadlightConnection *c
 
     // Basic metrics
     g_string_append_printf(json,
-        "\"active_connections\":%d,"
-        "\"total_connections\":%d,"
+        "\"active_connections\":%lu,"
+        "\"total_connections\":%lu,"
         "\"bytes_transferred\":%ld,",
         ctx->active_connections,
         ctx->total_connections,
@@ -1086,6 +1205,145 @@ static DeadlightHandlerResult api_send_json_response(DeadlightConnection *conn,
     
     g_free(response);
     return write_success ? HANDLER_SUCCESS_CLEANUP_NOW : HANDLER_ERROR;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CACHE MANAGEMENT HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Check if a cache file exists and is fresh
+ */
+static gboolean is_cache_fresh(const gchar *cache_file, gint ttl_seconds) {
+    if (!g_file_test(cache_file, G_FILE_TEST_EXISTS)) {
+        return FALSE;
+    }
+    
+    GStatBuf st;
+    if (g_stat(cache_file, &st) != 0) {
+        return FALSE;
+    }
+    
+    time_t now = time(NULL);
+    time_t age = now - st.st_mtime;
+    
+    return age < ttl_seconds;
+}
+
+/**
+ * Read content from cache file
+ */
+static gchar* read_cache_file(const gchar *cache_file, GError **error) {
+    gchar *contents = NULL;
+    gsize length = 0;
+    
+    if (!g_file_get_contents(cache_file, &contents, &length, error)) {
+        return NULL;
+    }
+    
+    return contents;
+}
+
+/**
+ * Write content to cache file
+ */
+static gboolean write_cache_file(const gchar *cache_file, const gchar *content, GError **error) {
+    return g_file_set_contents(cache_file, content, -1, error);
+}
+
+/**
+ * Fetch data from Workers via HTTP
+ */
+static gchar* fetch_from_workers(const gchar *workers_url, const gchar *endpoint, GError **error) {
+    // Parse URL to get host and use HTTPS
+    gchar *host = NULL;
+    guint16 port = 443;
+    
+    // Extract hostname from URL (strip https://)
+    if (g_str_has_prefix(workers_url, "https://")) {
+        host = g_strdup(workers_url + 8);
+    } else if (g_str_has_prefix(workers_url, "http://")) {
+        host = g_strdup(workers_url + 7);
+        port = 80;
+    } else {
+        host = g_strdup(workers_url);
+    }
+    
+    // Remove trailing slash if present
+    if (g_str_has_suffix(host, "/")) {
+        host[strlen(host) - 1] = '\0';
+    }
+    
+    g_info("Fetching from Workers: %s%s", host, endpoint);
+    
+    // Create temporary connection for fetch
+    GSocketClient *client = g_socket_client_new();
+    g_socket_client_set_timeout(client, 10); // 10 second timeout
+    
+    if (port == 443) {
+        g_socket_client_set_tls(client, TRUE);
+    }
+    
+    GSocketConnection *conn = g_socket_client_connect_to_host(client, host, port, NULL, error);
+    g_object_unref(client);
+    
+    if (!conn) {
+        g_prefix_error(error, "Failed to connect to Workers: ");
+        g_free(host);
+        return NULL;
+    }
+    
+    // Build HTTP request
+    GString *request = g_string_new(NULL);
+    g_string_append_printf(request, "GET %s HTTP/1.1\r\n", endpoint);
+    g_string_append_printf(request, "Host: %s\r\n", host);
+    g_string_append(request, "Connection: close\r\n");
+    g_string_append(request, "User-Agent: Deadlight-Proxy/1.0\r\n");
+    g_string_append(request, "\r\n");
+    
+    // Send request
+    GOutputStream *out = g_io_stream_get_output_stream(G_IO_STREAM(conn));
+    gsize written;
+    if (!g_output_stream_write_all(out, request->str, request->len, &written, NULL, error)) {
+        g_string_free(request, TRUE);
+        g_object_unref(conn);
+        g_free(host);
+        return NULL;
+    }
+    g_string_free(request, TRUE);
+    
+    // Read response
+    GInputStream *in = g_io_stream_get_input_stream(G_IO_STREAM(conn));
+    GString *response = g_string_new(NULL);
+    gchar buf[4096];
+    gssize bytes_read;
+    
+    while ((bytes_read = g_input_stream_read(in, buf, sizeof(buf), NULL, error)) > 0) {
+        g_string_append_len(response, buf, bytes_read);
+    }
+    
+    g_object_unref(conn);
+    g_free(host);
+    
+    if (bytes_read < 0) {
+        g_string_free(response, TRUE);
+        return NULL;
+    }
+    
+    // Extract body from HTTP response
+    const gchar *body_start = strstr(response->str, "\r\n\r\n");
+    if (!body_start) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, 
+                   "Invalid HTTP response (no header/body separator)");
+        g_string_free(response, TRUE);
+        return NULL;
+    }
+    
+    body_start += 4; // Skip \r\n\r\n
+    gchar *body = g_strdup(body_start);
+    g_string_free(response, TRUE);
+    
+    return body;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
