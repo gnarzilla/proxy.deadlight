@@ -127,6 +127,21 @@ curl -X POST http://localhost:8080/api/federation/send \
 - `GET /api/federation/status` - Federation system status
 - `GET /api/federation/test/{domain}` - Test domain connectivity
 
+```
+   Alice's Proxy                    Bob's Proxy
+   (proxy.alice.deadlight)         (proxy.bob.deadlight)
+         │                                │
+         ├─ POST /api/federation/send     │
+         │  {"target": "bob.deadlight"}   │
+         │                                │
+         └──> SMTP (via MailChannels) ────┤
+                                          │
+                    ┌─────────────────────┘
+                    │
+                    ├─ POST /api/federation/receive
+                    └─ Stores in /var/lib/deadlight/federation/
+```
+
 #### Blog Integration (with blog.deadlight)
 - `GET /api/blog/posts` - List blog posts (cached locally, syncs from Workers)
 - `GET /api/blog/status` - Blog system status
