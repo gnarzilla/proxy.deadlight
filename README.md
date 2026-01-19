@@ -71,6 +71,7 @@ make UI=1           # With web UI
 | **Connection Pooling** | Reuses upstream connections with health checks (0-50% hit rate) |
 | **VPN Gateway** | Kernel-integrated TUN device for Layer 3 routing |
 | **REST API** | Full-featured API for email, federation, metrics, and management |
+| **Blog Cache** | Read-through cache for blog.deadlight with offline fallback |
 | **Plugins** | Ad blocking, rate limiting, custom filters |
 | **Web UI** | Real-time monitoring at `:8081` |
 | **Resource-Efficient** | 17.6 MB Docker image, minimal RAM usage |
