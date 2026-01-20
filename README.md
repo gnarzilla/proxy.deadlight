@@ -204,7 +204,7 @@ for credential injection (credentials never reach client devices).
 
 ## Credential Management (Planned)
 
-When paired with [vault.deadlight](vault.deadlight), the proxy can inject credentials into 
+When paired with [vault.deadlight](https://github.com/gnarzilla/vault.deadlight), the proxy can inject credentials into 
 requests without exposing them to client tools or the blog layer.
 
 **Status:** Not yet implemented. Currently, credentials are configured 
