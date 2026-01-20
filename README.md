@@ -53,8 +53,9 @@ services:
 ```bash
 git clone https://github.com/gnarzilla/proxy.deadlight.git
 cd proxy.deadlight
-make UI=1           # With web UI
-./bin/deadlight -v  # Start with verbose logging
+make clean && make UI=1           # With web UI
+./bin/deadlight -c deadlight.conf -v  # Start with verbose logging using the deadlight.conf configuration file.
+sudo ./bin/deadlight deadlight.conf   # Run as root for VPN
 ```
 
 **Requirements:** GLib 2.0+, OpenSSL 1.1+, GCC/Clang  
@@ -76,9 +77,9 @@ make UI=1           # With web UI
 | **Web UI** | Real-time monitoring at `:8081` |
 | **Resource-Efficient** | 17.6 MB Docker image, minimal RAM usage |
 
-### NEW: REST API
+### REST API
 
-Deadlight now includes a comprehensive REST API for:
+Includes a comprehensive REST API for:
 
 - **Email Sending** - Send emails via MailChannels API with optional HMAC authentication
 - **Federation** - Inter-instance communication via email transport (experimental)
@@ -106,8 +107,6 @@ curl -X POST http://localhost:8080/api/federation/send \
 ```
 
  **Full API Documentation:** [docs/API.md](docs/API.md)
-
-## REST API
 
 ### Available Endpoints
 
@@ -423,7 +422,3 @@ MIT License - see [LICENSE](docs/LICENSE)
 - **Email:** gnarzilla@deadlight.boo
 
 **Contributions welcome** See [CONTRIBUTING.md](docs/CONTRIBUTING.md)
-
----
-
-*Now with REST API for programmatic control and federation.*
