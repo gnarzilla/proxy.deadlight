@@ -18,8 +18,10 @@ static DeadlightHandlerResult api_handle_email_endpoint(DeadlightConnection *con
 static DeadlightHandlerResult api_handle_blog_endpoint(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
 static DeadlightHandlerResult api_handle_outbound_email(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
 static DeadlightHandlerResult api_handle_metrics_endpoint(DeadlightConnection *conn, GError **error);
+DeadlightHandlerResult api_handle_prometheus_metrics(DeadlightConnection *conn, GError **error);
 static DeadlightHandlerResult api_send_404(DeadlightConnection *conn, GError **error);
 static DeadlightHandlerResult api_send_json_response(DeadlightConnection *conn, gint status_code, const gchar *status_text, const gchar *json_body, GError **error);
+static DeadlightHandlerResult api_send_response(DeadlightConnection *conn, gint status_code, const gchar *status_text, const gchar *content_type, const gchar *body, GError **error);
 static DeadlightHandlerResult api_federation_send(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
 static DeadlightHandlerResult api_federation_receive(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
 static DeadlightHandlerResult api_federation_test_domain(DeadlightConnection *conn, const gchar *domain, GError **error);
@@ -52,24 +54,34 @@ void deadlight_register_api_handler(void) {
 // PROTOCOL DETECTION
 // ═══════════════════════════════════════════════════════════════════════════
 static gsize api_detect(const guint8 *data, gsize len) {
-    if (len < 9) return 0;
+    if (len < 6) return 0;
 
-    // Fast path: Check standard origin form
-    if ((len >= 9 && memcmp(data, "GET /api/", 9) == 0) ||
-        (len >= 10 && memcmp(data, "POST /api/", 10) == 0) ||
-        (len >= 9 && memcmp(data, "PUT /api/", 9) == 0) ||
-        (len >= 12 && memcmp(data, "DELETE /api/", 12) == 0) ||
-        (len >= 12 && memcmp(data, "OPTIONS /api/", 13) == 0)) {
+    // Fast path: standard /api/ + new /metrics paths
+    if (
+        // Existing API paths
+        (len >= 9  && memcmp(data, "GET /api/",    9) == 0) ||
+        (len >= 10 && memcmp(data, "POST /api/",  10) == 0) ||
+        (len >= 9  && memcmp(data, "PUT /api/",    9) == 0) ||
+        (len >= 12 && memcmp(data, "DELETE /api/",12) == 0) ||
+        (len >= 13 && memcmp(data, "OPTIONS /api/",13) == 0) ||
+        // NEW: also accept /metrics and /metrics/
+        (len >= 8  && memcmp(data, "GET /metrics", 8) == 0) ||
+        (len >= 9  && memcmp(data, "GET /metrics/",9) == 0)
+    ) {
         return 100;
     }
 
-    // Slow path: Check for /api/ anywhere in first line (absolute URI)
+    // Slow path: look for /api/ or /metrics anywhere in request line
     const guint8 *ptr = data;
     const guint8 *end = data + MIN(len, 512);
 
     while (ptr < end && *ptr != '\r' && *ptr != '\n') {
         if (ptr + 5 < end && memcmp(ptr, "/api/", 5) == 0) {
-            g_debug("API Detect: Found absolute URI match");
+            g_debug("API Detect: Found /api/ in absolute URI");
+            return 100;
+        }
+        if (ptr + 8 < end && memcmp(ptr, "/metrics", 8) == 0) {
+            g_debug("API Detect: Found /metrics in absolute URI");
             return 100;
         }
         ptr++;
@@ -239,8 +251,15 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
     else if (g_str_has_prefix(request->uri, "/api/federation/")) {
         result = api_handle_federation_endpoint(conn, request, error);
     }
+    else if (g_str_equal(request->method, "GET") &&
+        (g_str_equal(request->uri, "/metrics") || g_str_equal(request->uri, "/metrics/"))) {
+        result = api_handle_prometheus_metrics(conn, error);
+    }
     else if (g_str_has_prefix(request->uri, "/api/metrics")) {
         result = api_handle_metrics_endpoint(conn, error);
+    }
+    else if (g_str_has_prefix(request->uri, "/metrics")) {
+        result = api_handle_prometheus_metrics(conn, error);
     }
     else {
         g_debug("API handler: No route matched for URI: %s", request->uri);
@@ -774,6 +793,112 @@ static DeadlightHandlerResult api_handle_metrics_endpoint(DeadlightConnection *c
     return result;
 }
 
+DeadlightHandlerResult api_handle_prometheus_metrics(DeadlightConnection *conn, GError **error) {
+    DeadlightContext *ctx = conn->context;
+    GString *metrics = g_string_new("");
+
+    // ── Uptime & basic aggregates ─────────────────────────────────────────────
+    gdouble uptime = ctx->uptime_timer ? g_timer_elapsed(ctx->uptime_timer, NULL) : 0.0;
+
+    g_mutex_lock(&ctx->stats_mutex);
+
+    g_string_append(metrics, "# HELP deadlight_uptime_seconds Proxy uptime\n");
+    g_string_append(metrics, "# TYPE deadlight_uptime_seconds gauge\n");
+    g_string_append_printf(metrics, "deadlight_uptime_seconds %.2f\n\n", uptime);
+    
+
+    g_string_append(metrics, "# HELP deadlight_connections_total Lifetime connections accepted\n");
+    g_string_append(metrics, "# TYPE deadlight_connections_total counter\n");
+    g_string_append_printf(metrics, "deadlight_connections_total %lu\n\n", ctx->total_connections);
+
+    g_string_append(metrics, "# HELP deadlight_connections_active Currently active connections\n");
+    g_string_append(metrics, "# TYPE deadlight_connections_active gauge\n");
+    g_string_append_printf(metrics, "deadlight_connections_active %lu\n\n", ctx->active_connections);
+
+    g_string_append(metrics, "# HELP deadlight_bytes_transferred_total Total bytes transferred (bidirectional)\n");
+    g_string_append(metrics, "# TYPE deadlight_bytes_transferred_total counter\n");
+    g_string_append_printf(metrics, "deadlight_bytes_transferred_total %lu\n\n", ctx->bytes_transferred);
+
+    // ── Per-protocol lifetime totals (counters) ────────────────────────────────
+    g_string_append(metrics, "# HELP deadlight_protocol_connections_total Connections accepted by protocol (lifetime)\n");
+    g_string_append(metrics, "# TYPE deadlight_protocol_connections_total counter\n");
+    g_string_append_printf(metrics, "deadlight_protocol_connections_total{protocol=\"http\"}      %lu\n", ctx->http_connections_total);
+    g_string_append_printf(metrics, "deadlight_protocol_connections_total{protocol=\"https\"}     %lu\n", ctx->https_connections_total);
+    g_string_append_printf(metrics, "deadlight_protocol_connections_total{protocol=\"socks\"}     %lu\n", ctx->socks_connections_total);
+    g_string_append_printf(metrics, "deadlight_protocol_connections_total{protocol=\"api\"}       %lu\n", ctx->api_connections_total);
+    g_string_append_printf(metrics, "deadlight_protocol_connections_total{protocol=\"smtp\"}      %lu\n", ctx->smtp_connections_total);
+    g_string_append_printf(metrics, "deadlight_protocol_connections_total{protocol=\"imap\"}      %lu\n", ctx->imap_connections_total);
+    g_string_append_printf(metrics, "deadlight_protocol_connections_total{protocol=\"ftp\"}       %lu\n", ctx->ftp_connections_total);
+    g_string_append_printf(metrics, "deadlight_protocol_connections_total{protocol=\"websocket\"} %lu\n\n", ctx->websocket_connections_total);
+
+    // ── Per-protocol active (gauges) ──────────────────────────────────────────
+    guint active_by_proto[13] = {0};
+    if (ctx->connections) {
+        GHashTableIter iter;
+        gpointer key, value;
+        g_hash_table_iter_init(&iter, ctx->connections);
+        while (g_hash_table_iter_next(&iter, &key, &value)) {
+            DeadlightConnection *c = value;
+            if (c && c->protocol > 0 && c->protocol < G_N_ELEMENTS(active_by_proto)) {
+                active_by_proto[c->protocol]++;
+            }
+        }
+    }
+
+    g_string_append(metrics, "# HELP deadlight_protocol_connections_active Current active connections by protocol\n");
+    g_string_append(metrics, "# TYPE deadlight_protocol_connections_active gauge\n");
+    g_string_append_printf(metrics, "deadlight_protocol_connections_active{protocol=\"http\"}      %u\n", active_by_proto[DEADLIGHT_PROTOCOL_HTTP]);
+    g_string_append_printf(metrics, "deadlight_protocol_connections_active{protocol=\"https\"}     %u\n", active_by_proto[DEADLIGHT_PROTOCOL_HTTPS]);
+    g_string_append_printf(metrics, "deadlight_protocol_connections_active{protocol=\"socks\"}     %u\n", active_by_proto[DEADLIGHT_PROTOCOL_SOCKS]);
+    g_string_append_printf(metrics, "deadlight_protocol_connections_active{protocol=\"api\"}       %u\n", active_by_proto[DEADLIGHT_PROTOCOL_API]);
+    g_string_append_printf(metrics, "deadlight_protocol_connections_active{protocol=\"smtp\"}      %u\n", active_by_proto[DEADLIGHT_PROTOCOL_SMTP]);
+    g_string_append_printf(metrics, "deadlight_protocol_connections_active{protocol=\"imap\"}      %u\n", active_by_proto[DEADLIGHT_PROTOCOL_IMAP]);
+    g_string_append_printf(metrics, "deadlight_protocol_connections_active{protocol=\"ftp\"}       %u\n", active_by_proto[DEADLIGHT_PROTOCOL_FTP]);
+    g_string_append_printf(metrics, "deadlight_protocol_connections_active{protocol=\"websocket\"} %u\n\n", active_by_proto[DEADLIGHT_PROTOCOL_WEBSOCKET]);
+
+    // ── Connection pool ───────────────────────────────────────────────────────
+    if (ctx->conn_pool) {
+        guint idle = 0, active = 0;
+        guint64 gets = 0, hits = 0, evicted = 0, failed = 0;
+        gdouble hit_rate = 0.0;
+        connection_pool_get_stats(ctx->conn_pool, &idle, &active, &gets, &hits, &hit_rate, &evicted, &failed);
+
+        g_string_append(metrics, "# HELP deadlight_pool_connections Current pooled connections by state\n");
+        g_string_append(metrics, "# TYPE deadlight_pool_connections gauge\n");
+        g_string_append_printf(metrics, "deadlight_pool_connections{state=\"idle\"}  %u\n", idle);
+        g_string_append_printf(metrics, "deadlight_pool_connections{state=\"active\"} %u\n\n", active);
+
+        g_string_append(metrics, "# HELP deadlight_pool_operations_total Connection pool operations\n");
+        g_string_append(metrics, "# TYPE deadlight_pool_operations_total counter\n");
+        g_string_append_printf(metrics, "deadlight_pool_operations_total{type=\"gets\"}    %lu\n", gets);
+        g_string_append_printf(metrics, "deadlight_pool_operations_total{type=\"hits\"}    %lu\n", hits);
+        g_string_append_printf(metrics, "deadlight_pool_operations_total{type=\"evicted\"} %lu\n", evicted);
+        g_string_append_printf(metrics, "deadlight_pool_operations_total{type=\"failed\"}  %lu\n\n", failed);
+
+        g_string_append(metrics, "# HELP deadlight_pool_hit_rate Connection pool cache hit rate (0-1)\n");
+        g_string_append(metrics, "# TYPE deadlight_pool_hit_rate gauge\n");
+        g_string_append_printf(metrics, "deadlight_pool_hit_rate %.4f\n\n", hit_rate);
+        g_string_append_c(metrics, '\n');
+    }
+
+    g_mutex_unlock(&ctx->stats_mutex);
+
+    // Send response
+    gchar *body = g_string_free(metrics, FALSE);
+
+    DeadlightHandlerResult res = api_send_response(
+        conn,
+        200,
+        "OK",
+        "text/plain; version=0.0.4; charset=utf-8",
+        body,
+        error
+    );
+
+    g_free(body);
+    return res;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // FEDERATION IMPLEMENTATION
 // ═══════════════════════════════════════════════════════════════════════════
@@ -781,6 +906,7 @@ static DeadlightHandlerResult api_handle_metrics_endpoint(DeadlightConnection *c
 static DeadlightHandlerResult api_federation_send(DeadlightConnection *conn, 
                                                   DeadlightRequest *request, 
                                                   GError **error) {
+    (void)request;
     g_info("API federation send for conn %lu", conn->id);
 
     GError *parse_error = NULL;
@@ -1195,6 +1321,43 @@ static DeadlightHandlerResult api_send_json_response(DeadlightConnection *conn,
         status_code, status_text, strlen(json_body), json_body);
 
     g_debug("API conn %lu: Sending response (%zu bytes)", conn->id, strlen(response));
+    
+    gboolean write_success = g_output_stream_write_all(client_os, response, 
+                                                        strlen(response), NULL, NULL, error);
+    if (!write_success) {
+        g_warning("API conn %lu: Failed to write response: %s", 
+                  conn->id, error && *error ? (*error)->message : "unknown error");
+    }
+    
+    g_free(response);
+    return write_success ? HANDLER_SUCCESS_CLEANUP_NOW : HANDLER_ERROR;
+}
+
+static DeadlightHandlerResult api_send_response(DeadlightConnection *conn, 
+                                                gint status_code, 
+                                                const gchar *status_text, 
+                                                const gchar *content_type,
+                                                const gchar *body, 
+                                                GError **error) {
+    GOutputStream *client_os = g_io_stream_get_output_stream(
+        G_IO_STREAM(conn->client_connection));
+    
+    gchar *response = g_strdup_printf(
+        "HTTP/1.1 %d %s\r\n"
+        "Content-Type: %s\r\n"
+        "Content-Length: %zu\r\n"
+        "Access-Control-Allow-Origin: https://deadlight.boo\r\n"
+        "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n"
+        "Access-Control-Allow-Headers: Content-Type, X-API-Key, Authorization\r\n"
+        "Content-Encoding: identity\r\n"
+        "Cache-Control: no-cache\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "%s", 
+        status_code, status_text, content_type ? content_type : "text/plain", strlen(body), body);
+
+    g_debug("API conn %lu: Sending response (%zu bytes, type: %s)", 
+            conn->id, strlen(response), content_type ? content_type : "text/plain");
     
     gboolean write_success = g_output_stream_write_all(client_os, response, 
                                                         strlen(response), NULL, NULL, error);

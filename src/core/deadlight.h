@@ -126,6 +126,15 @@ struct _DeadlightContext {
     gint   pool_health_check_interval;
     gboolean pool_reuse_ssl;
 
+    guint64 http_connections_total;
+    guint64 https_connections_total;
+    guint64 socks_connections_total;
+    guint64 api_connections_total;
+    guint64 smtp_connections_total;
+    guint64 imap_connections_total;
+    guint64 ftp_connections_total;
+    guint64 websocket_connections_total;
+
     gchar *auth_endpoint;
     gchar *auth_secret;
     gboolean shutdown_requested;

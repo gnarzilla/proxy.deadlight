@@ -410,54 +410,6 @@ curl http://localhost:8080/api/federation/posts
 curl http://localhost:8080/api/metrics
 ```
 
-### Python Example (HMAC Auth)
-
-```python
-#!/usr/bin/env python3
-import requests
-import hmac
-import hashlib
-import json
-
-def send_authenticated_email(secret, from_addr, to_addr, subject, body):
-    url = "http://localhost:8080/api/outbound/email"
-    
-    payload = {
-        "from": from_addr,
-        "to": to_addr,
-        "subject": subject,
-        "body": body
-    }
-    
-    # Generate HMAC (no spaces in JSON)
-    payload_json = json.dumps(payload, separators=(',', ':'))
-    signature = hmac.new(
-        secret.encode('utf-8'),
-        payload_json.encode('utf-8'),
-        hashlib.sha256
-    ).hexdigest()
-    
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {signature}"
-    }
-    
-    response = requests.post(url, data=payload_json, headers=headers)
-    return response.json()
-
-# Usage
-result = send_authenticated_email(
-    secret="your_secret_here",
-    from_addr="sender@deadlight.boo",
-    to_addr="recipient@example.com",
-    subject="Test",
-    body="Hello from Python!"
-)
-print(result)
-```
-
----
-
 ## Storage Locations
 
 ### Federation Posts
