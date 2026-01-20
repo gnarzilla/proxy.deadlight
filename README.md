@@ -53,8 +53,9 @@ services:
 ```bash
 git clone https://github.com/gnarzilla/proxy.deadlight.git
 cd proxy.deadlight
-make UI=1           # With web UI
-./bin/deadlight -v  # Start with verbose logging
+make clean && make UI=1           # With web UI
+./bin/deadlight -c deadlight.conf -v  # Start with verbose logging using the deadlight.conf configuration file.
+sudo ./bin/deadlight deadlight.conf   # Run as root for VPN
 ```
 
 **Requirements:** GLib 2.0+, OpenSSL 1.1+, GCC/Clang  
@@ -76,9 +77,9 @@ make UI=1           # With web UI
 | **Web UI** | Real-time monitoring at `:8081` |
 | **Resource-Efficient** | 17.6 MB Docker image, minimal RAM usage |
 
-### NEW: REST API
+### REST API
 
-Deadlight now includes a comprehensive REST API for:
+Includes a comprehensive REST API for:
 
 - **Email Sending** - Send emails via MailChannels API with optional HMAC authentication
 - **Federation** - Inter-instance communication via email transport (experimental)
@@ -106,8 +107,6 @@ curl -X POST http://localhost:8080/api/federation/send \
 ```
 
  **Full API Documentation:** [docs/API.md](docs/API.md)
-
-## REST API
 
 ### Available Endpoints
 
@@ -182,7 +181,39 @@ mailchannels_api_key = <your_mailchannels_api_key>
 
 For complete API documentation, examples, and HMAC authentication guide, see **[docs/API.md](docs/API.md)**
 
----
+## Security Considerations
+
+### Threat Model
+- **Protected:** Traffic interception by network adversaries (via TLS)
+- **NOT protected:** Compromise of the proxy host itself
+
+### TLS Interception
+When enabled, the proxy terminates TLS and re-encrypts to upstream. 
+This means:
+- Plaintext is visible to the proxy process
+- Plugins can inspect/modify decrypted traffic
+- Credentials in requests are exposed to the proxy
+
+**Recommendation:** Run on trusted hardware. Consider vault.deadlight 
+for credential injection (credentials never reach client devices).
+
+### REST API Security
+- API binds to `0.0.0.0` by default—restrict with `api_bind = 127.0.0.1`
+- HMAC auth required for sensitive endpoints (`/api/outbound/*`)
+- Federation endpoints accept unauthenticated POSTs (by design)
+
+## Credential Management (Planned)
+
+When paired with [vault.deadlight](https://github.com/gnarzilla/vault.deadlight), the proxy can inject credentials into 
+requests without exposing them to client tools or the blog layer.
+
+**Status:** Not yet implemented. Currently, credentials are configured 
+manually in `deadlight.conf` or environment variables.
+
+**Planned integration:**
+- Unix socket API for credential requests
+- Automatic injection into upstream requests
+- Federation identity key management
 
 ## TLS Interception Setup
 
@@ -423,7 +454,3 @@ MIT License - see [LICENSE](docs/LICENSE)
 - **Email:** gnarzilla@deadlight.boo
 
 **Contributions welcome** See [CONTRIBUTING.md](docs/CONTRIBUTING.md)
-
----
-
-*Now with REST API for programmatic control and federation.*
