@@ -202,6 +202,19 @@ for credential injection (credentials never reach client devices).
 - HMAC auth required for sensitive endpoints (`/api/outbound/*`)
 - Federation endpoints accept unauthenticated POSTs (by design)
 
+## Credential Management (Planned)
+
+When paired with [vault.deadlight](vault.deadlight), the proxy can inject credentials into 
+requests without exposing them to client tools or the blog layer.
+
+**Status:** Not yet implemented. Currently, credentials are configured 
+manually in `deadlight.conf` or environment variables.
+
+**Planned integration:**
+- Unix socket API for credential requests
+- Automatic injection into upstream requests
+- Federation identity key management
+
 ## TLS Interception Setup
 
 For HTTPS inspection without browser warnings, install the Deadlight CA certificate.
