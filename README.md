@@ -181,7 +181,26 @@ mailchannels_api_key = <your_mailchannels_api_key>
 
 For complete API documentation, examples, and HMAC authentication guide, see **[docs/API.md](docs/API.md)**
 
----
+## Security Considerations
+
+### Threat Model
+- **Protected:** Traffic interception by network adversaries (via TLS)
+- **NOT protected:** Compromise of the proxy host itself
+
+### TLS Interception
+When enabled, the proxy terminates TLS and re-encrypts to upstream. 
+This means:
+- Plaintext is visible to the proxy process
+- Plugins can inspect/modify decrypted traffic
+- Credentials in requests are exposed to the proxy
+
+**Recommendation:** Run on trusted hardware. Consider vault.deadlight 
+for credential injection (credentials never reach client devices).
+
+### REST API Security
+- API binds to `0.0.0.0` by default—restrict with `api_bind = 127.0.0.1`
+- HMAC auth required for sensitive endpoints (`/api/outbound/*`)
+- Federation endpoints accept unauthenticated POSTs (by design)
 
 ## TLS Interception Setup
 
