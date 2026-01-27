@@ -20,9 +20,9 @@ worker_threads=4
 #Enable SSL interception
 enabled=true
 #CA certificate file
-ca_cert_file=/home/thatch/.deadlight/ca.crt
+ca_cert_file=~/.deadlight/ca/ca.crt
 #CA private key file
-ca_key_file=/home/thatch/.deadlight/ca.key
+ca_key_file=~/.deadlight/ca/ca.key
 #Certificate cache directory
 cert_cache_dir=/tmp/deadlight_certs
 #Maximum cached certificates
