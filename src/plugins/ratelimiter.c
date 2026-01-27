@@ -3,7 +3,7 @@
 #include <glib.h>
 #include <gio/gio.h>
 #include <string.h>
-#include "deadlight.h"
+#include "core/deadlight.h"
 #include "ratelimiter.h"
 
 // Periodic cleanup of old entries (run every 5 minutes)

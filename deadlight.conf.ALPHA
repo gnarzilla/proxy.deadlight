@@ -144,6 +144,12 @@ auth_realm=Deadlight Proxy
 #Require authentication for all requests
 require_auth=false
 
+[ratelimiter]
+enabled = true
+requests_per_minute = 10
+auth_requests_per_minute = 10
+burst_size = 10
+
 [cache]
 #Enable response caching
 enabled=true
