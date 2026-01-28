@@ -61,7 +61,7 @@ static gsize api_detect(const guint8 *data, gsize len) {
         (len >= 10 && memcmp(data, "POST /api/", 10) == 0) ||
         (len >= 9 && memcmp(data, "PUT /api/", 9) == 0) ||
         (len >= 12 && memcmp(data, "DELETE /api/", 12) == 0) ||
-        (len >= 12 && memcmp(data, "OPTIONS /api/", 13) == 0)) {
+        (len >= 13 && memcmp(data, "OPTIONS /api/", 13) == 0)) {
         return 100;
     }
 
@@ -193,6 +193,15 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
         deadlight_request_free(request);
         return HANDLER_ERROR;
     }
+
+    if (!deadlight_request_parse_headers(request, request_str, strlen(request_str))) {
+        g_warning("API conn %lu: Failed to parse request headers", conn->id);
+        g_free(request_str);
+        deadlight_request_free(request);
+        return HANDLER_ERROR;
+    }
+    
+    conn->current_request = request;
     
     g_debug("API conn %lu: Parsed - Method: '%s', URI: '%s', Body length: %u", 
             conn->id, request->method, request->uri, 
@@ -279,7 +288,7 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
         g_debug("API handler: No route matched for URI: %s", request->uri);
         result = api_send_404(conn, error);
     }
-    
+    conn->current_request = NULL;
     deadlight_request_free(request);
     return result;
 }
@@ -1081,7 +1090,11 @@ email_send_via_mailchannels(DeadlightConnection *conn,
     // Verify TLS was established
     if (!mc_conn->upstream_tls) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                   "TLS not established for MailChannels HTTPS");
+                   "TLS connection to MailChannels not established");
+        // Clean up the connection properly
+        if (mc_conn->upstream_connection) {
+            g_object_unref(mc_conn->upstream_connection);
+        }
         g_free(mc_conn->target_host);
         g_free(mc_conn);
         return FALSE;
