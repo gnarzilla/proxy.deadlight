@@ -12,10 +12,8 @@ A high-performance, multi-protocol proxy server built for **real-world condition
 ![Deadlight Proxy Web UI](assets/proxy.deadlight_cli_ui_boot2shut.gif)
 
 ### Live Demo Endpoints (For Testing Only)
-- Thatch Instance: [Main Interface](http://thatch-desktop.mulley-mooneye.ts.net:8080/) 
-- Health Check: curl http://thatch-desktop.mulley-mooneye.ts.net:8080/api/health
-- uPi Instance: [Main Interface](http://upi.mulley-mooneye.ts.net:8080/)
-- Health Check: curl http://upi.mulley-mooneye.ts.net:8080/api/health
+
+[Deadlight live proxy demo endpoints](https://deadlight.boo/post/proxy-directory)
 
 ## Quick Start
 
