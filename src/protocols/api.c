@@ -19,7 +19,7 @@ static DeadlightHandlerResult api_handle_outbound_email(DeadlightConnection *con
 static DeadlightHandlerResult api_handle_metrics_endpoint(DeadlightConnection *conn, GError **error);
 static DeadlightHandlerResult api_send_404(DeadlightConnection *conn, GError **error);
 static DeadlightHandlerResult api_send_json_response(DeadlightConnection *conn, gint status_code, const gchar *status_text, const gchar *json_body, GError **error);
-static DeadlightHandlerResult api_federation_send(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
+static DeadlightHandlerResult api_federation_send(DeadlightConnection *conn, GError **error);
 static DeadlightHandlerResult api_federation_receive(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
 static DeadlightHandlerResult api_federation_test_domain(DeadlightConnection *conn, const gchar *domain, GError **error);
 static gboolean email_send_via_mailchannels(DeadlightConnection *conn, const gchar *from, const gchar *to, const gchar *subject, const gchar *body, GError **error);
@@ -34,6 +34,153 @@ static gchar* fetch_from_workers(const gchar *workers_url, const gchar *endpoint
 static gboolean is_cache_fresh(const gchar *cache_file, gint ttl_seconds);
 static gchar* read_cache_file(const gchar *cache_file, GError **error);
 static gboolean write_cache_file(const gchar *cache_file, const gchar *content, GError **error);
+// ═══════════════════════════════════════════════════════════════════════════
+// FEDERATION TYPES AND HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+typedef struct {
+    gchar *domain;
+    gchar *federation_endpoint;
+    gchar *public_key;
+    gboolean supports_https;
+} FederationDiscovery;
+
+static FederationDiscovery* discover_federated_instance(const gchar *target_domain, GError **error);
+static void federation_discovery_free(FederationDiscovery *discovery);
+static DeadlightHandlerResult api_handle_wellknown_deadlight(DeadlightConnection *conn, GError **error);
+
+// Federation discovery implementation
+static FederationDiscovery* discover_federated_instance(const gchar *target_domain, GError **error) {
+    g_info("Federation: Discovering instance at %s", target_domain);
+    
+    // Try HTTPS discovery first
+    GSocketClient *client = g_socket_client_new();
+    g_socket_client_set_tls(client, TRUE);
+    g_socket_client_set_timeout(client, 10);
+    
+    GSocketConnection *conn = g_socket_client_connect_to_host(client, target_domain, 443, NULL, error);
+    g_object_unref(client);
+    
+    if (!conn) {
+        g_prefix_error(error, "Failed to connect to %s: ", target_domain);
+        return NULL;
+    }
+    
+    // Build HTTP request
+    GString *request = g_string_new(NULL);
+    g_string_append(request, "GET /.well-known/deadlight HTTP/1.1\r\n");
+    g_string_append_printf(request, "Host: %s\r\n", target_domain);
+    g_string_append(request, "Connection: close\r\n");
+    g_string_append(request, "\r\n");
+    
+    // Send request
+    GOutputStream *out = g_io_stream_get_output_stream(G_IO_STREAM(conn));
+    gsize written;
+    if (!g_output_stream_write_all(out, request->str, request->len, &written, NULL, error)) {
+        g_string_free(request, TRUE);
+        g_object_unref(conn);
+        return NULL;
+    }
+    g_string_free(request, TRUE);
+    
+    // Read response
+    GInputStream *in = g_io_stream_get_input_stream(G_IO_STREAM(conn));
+    GString *response = g_string_new(NULL);
+    gchar buf[4096];
+    gssize bytes_read;
+    
+    while ((bytes_read = g_input_stream_read(in, buf, sizeof(buf), NULL, error)) > 0) {
+        g_string_append_len(response, buf, bytes_read);
+    }
+    
+    g_object_unref(conn);
+    
+    if (bytes_read < 0) {
+        g_string_free(response, TRUE);
+        return NULL;
+    }
+    
+    // Extract JSON body
+    const gchar *body_start = strstr(response->str, "\r\n\r\n");
+    if (!body_start) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Invalid HTTP response");
+        g_string_free(response, TRUE);
+        return NULL;
+    }
+    body_start += 4;
+    
+    // Parse JSON
+    JsonParser *parser = json_parser_new();
+    if (!json_parser_load_from_data(parser, body_start, -1, error)) {
+        g_object_unref(parser);
+        g_string_free(response, TRUE);
+        return NULL;
+    }
+    
+    JsonNode *root = json_parser_get_root(parser);
+    if (!JSON_NODE_HOLDS_OBJECT(root)) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Response is not JSON object");
+        g_object_unref(parser);
+        g_string_free(response, TRUE);
+        return NULL;
+    }
+    
+    JsonObject *obj = json_node_get_object(root);
+    
+    FederationDiscovery *discovery = g_new0(FederationDiscovery, 1);
+    
+    if (json_object_has_member(obj, "instance")) {
+        discovery->domain = g_strdup(json_object_get_string_member(obj, "instance"));
+    } else {
+        discovery->domain = g_strdup(target_domain);
+    }
+    
+    if (json_object_has_member(obj, "federation_endpoint")) {
+        discovery->federation_endpoint = g_strdup(json_object_get_string_member(obj, "federation_endpoint"));
+    } else {
+        discovery->federation_endpoint = g_strdup_printf("https://%s/api/federation/receive", target_domain);
+    }
+    
+    discovery->supports_https = TRUE;
+    
+    if (json_object_has_member(obj, "public_key")) {
+        discovery->public_key = g_strdup(json_object_get_string_member(obj, "public_key"));
+    }
+    
+    g_object_unref(parser);
+    g_string_free(response, TRUE);
+    
+    g_info("Federation: Discovered %s at %s", discovery->domain, discovery->federation_endpoint);
+    
+    return discovery;
+}
+
+static void federation_discovery_free(FederationDiscovery *discovery) {
+    if (!discovery) return;
+    g_free(discovery->domain);
+    g_free(discovery->federation_endpoint);
+    g_free(discovery->public_key);
+    g_free(discovery);
+}
+
+// Well-known endpoint handler
+static DeadlightHandlerResult api_handle_wellknown_deadlight(DeadlightConnection *conn, GError **error) {
+    const gchar *our_domain = deadlight_config_get_string(conn->context, "federation", 
+                                                          "domain", "proxy.deadlight.boo");
+    
+    gchar *json_response = g_strdup_printf(
+        "{"
+        "\"instance\":\"%s\","
+        "\"federation_endpoint\":\"https://%s/api/federation/receive\","
+        "\"protocols\":[\"https\",\"smtp\"],"
+        "\"version\":\"1.0.0\","
+        "\"public_key\":null"
+        "}", our_domain, our_domain);
+    
+    DeadlightHandlerResult result = api_send_json_response(conn, 200, "OK", json_response, error);
+    g_free(json_response);
+    return result;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PROTOCOL HANDLER REGISTRATION
@@ -56,12 +203,17 @@ void deadlight_register_api_handler(void) {
 static gsize api_detect(const guint8 *data, gsize len) {
     if (len < 9) return 0;
 
-    // Fast path: Check standard origin form
+    // Check for /api/ endpoints
     if ((len >= 9 && memcmp(data, "GET /api/", 9) == 0) ||
         (len >= 10 && memcmp(data, "POST /api/", 10) == 0) ||
         (len >= 9 && memcmp(data, "PUT /api/", 9) == 0) ||
         (len >= 12 && memcmp(data, "DELETE /api/", 12) == 0) ||
         (len >= 13 && memcmp(data, "OPTIONS /api/", 13) == 0)) {
+        return 100;
+    }
+    
+    // Check for .well-known/deadlight
+    if (len >= 24 && memcmp(data, "GET /.well-known/deadlight", 26) == 0) {
         return 100;
     }
 
@@ -266,6 +418,9 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
         result = api_send_json_response(conn, 200, "OK", json_response, error);
         g_free(json_response);
     }
+    else if (g_str_equal(request->uri, "/.well-known/deadlight")) {
+        result = api_handle_wellknown_deadlight(conn, error);
+    }
     else if (g_str_has_prefix(request->uri, "/api/system/")) {
         result = api_handle_system_endpoint(conn, request, error);
     }
@@ -315,7 +470,7 @@ static DeadlightHandlerResult api_handle_federation_endpoint(DeadlightConnection
                                                              DeadlightRequest *request, 
                                                              GError **error) {
     if (g_str_equal(request->uri, "/api/federation/send")) {
-        return api_federation_send(conn, request, error);
+        return api_federation_send(conn, error);
     }
     else if (g_str_equal(request->uri, "/api/federation/receive")) {
         return api_federation_receive(conn, request, error);
@@ -531,7 +686,7 @@ static DeadlightHandlerResult api_handle_outbound_email(DeadlightConnection *con
     if (g_getenv("DEADLIGHT_DEBUG_HMAC")) {
         g_info("HMAC Debug Info:");
         g_info("  Auth header: %s", auth_header ? auth_header : "NULL");
-        g_info("  Body length: %zu bytes", request->body->len);
+        g_info("  Body length: %u bytes", request->body->len);
         g_info("  Secret length: %zu bytes", strlen(conn->context->auth_secret));
         
         // Show first 50 bytes of body
@@ -836,7 +991,6 @@ static DeadlightHandlerResult api_handle_metrics_endpoint(DeadlightConnection *c
 // ═══════════════════════════════════════════════════════════════════════════
 
 static DeadlightHandlerResult api_federation_send(DeadlightConnection *conn, 
-                                                  DeadlightRequest *request, 
                                                   GError **error) {
     g_info("API federation send for conn %lu", conn->id);
 
@@ -851,7 +1005,6 @@ static DeadlightHandlerResult api_federation_send(DeadlightConnection *conn,
         return result;
     }
 
-    // Validate required fields
     const gchar *required[] = {"target_domain", "content", "author"};
     if (!validate_json_fields(obj, required, 3, &parse_error)) {
         gchar *err_msg = g_strdup_printf("{\"error\":\"%s\"}", parse_error->message);
@@ -866,25 +1019,170 @@ static DeadlightHandlerResult api_federation_send(DeadlightConnection *conn,
     const gchar *content = json_object_get_string_member(obj, "content");
     const gchar *author = json_object_get_string_member(obj, "author");
 
-    // Construct federation email
+    // STEP 1: Try direct HTTPS federation
+    GError *discovery_error = NULL;
+    FederationDiscovery *discovery = discover_federated_instance(target_domain, &discovery_error);
+    
+    if (discovery && discovery->supports_https) {
+        g_info("Federation: Attempting direct HTTPS to %s", discovery->federation_endpoint);
+        
+        // Extract host from endpoint URL
+        gchar *host = NULL;
+        guint16 port = 443;
+        if (g_str_has_prefix(discovery->federation_endpoint, "https://")) {
+            host = g_strdup(discovery->federation_endpoint + 8);
+            gchar *slash = strchr(host, '/');
+            if (slash) *slash = '\0';
+        } else {
+            host = g_strdup(target_domain);
+        }
+        
+        // Create a temporary connection struct to use the proxy's network layer
+        DeadlightConnection *fed_conn_ctx = g_new0(DeadlightConnection, 1);
+        fed_conn_ctx->context = conn->context;
+        fed_conn_ctx->target_host = g_strdup(host);
+        fed_conn_ctx->target_port = port;
+        fed_conn_ctx->will_use_ssl = TRUE;
+        fed_conn_ctx->id = conn->id;
+        
+        // Use your existing network connection function
+        GError *connect_error = NULL;
+        if (deadlight_network_connect_upstream(fed_conn_ctx, &connect_error)) {
+            g_info("Federation: Connected to %s via proxy network layer", host);
+            
+            if (fed_conn_ctx->upstream_tls) {
+                // Build POST request
+                gchar *path = strrchr(discovery->federation_endpoint, '/');
+                if (!path) path = "/api/federation/receive";
+                
+                JsonBuilder *builder = json_builder_new();
+                json_builder_begin_object(builder);
+                json_builder_set_member_name(builder, "content");
+                json_builder_add_string_value(builder, content);
+                json_builder_set_member_name(builder, "author");
+                json_builder_add_string_value(builder, author);
+                json_builder_set_member_name(builder, "timestamp");
+                json_builder_add_int_value(builder, time(NULL));
+                json_builder_end_object(builder);
+                
+                JsonGenerator *gen = json_generator_new();
+                JsonNode *root = json_builder_get_root(builder);
+                json_generator_set_root(gen, root);
+                gchar *json_payload = json_generator_to_data(gen, NULL);
+                
+                GString *http_request = g_string_new(NULL);
+                g_string_append_printf(http_request, "POST %s HTTP/1.1\r\n", path);
+                g_string_append_printf(http_request, "Host: %s\r\n", host);
+                g_string_append(http_request, "Content-Type: application/json\r\n");
+                g_string_append_printf(http_request, "Content-Length: %zu\r\n", strlen(json_payload));
+                g_string_append_printf(http_request, "From: federation@%s\r\n", 
+                                    deadlight_config_get_string(conn->context, "federation", "domain", "proxy.deadlight.boo"));
+                g_string_append(http_request, "Connection: close\r\n");
+                g_string_append(http_request, "\r\n");
+                g_string_append(http_request, json_payload);
+                
+                GOutputStream *out = g_io_stream_get_output_stream(G_IO_STREAM(fed_conn_ctx->upstream_tls));
+                gsize written;
+                GError *write_error = NULL;
+                
+                if (g_output_stream_write_all(out, http_request->str, http_request->len, &written, NULL, &write_error)) {
+                    g_info("Federation: Sent %zu bytes to %s", written, host);
+                    
+                    // Read response
+                    GInputStream *in = g_io_stream_get_input_stream(G_IO_STREAM(fed_conn_ctx->upstream_tls));
+                    gchar buf[2048];
+                    gssize bytes = g_input_stream_read(in, buf, sizeof(buf)-1, NULL, NULL);
+                    
+                    if (bytes > 0) {
+                        buf[bytes] = '\0';
+                        g_debug("Federation: Response: %s", buf);
+                        
+                        if (strstr(buf, "200 OK") || strstr(buf, "202 Accepted")) {
+                            g_info("Federation: Direct HTTPS delivery succeeded to %s", target_domain);
+                            
+                            gchar *response = g_strdup_printf(
+                                "{\"status\":\"sent\",\"transport\":\"https\",\"target\":\"%s\"}",
+                                target_domain);
+                            
+                            DeadlightHandlerResult result = api_send_json_response(conn, 200, "OK", response, error);
+                            
+                            // Cleanup
+                            g_free(response);
+                            g_string_free(http_request, TRUE);
+                            g_free(json_payload);
+                            json_node_unref(root);
+                            g_object_unref(gen);
+                            g_object_unref(builder);
+                            
+                            if (fed_conn_ctx->upstream_connection) {
+                                g_object_unref(fed_conn_ctx->upstream_connection);
+                            }
+                            g_free(fed_conn_ctx->target_host);
+                            g_free(fed_conn_ctx);
+                            g_free(host);
+                            federation_discovery_free(discovery);
+                            json_object_unref(obj);
+                            
+                            return result;
+                        } else {
+                            g_warning("Federation: Server returned non-success: %s", buf);
+                        }
+                    }
+                } else {
+                    g_warning("Federation: Write failed: %s", write_error ? write_error->message : "unknown");
+                    if (write_error) g_error_free(write_error);
+                }
+                
+                g_string_free(http_request, TRUE);
+                g_free(json_payload);
+                json_node_unref(root);
+                g_object_unref(gen);
+                g_object_unref(builder);
+            } else {
+                g_warning("Federation: TLS not established");
+            }
+            
+            if (fed_conn_ctx->upstream_connection) {
+                g_object_unref(fed_conn_ctx->upstream_connection);
+            }
+        } else {
+            g_warning("Federation: Connection failed: %s", connect_error ? connect_error->message : "unknown");
+            if (connect_error) g_error_free(connect_error);
+        }
+        
+        g_free(fed_conn_ctx->target_host);
+        g_free(fed_conn_ctx);
+        g_free(host);
+    } else {
+        g_info("Federation: Direct HTTPS not available, using email transport");
+    }
+    
+    if (discovery_error) {
+        g_warning("Federation: Discovery failed: %s", discovery_error->message);
+        g_error_free(discovery_error);
+    }
+    federation_discovery_free(discovery);
+
+    // STEP 2: Fallback to email (your existing code)
+    g_info("Federation: Falling back to email transport for %s", target_domain);
+    
     gchar *subject = g_strdup_printf("[Federation] Post from %s", author);
     gchar *to_address = g_strdup_printf("federation@%s", target_domain);
     
-    // Send via email transport
     GError *send_error = NULL;
     gboolean sent = email_send_via_mailchannels(conn, "federation@deadlight.boo",
                                                 to_address, subject, content, &send_error);
     
     DeadlightHandlerResult result;
     if (sent) {
-        g_info("Federation: Sent post to %s", target_domain);
+        g_info("Federation: Sent post to %s via email", target_domain);
         result = api_send_json_response(conn, 200, "OK",
             "{\"status\":\"sent\",\"transport\":\"email\"}", error);
     } else {
-        g_warning("Federation: Failed to send to %s: %s", target_domain,
+        g_warning("Federation: Email fallback also failed: %s", 
                   send_error ? send_error->message : "unknown");
         gchar *err_json = g_strdup_printf(
-            "{\"error\":\"Federation send failed: %s\"}",
+            "{\"error\":\"All federation transports failed: %s\"}",
             send_error ? send_error->message : "unknown");
         result = api_send_json_response(conn, 502, "Bad Gateway", err_json, error);
         g_free(err_json);
