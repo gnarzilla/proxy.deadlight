@@ -129,16 +129,20 @@ static FederationDiscovery* discover_federated_instance(const gchar *target_doma
     
     FederationDiscovery *discovery = g_new0(FederationDiscovery, 1);
     
-    if (json_object_has_member(obj, "instance")) {
-        discovery->domain = g_strdup(json_object_get_string_member(obj, "instance"));
-    } else {
-        discovery->domain = g_strdup(target_domain);
+    if (json_object_has_member(obj, "federation")) {
+        JsonObject *fed_obj = json_object_get_object_member(obj, "federation");
+        if (json_object_has_member(fed_obj, "inbox")) {
+            discovery->federation_endpoint = g_strdup(json_object_get_string_member(fed_obj, "inbox"));
+        }
     }
-    
-    if (json_object_has_member(obj, "federation_endpoint")) {
-        discovery->federation_endpoint = g_strdup(json_object_get_string_member(obj, "federation_endpoint"));
-    } else {
-        discovery->federation_endpoint = g_strdup_printf("https://%s/api/federation/receive", target_domain);
+
+    // Fallback if the above fails
+    if (!discovery->federation_endpoint) {
+        if (json_object_has_member(obj, "federation_endpoint")) {
+            discovery->federation_endpoint = g_strdup(json_object_get_string_member(obj, "federation_endpoint"));
+        } else {
+            discovery->federation_endpoint = g_strdup_printf("https://%s/api/federation/inbox", target_domain);
+        }
     }
     
     discovery->supports_https = TRUE;
@@ -1016,6 +1020,9 @@ static DeadlightHandlerResult api_federation_send(DeadlightConnection *conn,
     }
 
     const gchar *target_domain = json_object_get_string_member(obj, "target_domain");
+    const gchar *target_user = json_object_has_member(obj, "target_user") 
+                                ? json_object_get_string_member(obj, "target_user") 
+                                : NULL;
     const gchar *content = json_object_get_string_member(obj, "content");
     const gchar *author = json_object_get_string_member(obj, "author");
 
@@ -1054,15 +1061,35 @@ static DeadlightHandlerResult api_federation_send(DeadlightConnection *conn,
                 // Build POST request
                 gchar *path = strrchr(discovery->federation_endpoint, '/');
                 if (!path) path = "/api/federation/receive";
-                
+
+                // Build federation POST payload (Blog-compatible format)
                 JsonBuilder *builder = json_builder_new();
                 json_builder_begin_object(builder);
-                json_builder_set_member_name(builder, "content");
+
+                // Top-level fields the blog expects
+                json_builder_set_member_name(builder, "from");
+                json_builder_add_string_value(builder, g_strdup_printf("%s@%s", author,
+                    deadlight_config_get_string(conn->context, "federation", "domain", "proxy.deadlight.boo")));
+
+                json_builder_set_member_name(builder, "subject");
+                json_builder_add_string_value(builder, "Federated Post via Proxy");
+
+                json_builder_set_member_name(builder, "body");
                 json_builder_add_string_value(builder, content);
-                json_builder_set_member_name(builder, "author");
-                json_builder_add_string_value(builder, author);
+
                 json_builder_set_member_name(builder, "timestamp");
                 json_builder_add_int_value(builder, time(NULL));
+
+                // The critical headers object
+                json_builder_set_member_name(builder, "headers");
+                json_builder_begin_object(builder);
+                    json_builder_set_member_name(builder, "X-Deadlight-Type");
+                    json_builder_add_string_value(builder, "federation");
+                    
+                    json_builder_set_member_name(builder, "Message-ID");
+                    json_builder_add_string_value(builder, g_strdup_printf("<%ld@proxy.deadlight.boo>", time(NULL)));
+                json_builder_end_object(builder);
+
                 json_builder_end_object(builder);
                 
                 JsonGenerator *gen = json_generator_new();
@@ -1080,6 +1107,8 @@ static DeadlightHandlerResult api_federation_send(DeadlightConnection *conn,
                 g_string_append(http_request, "Connection: close\r\n");
                 g_string_append(http_request, "\r\n");
                 g_string_append(http_request, json_payload);
+
+                g_info("Federation: Sending payload:\n%s", json_payload);
                 
                 GOutputStream *out = g_io_stream_get_output_stream(G_IO_STREAM(fed_conn_ctx->upstream_tls));
                 gsize written;
