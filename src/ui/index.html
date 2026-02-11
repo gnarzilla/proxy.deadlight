@@ -1,9 +1,16 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DEADLIGHT // CONSOLE</title>
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="favicon.png">
+    <!-- Fallback for .ico -->
+    <link rel="shortcut icon" type="image/x-icon" href="favicon.ico">
+    
     <style>
         :root {
             --bg: #09090b;
@@ -238,27 +245,36 @@
     // Colors the log line based on content
     function renderLogLine(line) {
         // Regex: Date Time [LEVEL] Message
-        // Adjusted to be flexible with spaces around the brackets
         const regex = /^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})\s$$\s*(\w+)\s*$$\s(.*)/;
         const match = line.match(regex);
 
-        if (!match) return `<div class="log-line"><span class="msg">${line}</span></div>`;
+        if (!match) {
+            return `<div class="log-line" style="color:#aaa;"><span class="msg">${line}</span></div>`;
+        }
 
         const [_, ts, level, msg] = match;
         
-        // Highlight specific keywords to make them pop
-        let richMsg = msg
-            .replace(/(Connection \d+)/g, '<span style="color:#67e8f9">\$1</span>') // Cyan for ID
-            .replace(/([a-zA-Z0-9.-]+\.com:\d+)/g, '<span style="color:#fcd34d">\$1</span>') // Yellow for Hosts
-            .replace(/(direct:\/\/)/g, '<span style="color:#86efac">\$1</span>'); // Green for Direct
+        // Map level to color
+        let levelColor = '#999';  // Default gray
+        switch(level.trim()) {
+            case 'INFO':   levelColor = '#3b82f6'; break;  // Blue
+            case 'WARN':   levelColor = '#eab308'; break;  // Yellow
+            case 'ERROR':  levelColor = '#ef4444'; break;  // Red
+            case 'DEBUG':  levelColor = '#52525b'; break;  // Dark Gray
+        }
 
-        // Map levels to CSS classes
-        // Ensure you have .lvl-INFO, .lvl-DEBUG, etc defined in your <style>
+        // Highlight keywords in message
+        let richMsg = msg
+            .replace(/(Connection \d+)/g, '<span style="color:#67e8f9; font-weight:bold;">\$1</span>') // Cyan
+            .replace(/([a-zA-Z0-9.-]+\.com:\d+)/g, '<span style="color:#fcd34d; font-weight:bold;">\$1</span>') // Yellow
+            .replace(/(direct:\/\/|https:\/\/)/g, '<span style="color:#86efac;">\$1</span>') // Green
+            .replace(/(Pool\s\w+|TLS|SSL|CONNECT)/g, '<span style="color:#c084fc;">\$1</span>'); // Purple highlights
+
         return `
-            <div class="log-line">
-                <span class="ts" style="color:#52525b; margin-right:10px">${ts}</span>
-                <span class="lvl-${level.trim()}">${level}</span>
-                <span class="msg" style="margin-left:10px">${richMsg}</span>
+            <div class="log-line" style="display:flex; gap:10px; align-items:baseline;">
+                <span style="color:#52525b; opacity:0.7; min-width:120px;">${ts}</span>
+                <span style="color:${levelColor}; font-weight:bold; min-width:60px; text-align:right;">[${level}]</span>
+                <span style="color:#aaa; flex:1;">${richMsg}</span>
             </div>
         `;
     }
