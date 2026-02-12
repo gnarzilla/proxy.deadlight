@@ -6,6 +6,7 @@
 #include "core/utils.h"
 #include "smtp.h"
 #include "plugins/ratelimiter.h"
+#include "core/logging.h"
 
 // Forward declarations
 static gsize api_detect(const guint8 *data, gsize len);
@@ -24,7 +25,7 @@ static DeadlightHandlerResult api_federation_receive(DeadlightConnection *conn, 
 static DeadlightHandlerResult api_federation_test_domain(DeadlightConnection *conn, const gchar *domain, GError **error);
 static gboolean email_send_via_mailchannels(DeadlightConnection *conn, const gchar *from, const gchar *to, const gchar *subject, const gchar *body, GError **error);
 
-// Prometheus metrics (called from http.c)
+static DeadlightHandlerResult api_handle_logs_endpoint(DeadlightConnection *conn, GError **error); 
 DeadlightHandlerResult api_handle_prometheus_metrics(DeadlightConnection *conn, GError **error);
 
 // Helper functions
@@ -402,7 +403,7 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
     if (g_str_equal(request->method, "OPTIONS")) {
         const gchar *response = 
             "HTTP/1.1 200 OK\r\n"
-            "Access-Control-Allow-Origin: https://deadlight.boo\r\n"
+            "Access-Control-Allow-Origin: *\r\n"  // <--- CHANGE THIS TO * for local testing
             "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n"
             "Access-Control-Allow-Headers: Content-Type, X-API-Key, Authorization\r\n"
             "Content-Length: 0\r\n"
@@ -443,6 +444,9 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
     else if (g_str_has_prefix(request->uri, "/api/metrics")) {
         result = api_handle_metrics_endpoint(conn, error);
     }
+    else if (g_str_equal(request->uri, "/api/logs")) {
+        result = api_handle_logs_endpoint(conn, error);
+    }
     else {
         g_debug("API handler: No route matched for URI: %s", request->uri);
         result = api_send_404(conn, error);
@@ -455,6 +459,24 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
 // ═══════════════════════════════════════════════════════════════════════════
 // ENDPOINT HANDLERS
 // ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LOGGING ENDPOINT
+// ═══════════════════════════════════════════════════════════════════════════
+
+static DeadlightHandlerResult api_handle_logs_endpoint(DeadlightConnection *conn, 
+                                                       GError **error) {
+    // Requires: #include "core/logging.h"
+    gchar *json_logs = deadlight_logging_get_buffered_json();
+    
+    if (!json_logs) {
+        return api_send_json_response(conn, 200, "OK", "[]", error);
+    }
+
+    DeadlightHandlerResult result = api_send_json_response(conn, 200, "OK", json_logs, error);
+    g_free(json_logs);
+    return result;
+}
 
 static DeadlightHandlerResult api_handle_system_endpoint(DeadlightConnection *conn, 
                                                          DeadlightRequest *request, 

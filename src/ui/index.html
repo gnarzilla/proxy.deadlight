@@ -229,11 +229,12 @@
 
 <script>
     // == CONFIG ==
+    // Point this to your main Proxy Port (8080), NOT the UI port (8081)
     const API_BASE = 'http://127.0.0.1:8080'; 
     const API_STATS = API_BASE + '/api/metrics'; 
     const API_LOGS  = API_BASE + '/api/logs';
-
-    // == PARSERS ==
+    
+    // == UTILS ==
     function formatBytes(bytes) {
         if (bytes === 0) return '0 B';
         const k = 1024;
@@ -242,39 +243,40 @@
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     }
 
-    // Colors the log line based on content
+    function formatUptime(seconds) {
+        if (!seconds) return "0s";
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = Math.floor(seconds % 60);
+        
+        if (h > 0) return `${h}h ${m}m ${s}s`;
+        if (m > 0) return `${m}m ${s}s`;
+        return `${s}s`;
+    }
+
     function renderLogLine(line) {
         // Regex: Date Time [LEVEL] Message
-        const regex = /^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})\s$$\s*(\w+)\s*$$\s(.*)/;
+        // Loose matching for spacing
+        const regex = /^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})\s$$\s*([A-Z]+)\s*$$\s(.*)/;
         const match = line.match(regex);
 
-        if (!match) {
-            return `<div class="log-line" style="color:#aaa;"><span class="msg">${line}</span></div>`;
-        }
+        if (!match) return `<div class="log-line"><span class="msg">${line}</span></div>`;
 
         const [_, ts, level, msg] = match;
-        
-        // Map level to color
-        let levelColor = '#999';  // Default gray
-        switch(level.trim()) {
-            case 'INFO':   levelColor = '#3b82f6'; break;  // Blue
-            case 'WARN':   levelColor = '#eab308'; break;  // Yellow
-            case 'ERROR':  levelColor = '#ef4444'; break;  // Red
-            case 'DEBUG':  levelColor = '#52525b'; break;  // Dark Gray
-        }
+        const cleanLevel = level.trim(); 
 
-        // Highlight keywords in message
+        // Keyword Highlighting for the Cyberpunk look
         let richMsg = msg
-            .replace(/(Connection \d+)/g, '<span style="color:#67e8f9; font-weight:bold;">\$1</span>') // Cyan
-            .replace(/([a-zA-Z0-9.-]+\.com:\d+)/g, '<span style="color:#fcd34d; font-weight:bold;">\$1</span>') // Yellow
-            .replace(/(direct:\/\/|https:\/\/)/g, '<span style="color:#86efac;">\$1</span>') // Green
-            .replace(/(Pool\s\w+|TLS|SSL|CONNECT)/g, '<span style="color:#c084fc;">\$1</span>'); // Purple highlights
+            .replace(/(Connection \d+)/g, '<span style="color:#67e8f9">\$1</span>') // Cyan
+            .replace(/([a-zA-Z0-9.-]+\.com:\d+)/g, '<span style="color:#fcd34d">\$1</span>') // Yellow
+            .replace(/(direct:\/\/)/g, '<span style="color:#86efac">\$1</span>'); // Green
 
+        // CSS classes must be defined in <style> (.lvl-INFO, etc)
         return `
-            <div class="log-line" style="display:flex; gap:10px; align-items:baseline;">
-                <span style="color:#52525b; opacity:0.7; min-width:120px;">${ts}</span>
-                <span style="color:${levelColor}; font-weight:bold; min-width:60px; text-align:right;">[${level}]</span>
-                <span style="color:#aaa; flex:1;">${richMsg}</span>
+            <div class="log-line">
+                <span class="ts" style="color:#52525b; margin-right:10px">${ts}</span>
+                <span class="lvl-${cleanLevel}">${level}</span>
+                <span class="msg" style="margin-left:10px">${richMsg}</span>
             </div>
         `;
     }
@@ -283,82 +285,112 @@
 
     // 1. Fetch Stats
     async function updateStats() {
-        // Mocking data based on your screenshot until you connect real API
-        // Replace this object with: const data = await (await fetch(API_STATS)).json();
-        const data = {
-            connections: { active: 2, total: 112 },
-            bytes: 78000,
-            uptime: "2.18 min",
-            active_tunnels: [
-                { id: 110, host: "quotes-gw.webullfintech.com:443", method: "CONNECT", tx: 569 }
-            ]
-        };
+        try {
+            const res = await fetch(API_STATS);
+            if (!res.ok) throw new Error("API Offline");
+            const data = await res.json();
 
-        // DOM Updates
-        document.getElementById('val-active').innerText = data.connections.active + " / " + data.connections.total;
-        document.getElementById('val-total').innerText = data.connections.total;
-        document.getElementById('val-bytes').innerText = formatBytes(data.bytes);
-        document.getElementById('val-uptime').innerText = data.uptime;
+            // DOM Updates
+            document.getElementById('val-active').innerText = 
+                data.active_connections + " / " + data.total_connections;
+            
+            document.getElementById('val-total').innerText = data.total_connections;
+            document.getElementById('val-bytes').innerText = formatBytes(data.bytes_transferred);
+            document.getElementById('val-uptime').innerText = formatUptime(data.uptime);
 
-        // Render Connections list
-        const list = document.getElementById('conn-list');
-        list.innerHTML = data.active_tunnels.map(t => `
-            <li class="conn-row">
-                <span style="color:#555">#${t.id}</span>
-                <span>${t.host}</span>
-                <span class="method">${t.method}</span>
-            </li>
-        `).join('');
+            // Render Active Protocols (Mapping 'protocols' object from api.c)
+            // Since api.c returns counts, we visualize the breakdown here
+            const list = document.getElementById('conn-list');
+            let html = '';
+            let hasActive = false;
+
+            // Iterate over protocols (HTTP, HTTPS, SOCKS, etc)
+            for (const [proto, stats] of Object.entries(data.protocols)) {
+                if (stats.active > 0) {
+                    hasActive = true;
+                    html += `
+                    <li class="conn-row">
+                        <span style="color:#555">PRO</span>
+                        <span style="font-weight:bold">${proto}</span>
+                        <span class="method" style="text-align:right">${stats.active} ACTIVE</span>
+                    </li>`;
+                }
+            }
+
+            if (!hasActive) {
+                 html = '<li class="conn-row" style="opacity:0.5; justify-content:center;">Waiting for traffic...</li>';
+            }
+            list.innerHTML = html;
+
+        } catch (e) {
+            console.warn("Stats fetch failed:", e);
+            document.getElementById('val-active').innerText = "OFFLINE";
+        }
     }
 
     // 2. Fetch Logs
-    // We keep track of the last log we saw to avoid duplicates if API sends full buffer
-    let lastLogHash = ""; 
+    // We store the raw string of the last log we added to avoid duplicates
+    let lastLogLine = ""; 
 
     async function updateLogs() {
         try {
-            // For now, let's simulate the API response based on your text
-            // In production: const logs = await (await fetch(API_LOGS)).json();
+            const res = await fetch(API_LOGS);
+            if (!res.ok) return;
             
-            // SIMULATED NEW LOGS FOR DEMO
-            const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
-            const mockLogs = [
-                `${now} [INFO ] deadlight: New connection from 127.0.0.1:48198`,
-                `${now} [DEBUG] deadlight: Worker thread processing connection 112`,
-                `${now} [INFO ] deadlight: Connection 112: CONNECT request to api.github.com:443`,
-                `${now} [DEBUG] pxbackend: px_manager_get_proxies_sync: Proxy[0] = direct://`
-            ];
-            
-            // Randomly add a log to simulate live stream
-            const logs = Math.random() > 0.5 ? [mockLogs[Math.floor(Math.random()*mockLogs.length)]] : [];
-
+            const logs = await res.json();
             const term = document.getElementById('terminal');
             
-            logs.forEach(line => {
-                const el = document.createElement('div');
-                el.innerHTML = renderLogLine(line);
-                term.appendChild(el);
-            });
-
-            // Auto Scroll
-            if(document.getElementById('auto-scroll').checked) {
-                term.scrollTop = term.scrollHeight;
-            }
+            // LOGIC: Find where our last known log is in the new array, 
+            // and only append what comes AFTER it.
+            let newLogs = [];
             
-            // Limit DOM elements (prevent browser crash on long run)
-            if(term.childElementCount > 500) {
-                term.removeChild(term.firstChild);
+            if (lastLogLine === "") {
+                newLogs = logs; // First run, take all
+            } else {
+                const lastIndex = logs.indexOf(lastLogLine);
+                if (lastIndex !== -1) {
+                    // We found our last line, take everything after it
+                    newLogs = logs.slice(lastIndex + 1);
+                } else {
+                    // Mismatch (buffer cycled completely?), take all
+                    // Optional: could check timestamps to be smarter
+                    newLogs = logs; 
+                }
             }
 
-        } catch(e) { console.log("Log fetch error", e); }
+            if (newLogs.length > 0) {
+                // Update our tracker
+                lastLogLine = logs[logs.length - 1];
+
+                // Append to DOM
+                newLogs.forEach(line => {
+                    const el = document.createElement('div');
+                    el.innerHTML = renderLogLine(line);
+                    term.appendChild(el);
+                });
+
+                // Auto Scroll
+                if(document.getElementById('auto-scroll').checked) {
+                    term.scrollTop = term.scrollHeight;
+                }
+                
+                // Cleanup DOM (keep max 500 lines to save RAM)
+                while(term.childElementCount > 500) {
+                    term.removeChild(term.firstChild);
+                }
+            }
+
+        } catch(e) { console.warn("Log fetch error", e); }
     }
 
     // Start Loops
-    setInterval(updateStats, 1000);
-    setInterval(updateLogs, 500); // Poll logs faster
+    // Update stats every second, logs every 500ms for responsiveness
+    setInterval(updateStats, 5000);
+    setInterval(updateLogs, 2000); 
     
     // Initial paint
     updateStats();
+    updateLogs();
 </script>
 </body>
 </html>
