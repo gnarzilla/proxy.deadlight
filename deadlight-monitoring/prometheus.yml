@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: deadlight
+    static_configs:
+      - targets: ['deadlight:8080']   # container name + internal port
+    metrics_path: /api/metrics
+    scrape_timeout: 20s

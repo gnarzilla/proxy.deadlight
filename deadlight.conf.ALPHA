@@ -20,9 +20,15 @@ worker_threads=4
 #Enable SSL interception
 enabled=true
 #CA certificate file
+<<<<<<< HEAD
 ca_cert_file=/home/thatch/.deadlight/ca/ca.crt
 #CA private key file
 ca_key_file=/home/thatch/.deadlight/ca/ca.key
+=======
+ca_cert_file=/home/thatch/.deadlight/ca.crt
+#CA private key file
+ca_key_file=/home/thatch/.deadlight/ca.key
+>>>>>>> refs/remotes/origin/main
 #Certificate cache directory
 cert_cache_dir=/tmp/deadlight_certs
 #Maximum cached certificates
@@ -86,7 +92,11 @@ connection_pool_reuse_ssl=true
 #Enable plugin system
 enabled=true
 #Plugin directory
+<<<<<<< HEAD
 plugin_dir=/usr/lib/deadlight/plugins
+=======
+plugin_dir=./bin/plugins
+>>>>>>> refs/remotes/origin/main
 #Auto-load plugins
 autoload=adblocker,logger,stats
 #Enable built-in plugins
@@ -144,6 +154,15 @@ auth_realm=Deadlight Proxy
 #Require authentication for all requests
 require_auth=false
 
+<<<<<<< HEAD
+=======
+[ratelimiter]
+enabled = true
+requests_per_minute = 10
+auth_requests_per_minute = 10
+burst_size = 10
+
+>>>>>>> refs/remotes/origin/main
 [cache]
 #Enable response caching
 enabled=true
@@ -171,3 +190,34 @@ blocked_domains=
 max_request_size=10MB
 #Maximum header size
 max_header_size=8KB
+<<<<<<< HEAD
+=======
+# HMAC secret for API authentication (64+ chars recommended)
+auth_secret = gross-window-birthday-shit
+
+[smtp]
+mailchannels_api_key = MQCF5IjfM76vCh09b3q0egSW0lqinNVw
+
+# Bridge mode disabled (we're sending, not receiving)
+bridge_mode = false
+
+# Default sender for outgoing emails
+default_from = noreply@deadlight.boo
+
+# Enable SMTP client mode
+client_mode = true
+
+[vpn]
+enabled=true
+
+[blog]
+# URL of your Workers instance
+workers_url = https://deadlight.boo
+# How often to sync cache (seconds)
+cache_ttl = 300
+# Enable read-through caching
+enable_cache = true
+# Local cache directory
+cache_dir = /var/lib/deadlight/blog
+sync_mode = write
+>>>>>>> refs/remotes/origin/main

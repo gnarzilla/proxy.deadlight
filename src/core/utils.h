@@ -10,5 +10,7 @@ gchar* get_external_ip(void);
 gchar* deadlight_format_bytes(guint64 bytes);
 gchar* deadlight_format_duration(gint64 seconds);
 gboolean validate_hmac(const gchar *auth_header, const gchar *payload, const gchar *secret);
+/* New, preferred API */
+gboolean validate_hmac_bytes(const gchar *auth_header, const guint8 *payload, gsize payload_len, const gchar *secret);
                        
 #endif // DEADLIGHT_UTILS_H

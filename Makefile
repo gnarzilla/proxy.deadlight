@@ -49,10 +49,13 @@ CORE_SOURCES = main.c config.c context.c logging.c network.c ssl.c \
 
 PROTOCOL_SOURCES = http.c imap.c imaps.c socks.c smtp.c websocket.c ftp.c api.c federation.c
 
+# Static plugins (compiled into binary)
+PLUGIN_STATIC_SOURCES = ratelimiter.c
+
 VPN_SOURCES = vpn_gateway.c
 
-# Combine all sources into one list
-ALL_SOURCES = $(CORE_SOURCES) $(PROTOCOL_SOURCES) $(VPN_SOURCES)
+# Combine all sources
+ALL_SOURCES = $(CORE_SOURCES) $(PROTOCOL_SOURCES) $(PLUGIN_STATIC_SOURCES) $(VPN_SOURCES)
 
 # ==== UI configuration ====
 UI ?= 0

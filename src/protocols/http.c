@@ -5,6 +5,7 @@
 #include <string.h>
 #include <glib.h>
 #include <gio/gio.h>
+#include "protocols/api.h"
 
 static gsize http_detect(const guint8 *data, gsize len);
 static DeadlightHandlerResult http_handle(DeadlightConnection *conn, GError **error);
@@ -69,25 +70,22 @@ static DeadlightHandlerResult http_handle(DeadlightConnection *conn, GError **er
 static void http_cleanup(DeadlightConnection *conn) {
     (void)conn;
 }
+
 static DeadlightHandlerResult handle_plain_http(DeadlightConnection *conn, GError **error) {
     conn->current_request = deadlight_request_new(conn);
 
-    // Parse headers
     if (!deadlight_request_parse_headers(conn->current_request, (const gchar *)conn->client_buffer->data, conn->client_buffer->len)) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Failed to parse HTTP request headers");
         return HANDLER_ERROR;
     }
 
-    g_debug("Connection %lu: Calling plugin hook for %s %s", 
-            conn->id, conn->current_request->method, conn->current_request->uri);
-    
-    // Call plugin hook
+    // Call plugin hook early
     if (!deadlight_plugins_call_on_request_headers(conn->context, conn->current_request)) {
         g_info("Connection %lu: HTTP request blocked by plugin", conn->id);
         return HANDLER_SUCCESS_CLEANUP_NOW;
     }
 
-    // --- STEP 1: Parse the Host Header first (So we have the 'host' variable) ---
+    // Get Host header
     const gchar *host_header = deadlight_request_get_header(conn->current_request, "host");
     if (!host_header) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Missing Host header");
@@ -101,33 +99,33 @@ static DeadlightHandlerResult handle_plain_http(DeadlightConnection *conn, GErro
         return HANDLER_ERROR; 
     }
 
-    // --- STEP 2: Assign target to connection object ---
-    conn->target_host = g_strdup(host);
-    conn->target_port = port;
-
-    // --- STEP 3: Handle Local API / Status Checks ---
-    
-    // We need to check against common local aliases AND the specific hostname used in your dashboard
-    gboolean is_local = (g_strcmp0(host, "localhost") == 0 || 
+    // Check for local requests BEFORE setting target / connecting
+    gboolean is_local = (g_strcmp0(host, "localhost") == 0 ||
                          g_strcmp0(host, "127.0.0.1") == 0 ||
                          g_strcmp0(host, "::1") == 0 ||
-                         // Check against the bind address
+                         g_strcmp0(host, "deadlight") == 0 ||                // compose service name
                          (conn->context->listen_address && g_strcmp0(host, conn->context->listen_address) == 0) ||
-                         // Check if the host contains our Tailscale/Network name
-                         // In a production version, you'd iterate through local interfaces or a config list.
-                         // For now, let's catch the one crashing your demo:
-                         strstr(host, "emilyssidepc") != NULL || 
-                         strstr(host, "mulley-mooneye") != NULL || 
-                         strstr(host, "ts.net") != NULL); 
+                         strstr(host, "emilyssidepc") != NULL ||
+                         strstr(host, "mulley-mooneye") != NULL ||
+                         strstr(host, "ts.net") != NULL);
 
     if (is_local) {
-        // Handle Root / Status Check
+        g_debug("Connection %lu: Detected local request to %s:%d → handling internally", conn->id, host, port);
+
+        // Handle /metrics specifically
+        if (g_str_equal(conn->current_request->uri, "/metrics") ||
+            g_str_equal(conn->current_request->uri, "/metrics/")) {
+            g_free(host);
+            return api_handle_prometheus_metrics(conn, error);
+        }
+
+        // Handle root path or other local status
         if (g_strcmp0(conn->current_request->uri, "/") == 0) {
-            const gchar *status_body = "DEADLIGHT PROXY: ONLINE\nSystem: Secure\n";
+            const gchar *status_body = "DEADLIGHT PROXY: ONLINE\n";
             gchar *response = g_strdup_printf(
                 "HTTP/1.1 200 OK\r\n"
                 "Content-Type: text/plain\r\n"
-                "Content-Length: %lu\r\n"
+                "Content-Length: %zu\r\n"
                 "Connection: close\r\n"
                 "\r\n"
                 "%s", strlen(status_body), status_body);
@@ -138,38 +136,43 @@ static DeadlightHandlerResult handle_plain_http(DeadlightConnection *conn, GErro
             g_free(host);
             return HANDLER_SUCCESS_CLEANUP_NOW;
         }
-        
+
+        // Default: 404 for other local paths
         const gchar *not_found = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
         GOutputStream *out = g_io_stream_get_output_stream(G_IO_STREAM(conn->client_connection));
-        
         g_output_stream_write_all(out, not_found, strlen(not_found), NULL, NULL, NULL);
         
         g_debug("Connection %lu: Local resource '%s' not found", conn->id, conn->current_request->uri);
         g_free(host);
         return HANDLER_SUCCESS_CLEANUP_NOW;
-        
     }
 
-    // --- STEP 4: Proxy Loop Prevention ---
-    if (is_local && port == conn->context->listen_port) {
-        g_warning("Connection %lu: Detected proxy loop to %s:%d. Denying request.", conn->id, host, port);
+    // Only reach here if NOT local → safe to proxy
+    conn->target_host = g_strdup(host);
+    conn->target_port = port;
+
+    // Proxy loop prevention
+    if (conn->target_port == conn->context->listen_port &&
+        (g_strcmp0(conn->target_host, conn->context->listen_address) == 0 ||
+         g_strcmp0(conn->target_host, "localhost") == 0 ||
+         g_strcmp0(conn->target_host, "127.0.0.1") == 0)) {
+        g_warning("Connection %lu: Detected proxy loop. Denying.", conn->id);
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "Proxy loop detected");
         g_free(host);
         return HANDLER_ERROR;
     }
 
-    g_info("Connection %lu: HTTP request to %s:%d", conn->id, host, port);
-    
-    // Attempt upstream connection (Safe now because target_host is set)
+    g_info("Connection %lu: Forwarding HTTP to %s:%d", conn->id, conn->target_host, conn->target_port);
+    g_free(host);  // Safe now — we've used it
+
+    // Connect upstream
     if (!deadlight_network_connect_upstream(conn, error)) {
-        g_free(host);
         return HANDLER_ERROR;
     }
-    g_free(host);
 
-    // Send data upstream
+    // Send initial request data upstream
     GOutputStream *upstream_output = g_io_stream_get_output_stream(G_IO_STREAM(conn->upstream_connection));
-    if (g_output_stream_write_all(upstream_output, conn->client_buffer->data, conn->client_buffer->len, NULL, NULL, error) == FALSE) {
+    if (!g_output_stream_write_all(upstream_output, conn->client_buffer->data, conn->client_buffer->len, NULL, NULL, error)) {
         return HANDLER_ERROR;
     }
     

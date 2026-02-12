@@ -506,28 +506,70 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, GError **
         NULL,
         error
     );
-    
     g_object_unref(client);
-    
+
     if (!conn->upstream_connection) {
         g_warning("Connection %lu: Failed to connect to %s:%d: %s",
-                  conn->id, conn->target_host, conn->target_port,
-                  error && *error ? (*error)->message : "unknown error");
+                conn->id, conn->target_host, conn->target_port,
+                error && *error ? (*error)->message : "unknown error");
         return FALSE;
     }
-    
-    // Register with pool (will upgrade to TLS later if needed)
-    connection_pool_register(
-        conn->context->conn_pool,
-        G_IO_STREAM(conn->upstream_connection),
-        conn->target_host,
-        conn->target_port,
-        CONN_TYPE_PLAIN
-    );
-    
-    g_info("Connection %lu: Connected to %s:%d (SSL=%d)",
-           conn->id, conn->target_host, conn->target_port, conn->will_use_ssl);
-    
+
+    if (conn->will_use_ssl) {
+        GSocketConnectable *identity = g_network_address_new(conn->target_host, conn->target_port);
+        
+        GIOStream *tls_stream = g_tls_client_connection_new(
+            G_IO_STREAM(conn->upstream_connection),
+            identity,
+            error
+        );
+        g_object_unref(identity);
+        
+        if (!tls_stream) {
+            g_warning("Connection %lu: Failed to create TLS connection: %s",
+                    conn->id, error && *error ? (*error)->message : "unknown");
+            g_clear_object(&conn->upstream_connection);
+            return FALSE;
+        }
+        
+        conn->upstream_tls = G_TLS_CONNECTION(tls_stream);
+        
+        // Perform the handshake synchronously
+        if (!g_tls_connection_handshake(conn->upstream_tls, NULL, error)) {
+            g_warning("Connection %lu: TLS handshake failed: %s",
+                    conn->id, error && *error ? (*error)->message : "unknown");
+            g_clear_object(&conn->upstream_tls);
+            g_clear_object(&conn->upstream_connection);
+            return FALSE;
+        }
+        
+        conn->ssl_established = TRUE;
+        
+        // Register as TLS connection
+        connection_pool_register(
+            conn->context->conn_pool,
+            G_IO_STREAM(conn->upstream_tls),
+            conn->target_host,
+            conn->target_port,
+            CONN_TYPE_CLIENT_TLS
+        );
+        
+        g_info("Connection %lu: TLS established to %s:%d",
+            conn->id, conn->target_host, conn->target_port);
+    } else {
+        // Register plain connection
+        connection_pool_register(
+            conn->context->conn_pool,
+            G_IO_STREAM(conn->upstream_connection),
+            conn->target_host,
+            conn->target_port,
+            CONN_TYPE_PLAIN
+        );
+        
+        g_info("Connection %lu: Connected to %s:%d (plain)",
+            conn->id, conn->target_host, conn->target_port);
+    }
+
     return TRUE;
 }
 
@@ -880,9 +922,7 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
     // Only free if we didn't remove from table (and thus destructor wasn't called)
     g_free(conn);
 }
-/**
- * A simple, blocking TCP connection function.
- */
+
 GSocketConnection* deadlight_network_connect_tcp(DeadlightContext *context, const gchar *host, guint16 port, GError **error) {
     (void)context;
 
@@ -893,10 +933,6 @@ GSocketConnection* deadlight_network_connect_tcp(DeadlightContext *context, cons
     return connection;
 }
 
-/**
- * Tunnels data between two GSocketConnections
- * FIXED: Uses GIO pollable streams instead of raw g_poll for TLS compatibility
- */
 void deadlight_network_tunnel_socket_connections(GSocketConnection *conn1, GSocketConnection *conn2) {
     GInputStream *in1 = g_io_stream_get_input_stream(G_IO_STREAM(conn1));
     GOutputStream *out1 = g_io_stream_get_output_stream(G_IO_STREAM(conn1));
@@ -1004,18 +1040,6 @@ void deadlight_network_tunnel_socket_connections(GSocketConnection *conn1, GSock
     }
 }
 
-/**
- * Transfer data between client and upstream
- * FIXED: Replaced g_poll with GIO pollable streams for TLS compatibility
- * 
- * CRITICAL FIX FOR TLS BUFFERING:
- * - Can't use raw g_poll() on file descriptors when TLS is involved
- * - TLS libraries buffer decrypted data in userspace
- * - Kernel socket may show "no data" while TLS buffer has data
- * - This caused multi-second stalls on satellite/LoRa links
- * 
- * Solution: Use GIO's pollable stream API which handles buffering correctly
- */
 gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error) {
     g_return_val_if_fail(conn != NULL, FALSE);
     g_return_val_if_fail(conn->client_connection != NULL, FALSE);

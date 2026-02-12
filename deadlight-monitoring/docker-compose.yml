@@ -1,0 +1,45 @@
+services:
+  deadlight:
+    image: gnarzilla/proxy-deadlight:latest
+    container_name: deadlight-monitoring-proxy
+    restart: unless-stopped
+    environment:
+      - DEADLIGHT_AUTH_SECRET=gross-window-birthday-shit
+    volumes:
+      - ./proxy-config:/etc/deadlight
+      - ./federation:/var/lib/deadlight/federation
+      - ./blog-cache:/var/lib/deadlight/blog
+    # cap_add & privileged only if you want to test VPN mode
+    # cap_add:
+    #   - NET_ADMIN
+    # privileged: true
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - deadlight
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123pleasechange
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+
+volumes:
+  prometheus-data:
+  grafana-data:
