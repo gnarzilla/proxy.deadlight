@@ -11,9 +11,14 @@ A high-performance, multi-protocol proxy server built for **real-world condition
 
 ![Deadlight Proxy Web UI](assets/proxy.deadlight_cli_ui_boot2shut.gif)
 
+<<<<<<< HEAD
 ### Live Demo Endpoints (For Testing Only)
 
 [Deadlight live proxy demo endpoints](https://deadlight.boo/post/proxy-directory)
+=======
+> **Security Notice:** This proxy can perform TLS interception. 
+> Only deploy on hardware you control. See [Security Considerations](#security-considerations).
+>>>>>>> refs/remotes/origin/main
 
 ## Quick Start
 
