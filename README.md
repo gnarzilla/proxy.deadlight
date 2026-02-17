@@ -417,9 +417,8 @@ See [docs/EXTENDING.md](docs/EXTENDING.md) for details.
 - [x] Federation system (experimental)
 - [x] Connection pool metrics
 - [x] Blog caching with offline fallback
-- [ ] HMAC authentication fixes
 - [x] Blog backend integration (read-through cache)
-- [ ] API rate limiting
+- [ ] API rate limiting tested & vetted
 - [x] Server-Sent Events for real-time dashboard
 
 ### Medium-term (late 2026)
