@@ -11,10 +11,6 @@ A high-performance, multi-protocol proxy server built for **real-world condition
 
 ![SSE Web UI](src/assets/Proxy_SSE_UI.gif)
 
-### Live Demo Endpoints (For Testing Only)
-
-[Deadlight live proxy demo endpoints](https://deadlight.boo/post/proxy-directory)
-
 > **Security Notice:** This proxy can perform TLS interception. 
 > Only deploy on hardware you control. See [Security Considerations](#security-considerations).
 
