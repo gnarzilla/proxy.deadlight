@@ -9,7 +9,7 @@ A high-performance, multi-protocol proxy server built for **real-world condition
 
 [Quick Start](#quick-start) · [Features](#features) · [API](#rest-api) · [Configuration](#configuration) · [Documentation](docs/) · [Usage Examples](#usage-examples) · [Architecture](#architecture) · [Roadmap](#roadmap)
 
-![Web UI](src/assets/ProxyUII_2.26.gif)
+![SSE Web UI](src/assets/Proxy_SSE_UI.gif)
 
 ### Live Demo Endpoints (For Testing Only)
 
