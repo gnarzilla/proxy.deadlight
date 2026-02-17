@@ -11,9 +11,8 @@ A high-performance, multi-protocol proxy server built for **real-world condition
 
 ![Deadlight Proxy Web UI](assets/proxy.deadlight_cli_ui_boot2shut.gif)
 
-### Live Demo Endpoints (For Testing Only)
-
-[Deadlight live proxy demo endpoints](https://deadlight.boo/post/proxy-directory)
+> **Security Notice:** This proxy can perform TLS interception. 
+> Only deploy on hardware you control. See [Security Considerations](#security-considerations).
 
 ## Quick Start
 
@@ -78,7 +77,7 @@ sudo ./bin/deadlight deadlight.conf   # Run as root for VPN
 | **REST API** | Full-featured API for email, federation, metrics, and management |
 | **Blog Cache** | Read-through cache for blog.deadlight with offline fallback |
 | **Plugins** | Ad blocking, rate limiting, custom filters |
-| **Web UI** | Real-time monitoring at `:8081` |
+| **Web UI** | Connects via Server-Sent Events for zero-overhead real-time monitoring at `:8081` |
 | **Resource-Efficient** | 17.6 MB Docker image, minimal RAM usage |
 
 ### REST API
@@ -118,6 +117,9 @@ curl -X POST http://localhost:8080/api/federation/send \
 - `GET /api/health` - Health check with version info
 - `GET /api/system/ip` - External IP detection
 - `GET /api/metrics` - Real-time metrics (connections, protocols, pool stats)
+- `GET /api/stream` - SSE real-time event stream
+- `GET /api/deashboard` - unified metrics + logs (polling fallback)
+- `GET /api/logs` - log buffer
 
 #### Email
 - `POST /api/email/send` - Send email (no auth)
@@ -410,7 +412,7 @@ See [docs/EXTENDING.md](docs/EXTENDING.md) for details.
 
 ## Roadmap
 
-### Near-term (2025)
+### Near-term (early 2026)
 - [x] REST API with email sending
 - [x] Federation system (experimental)
 - [x] Connection pool metrics
@@ -418,9 +420,9 @@ See [docs/EXTENDING.md](docs/EXTENDING.md) for details.
 - [ ] HMAC authentication fixes
 - [x] Blog backend integration (read-through cache)
 - [ ] API rate limiting
-- [ ] WebSocket support for real-time updates
+- [x] Server-Sent Events for real-time dashboard
 
-### Medium-term (2026)
+### Medium-term (late 2026)
 - [ ] Dynamic plugin loading (no rebuild required)
 - [ ] Full IPv6 support
 - [ ] Windows/macOS native builds
