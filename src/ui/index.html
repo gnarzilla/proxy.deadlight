@@ -1,14 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DEADLIGHT // CONSOLE</title>
+    <title>DEADLIGHT // CONSOLE [REALTIME]</title>
     
-    <!-- Favicon -->
     <link rel="icon" type="image/png" href="favicon.png">
-    <!-- Fallback for .ico -->
     <link rel="shortcut icon" type="image/x-icon" href="favicon.ico">
     
     <style>
@@ -18,10 +15,8 @@
             --border: #27272a;
             --text-main: #e4e4e7;
             --text-dim: #71717a;
-            --accent: #f59e0b; /* Amber */
+            --accent: #f59e0b;
             --log-bg: #000000;
-            
-            /* Log Colors */
             --l-info: #3b82f6;
             --l-warn: #eab308;
             --l-err: #ef4444;
@@ -42,7 +37,6 @@
             gap: 20px;
         }
 
-        /* HEADER */
         header {
             display: flex;
             justify-content: space-between;
@@ -52,12 +46,14 @@
         }
         h1 { margin: 0; font-size: 20px; letter-spacing: -1px; }
         .badge { 
-            background: var(--accent); color: #000; 
-            padding: 2px 8px; border-radius: 4px; 
-            font-size: 12px; font-weight: bold; 
+            background: var(--accent); 
+            color: #000; 
+            padding: 2px 8px; 
+            border-radius: 4px; 
+            font-size: 12px; 
+            font-weight: bold; 
         }
 
-        /* TOP GRID (Stats) */
         .grid {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
@@ -69,18 +65,22 @@
             padding: 15px;
             border-radius: 6px;
         }
-        .card-label { color: var(--text-dim); font-size: 11px; text-transform: uppercase; margin-bottom: 5px; display: block;}
+        .card-label { 
+            color: var(--text-dim); 
+            font-size: 11px; 
+            text-transform: uppercase; 
+            margin-bottom: 5px; 
+            display: block;
+        }
         .card-value { font-size: 24px; font-weight: 600; }
 
-        /* MAIN CONTENT SPLIT */
         .workspace {
             display: flex;
             flex: 1;
             gap: 20px;
-            overflow: hidden; /* Important for scroll */
+            overflow: hidden;
         }
 
-        /* CONNECTIONS LIST (Left) */
         .conn-panel {
             flex: 1;
             background: var(--panel);
@@ -116,7 +116,6 @@
         .conn-row:hover { background: #27272a; }
         .method { color: var(--accent); font-weight: bold; }
 
-        /* LOG TERMINAL (Right) */
         .terminal-panel {
             flex: 2;
             background: var(--log-bg);
@@ -134,8 +133,13 @@
             font-family: 'Consolas', monospace;
         }
         
-        /* Log Syntax Highlighting */
-        .log-line { display: block; margin-bottom: 2px; line-height: 1.4; border-left: 2px solid transparent; padding-left: 5px;}
+        .log-line { 
+            display: block; 
+            margin-bottom: 2px; 
+            line-height: 1.4; 
+            border-left: 2px solid transparent; 
+            padding-left: 5px;
+        }
         .log-line:hover { background: #111; border-left-color: var(--text-dim); }
         
         .ts { color: var(--l-time); opacity: 0.7; margin-right: 10px; }
@@ -144,17 +148,35 @@
         .lvl-ERROR { color: var(--l-err); font-weight: bold; }
         .lvl-DEBUG { color: var(--l-debug); }
         .msg { color: var(--text-main); }
-        
-        /* Specific highlight for your keywords */
-        .kwd-conn { color: #a5f3fc; } /* Connection IDs */
-        .kwd-host { color: #fcd34d; } /* Hostnames */
 
-        /* SCROLLBAR */
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: var(--bg); }
         ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
 
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+        .status-online { background: #10b981; }
+        .status-offline { background: #ef4444; animation: none; }
+        .status-connecting { background: #eab308; }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* New: Stream indicator */
+        .stream-mode {
+            font-size: 10px;
+            color: var(--text-dim);
+            margin-left: 5px;
+        }
     </style>
 </head>
 <body>
@@ -171,14 +193,16 @@
                 <path d="M4.93 19.07l4.24-4.24"></path>
             </svg>
             <h1>DEADLIGHT <span style="opacity:0.5">//</span> PROXY</h1>
+            <span class="stream-mode" id="mode-indicator">⚡ REALTIME</span>
         </div>
         <div>
             <span class="badge">v1.0.0</span>
-            <span class="badge" style="background:#333; color:#fff; margin-left:5px;">MESH: ONLINE</span>
+            <span class="badge" id="api-status-badge" style="background:#333; color:#fff; margin-left:5px;">
+                <span class="status-indicator status-connecting"></span>CONNECTING...
+            </span>
         </div>
     </header>
 
-    <!-- METRICS -->
     <div class="grid">
         <div class="card">
             <span class="card-label">Active Connections</span>
@@ -199,26 +223,25 @@
     </div>
 
     <div class="workspace">
-        <!-- LEFT: ACTIVE CONNECTIONS -->
         <div class="conn-panel">
             <div class="panel-head">
                 <span>TUNNELS</span>
                 <span style="font-size: 10px; opacity: 0.7">LIVE</span>
             </div>
             <ul class="conn-list" id="conn-list">
-                <!-- Javascript will populate this -->
                 <li class="conn-row" style="text-align:center; display:block; opacity:0.5; padding:20px;">
                     Waiting for telemetry...
                 </li>
             </ul>
         </div>
 
-        <!-- RIGHT: LIVE LOGS -->
         <div class="terminal-panel">
             <div class="panel-head">
                 <span>SYSTEM LOG</span>
                 <div style="display:flex; gap:10px;">
-                    <label style="font-size:10px;"><input type="checkbox" checked id="auto-scroll"> AUTO-SCROLL</label>
+                    <label style="font-size:10px;">
+                        <input type="checkbox" checked id="auto-scroll"> AUTO-SCROLL
+                    </label>
                 </div>
             </div>
             <div class="terminal-window" id="terminal">
@@ -228,13 +251,24 @@
     </div>
 
 <script>
-    // == CONFIG ==
-    // Point this to your main Proxy Port (8080), NOT the UI port (8081)
-    const API_BASE = 'http://127.0.0.1:8080'; 
-    const API_STATS = API_BASE + '/api/metrics'; 
-    const API_LOGS  = API_BASE + '/api/logs';
+    // ═══════════════════════════════════════════════════════════════════════
+    // CONFIG
+    // ═══════════════════════════════════════════════════════════════════════
+    const API_BASE = 'http://127.0.0.1:8080';
+    const SSE_ENDPOINT = API_BASE + '/api/stream';
     
-    // == UTILS ==
+    // ═══════════════════════════════════════════════════════════════════════
+    // STATE
+    // ═══════════════════════════════════════════════════════════════════════
+    let lastLogLine = "";
+    let eventSource = null;
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT_DELAY = 30000; // 30 seconds max
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // UTILITY FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════════════
+    
     function formatBytes(bytes) {
         if (bytes === 0) return '0 B';
         const k = 1024;
@@ -255,142 +289,248 @@
     }
 
     function renderLogLine(line) {
-        // Regex: Date Time [LEVEL] Message
-        // Loose matching for spacing
-        const regex = /^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})\s$$\s*([A-Z]+)\s*$$\s(.*)/;
+        const regex = /^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})\s\[\s*([A-Z]+)\s*\]\s(.*)/;
         const match = line.match(regex);
 
-        if (!match) return `<div class="log-line"><span class="msg">${line}</span></div>`;
+        if (!match) {
+            return `<div class="log-line"><span class="msg">${escapeHtml(line)}</span></div>`;
+        }
 
         const [_, ts, level, msg] = match;
-        const cleanLevel = level.trim(); 
+        const cleanLevel = level.trim();
 
-        // Keyword Highlighting for the Cyberpunk look
-        let richMsg = msg
-            .replace(/(Connection \d+)/g, '<span style="color:#67e8f9">\$1</span>') // Cyan
-            .replace(/([a-zA-Z0-9.-]+\.com:\d+)/g, '<span style="color:#fcd34d">\$1</span>') // Yellow
-            .replace(/(direct:\/\/)/g, '<span style="color:#86efac">\$1</span>'); // Green
+        let richMsg = escapeHtml(msg)
+            .replace(/(Connection \d+)/g, '<span style="color:#67e8f9">$1</span>')
+            .replace(/([a-zA-Z0-9.-]+\.com:\d+)/g, '<span style="color:#fcd34d">$1</span>')
+            .replace(/(direct:\/\/)/g, '<span style="color:#86efac">$1</span>');
 
-        // CSS classes must be defined in <style> (.lvl-INFO, etc)
         return `
             <div class="log-line">
-                <span class="ts" style="color:#52525b; margin-right:10px">${ts}</span>
-                <span class="lvl-${cleanLevel}">${level}</span>
+                <span class="ts">${ts}</span>
+                <span class="lvl-${cleanLevel}">[${level}]</span>
                 <span class="msg" style="margin-left:10px">${richMsg}</span>
             </div>
         `;
     }
 
-    // == UPDATE LOOPS ==
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
 
-    // 1. Fetch Stats
-    async function updateStats() {
-        try {
-            const res = await fetch(API_STATS);
-            if (!res.ok) throw new Error("API Offline");
-            const data = await res.json();
-
-            // DOM Updates
-            document.getElementById('val-active').innerText = 
-                data.active_connections + " / " + data.total_connections;
-            
-            document.getElementById('val-total').innerText = data.total_connections;
-            document.getElementById('val-bytes').innerText = formatBytes(data.bytes_transferred);
-            document.getElementById('val-uptime').innerText = formatUptime(data.uptime);
-
-            // Render Active Protocols (Mapping 'protocols' object from api.c)
-            // Since api.c returns counts, we visualize the breakdown here
-            const list = document.getElementById('conn-list');
-            let html = '';
-            let hasActive = false;
-
-            // Iterate over protocols (HTTP, HTTPS, SOCKS, etc)
-            for (const [proto, stats] of Object.entries(data.protocols)) {
-                if (stats.active > 0) {
-                    hasActive = true;
-                    html += `
-                    <li class="conn-row">
-                        <span style="color:#555">PRO</span>
-                        <span style="font-weight:bold">${proto}</span>
-                        <span class="method" style="text-align:right">${stats.active} ACTIVE</span>
-                    </li>`;
-                }
-            }
-
-            if (!hasActive) {
-                 html = '<li class="conn-row" style="opacity:0.5; justify-content:center;">Waiting for traffic...</li>';
-            }
-            list.innerHTML = html;
-
-        } catch (e) {
-            console.warn("Stats fetch failed:", e);
-            document.getElementById('val-active').innerText = "OFFLINE";
+    function updateApiStatus(status) {
+        const badge = document.getElementById('api-status-badge');
+        const indicator = badge.querySelector('.status-indicator');
+        
+        if (status === 'online') {
+            badge.innerHTML = '<span class="status-indicator status-online"></span>STREAMING';
+            badge.style.background = '#10b981';
+            badge.style.color = '#000';
+            reconnectAttempts = 0;
+        } else if (status === 'connecting') {
+            badge.innerHTML = '<span class="status-indicator status-connecting"></span>CONNECTING...';
+            badge.style.background = '#eab308';
+            badge.style.color = '#000';
+        } else {
+            const retryIn = Math.min(2 ** reconnectAttempts, 30);
+            badge.innerHTML = `<span class="status-indicator status-offline"></span>OFFLINE (retry ${retryIn}s)`;
+            badge.style.background = '#ef4444';
+            badge.style.color = '#fff';
         }
     }
 
-    // 2. Fetch Logs
-    // We store the raw string of the last log we added to avoid duplicates
-    let lastLogLine = ""; 
+    // ═══════════════════════════════════════════════════════════════════════
+    // UPDATE DASHBOARD FROM SSE DATA
+    // ═══════════════════════════════════════════════════════════════════════
+    
+    function updateDashboard(data) {
+        const metrics = data.metrics;
+        
+        // Update metrics cards
+        document.getElementById('val-active').innerText = 
+            metrics.active_connections + " / " + metrics.total_connections;
+        
+        document.getElementById('val-total').innerText = metrics.total_connections;
+        document.getElementById('val-bytes').innerText = formatBytes(metrics.bytes_transferred);
+        document.getElementById('val-uptime').innerText = formatUptime(metrics.uptime);
 
-    async function updateLogs() {
-        try {
-            const res = await fetch(API_LOGS);
-            if (!res.ok) return;
-            
-            const logs = await res.json();
-            const term = document.getElementById('terminal');
-            
-            // LOGIC: Find where our last known log is in the new array, 
-            // and only append what comes AFTER it.
-            let newLogs = [];
-            
-            if (lastLogLine === "") {
-                newLogs = logs; // First run, take all
+        // Update protocol breakdown
+        const list = document.getElementById('conn-list');
+        let html = '';
+        let hasActive = false;
+
+        for (const [proto, stats] of Object.entries(metrics.protocols)) {
+            if (stats.active > 0) {
+                hasActive = true;
+                html += `
+                <li class="conn-row">
+                    <span style="color:#555">PRO</span>
+                    <span style="font-weight:bold">${proto}</span>
+                    <span class="method" style="text-align:right">${stats.active} ACTIVE</span>
+                </li>`;
+            }
+        }
+
+        if (!hasActive) {
+            html = '<li class="conn-row" style="opacity:0.5; justify-content:center;">No active connections</li>';
+        }
+        
+        list.innerHTML = html;
+
+        // Update logs (incremental)
+        const logs = data.logs || [];
+        const term = document.getElementById('terminal');
+        
+        let newLogs = [];
+        
+        if (lastLogLine === "") {
+            newLogs = logs;
+        } else {
+            const lastIndex = logs.indexOf(lastLogLine);
+            if (lastIndex !== -1) {
+                newLogs = logs.slice(lastIndex + 1);
             } else {
-                const lastIndex = logs.indexOf(lastLogLine);
-                if (lastIndex !== -1) {
-                    // We found our last line, take everything after it
-                    newLogs = logs.slice(lastIndex + 1);
-                } else {
-                    // Mismatch (buffer cycled completely?), take all
-                    // Optional: could check timestamps to be smarter
-                    newLogs = logs; 
-                }
+                newLogs = logs;
             }
+        }
 
-            if (newLogs.length > 0) {
-                // Update our tracker
-                lastLogLine = logs[logs.length - 1];
+        if (newLogs.length > 0) {
+            lastLogLine = logs[logs.length - 1];
 
-                // Append to DOM
-                newLogs.forEach(line => {
-                    const el = document.createElement('div');
-                    el.innerHTML = renderLogLine(line);
-                    term.appendChild(el);
-                });
+            newLogs.forEach(line => {
+                const div = document.createElement('div');
+                div.innerHTML = renderLogLine(line);
+                term.appendChild(div);
+            });
 
-                // Auto Scroll
-                if(document.getElementById('auto-scroll').checked) {
-                    term.scrollTop = term.scrollHeight;
-                }
-                
-                // Cleanup DOM (keep max 500 lines to save RAM)
-                while(term.childElementCount > 500) {
-                    term.removeChild(term.firstChild);
-                }
+            if (document.getElementById('auto-scroll').checked) {
+                term.scrollTop = term.scrollHeight;
             }
-
-        } catch(e) { console.warn("Log fetch error", e); }
+            
+            while (term.childElementCount > 500) {
+                term.removeChild(term.firstChild);
+            }
+        }
     }
 
-    // Start Loops
-    // Update stats every second, logs every 500ms for responsiveness
-    setInterval(updateStats, 5000);
-    setInterval(updateLogs, 2000); 
+    // ═══════════════════════════════════════════════════════════════════════
+    // SSE CONNECTION MANAGEMENT
+    // ═══════════════════════════════════════════════════════════════════════
     
-    // Initial paint
-    updateStats();
-    updateLogs();
+    function connectSSE() {
+        updateApiStatus('connecting');
+        
+        console.log('[SSE] Connecting to', SSE_ENDPOINT);
+        
+        // Create EventSource
+        eventSource = new EventSource(SSE_ENDPOINT);
+        
+        // Handle incoming dashboard updates
+        eventSource.addEventListener('dashboard', (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                updateDashboard(data);
+                updateApiStatus('online');
+            } catch (err) {
+                console.error('[SSE] Failed to parse dashboard data:', err);
+            }
+        });
+        
+        // Handle connection open
+        eventSource.onopen = () => {
+            console.log('[SSE] Connection established');
+            updateApiStatus('online');
+            reconnectAttempts = 0;
+        };
+        
+        // Handle errors and reconnection
+        eventSource.onerror = (err) => {
+            console.error('[SSE] Connection error:', err);
+            eventSource.close();
+            updateApiStatus('offline');
+            
+            // Exponential backoff: 2s, 4s, 8s, 16s, 30s (max)
+            reconnectAttempts++;
+            const delay = Math.min(
+                1000 * Math.pow(2, reconnectAttempts), 
+                MAX_RECONNECT_DELAY
+            );
+            
+            console.log(`[SSE] Reconnecting in ${delay/1000}s (attempt ${reconnectAttempts})...`);
+            
+            setTimeout(() => {
+                connectSSE();
+            }, delay);
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // FALLBACK: Polling mode (if SSE not supported or fails repeatedly)
+    // ═══════════════════════════════════════════════════════════════════════
+    
+    function switchToPollingMode() {
+        console.warn('[SSE] Switching to polling fallback');
+        
+        document.getElementById('mode-indicator').textContent = 'POLLING';
+        
+        if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+        }
+        
+        async function poll() {
+            try {
+                const res = await fetch(API_BASE + '/api/dashboard');
+                if (!res.ok) throw new Error(`API returned ${res.status}`);
+                
+                const data = await res.json();
+                updateDashboard(data);
+                updateApiStatus('online');
+            } catch (err) {
+                console.error('[Polling] Failed:', err);
+                updateApiStatus('offline');
+            }
+        }
+        
+        // Poll every 3 seconds
+        poll();
+        setInterval(poll, 3000);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // BROWSER COMPATIBILITY CHECK
+    // ═══════════════════════════════════════════════════════════════════════
+    
+    function supportsSSE() {
+        return typeof EventSource !== 'undefined';
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // INITIALIZE
+    // ═══════════════════════════════════════════════════════════════════════
+    
+    if (supportsSSE()) {
+        console.log('[Init] Using SSE (Server-Sent Events) mode');
+        connectSSE();
+        
+        // If SSE fails 10 times, switch to polling
+        setTimeout(() => {
+            if (reconnectAttempts > 10) {
+                switchToPollingMode();
+            }
+        }, 60000); // After 1 minute
+    } else {
+        console.warn('[Init] Browser does not support SSE, using polling fallback');
+        switchToPollingMode();
+    }
+
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', () => {
+        if (eventSource) {
+            eventSource.close();
+        }
+    });
 </script>
 </body>
 </html>
