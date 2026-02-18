@@ -9,21 +9,10 @@ A high-performance, multi-protocol proxy server built for **real-world condition
 
 [Quick Start](#quick-start) · [Features](#features) · [API](#rest-api) · [Configuration](#configuration) · [Documentation](docs/) · [Usage Examples](#usage-examples) · [Architecture](#architecture) · [Roadmap](#roadmap)
 
-![Deadlight Proxy Web UI](assets/proxy.deadlight_cli_ui_boot2shut.gif)
+![SSE Web UI](src/assets/Proxy_SSE_UI.gif)
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-### Live Demo Endpoints (For Testing Only)
-
-[Deadlight live proxy demo endpoints](https://deadlight.boo/post/proxy-directory)
-=======
 > **Security Notice:** This proxy can perform TLS interception. 
 > Only deploy on hardware you control. See [Security Considerations](#security-considerations).
->>>>>>> refs/remotes/origin/main
-=======
-> **Security Notice:** This proxy can perform TLS interception. 
-> Only deploy on hardware you control. See [Security Considerations](#security-considerations).
->>>>>>> refs/remotes/origin/main
 
 ## Quick Start
 
@@ -90,6 +79,8 @@ sudo ./bin/deadlight deadlight.conf   # Run as root for VPN
 | **Plugins** | Ad blocking, rate limiting, custom filters |
 | **Web UI** | Connects via Server-Sent Events for zero-overhead real-time monitoring at `:8081` |
 | **Resource-Efficient** | 17.6 MB Docker image, minimal RAM usage |
+
+![CLI launch to shutdown](src/assets/proxy.deadlight_cli_ui_boot2shut.gif)
 
 ### REST API
 
