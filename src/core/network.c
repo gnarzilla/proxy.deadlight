@@ -46,6 +46,23 @@ static void _destroy_notify_connection (gpointer data)
     cleanup_connection_internal(conn, FALSE);
 }
 
+void deadlight_network_cleanup(DeadlightContext *context) {
+    if (!context || !context->network) {
+        return;
+    }
+    // Clean up network resources
+    if (context->network->listener) {
+        g_socket_service_stop(context->network->listener);
+        g_object_unref(context->network->listener);
+    }
+    if (context->network->bind_address) {
+        g_object_unref(context->network->bind_address);
+    }
+    g_mutex_clear(&context->network->connection_mutex);
+    g_free(context->network);
+    context->network = NULL;
+}
+
 /**
  * Initialize network module
  */
@@ -164,8 +181,16 @@ void deadlight_network_stop(DeadlightContext *context) {
             context->worker_pool = NULL;
         }
         
-        // Now close all connections safely
         if (context->connections) {
+            GHashTableIter iter;
+            gpointer key, value;
+            
+            g_hash_table_iter_init(&iter, context->connections);
+            while (g_hash_table_iter_next(&iter, &key, &value)) {
+                DeadlightConnection *conn = (DeadlightConnection *)value;
+                // Set a flag to interrupt tunneling loops
+                conn->should_stop = TRUE;
+            }
             g_mutex_lock(&context->network->connection_mutex);
             guint count = g_hash_table_size(context->connections);
             g_info("Closing %u active connections...", count);
@@ -466,6 +491,15 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, GError **
     );
     
     if (pooled) {
+        // Missing: Check if connection is still alive
+        GSocket *socket = g_socket_connection_get_socket(G_SOCKET_CONNECTION(pooled));
+        if (!g_socket_is_connected(socket)) {
+            // Discard and create new connection
+            g_debug("Connection %lu: Pooled connection to %s:%d was not alive, discarding",
+                    conn->id, conn->target_host, conn->target_port);
+            g_object_unref(pooled);
+            pooled = NULL;
+        }
         if (conn->will_use_ssl) {
             // Reuse TLS connection
             conn->upstream_tls = G_TLS_CONNECTION(g_object_ref(pooled));
@@ -644,10 +678,6 @@ void deadlight_network_release_to_pool(DeadlightConnection *conn, const gchar *r
 static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remove_from_table) {
     if (!conn) return;
     
-    if (conn->cleaned) {
-        g_debug("Connection %lu already cleaned, skipping", conn->id);
-        return;
-    }
     conn->cleaned = TRUE;
 
     g_debug("Cleaning up connection %lu (state=%d, remove_from_table=%d)", 
@@ -954,7 +984,6 @@ void deadlight_network_tunnel_socket_connections(GSocketConnection *conn1, GSock
     }
 
     while (running) {
-        gboolean activity = FALSE;
         GError *error = NULL;
         
         // Conn1 -> Conn2
@@ -968,7 +997,6 @@ void deadlight_network_tunnel_socket_connections(GSocketConnection *conn1, GSock
                     if (!g_output_stream_write_all(out2, buffer, bytes, NULL, NULL, NULL)) {
                         running = FALSE;
                     }
-                    activity = TRUE;
                 } else if (bytes == 0) {
                     running = FALSE;
                 } else if (error && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_WOULD_BLOCK)) {
@@ -983,7 +1011,6 @@ void deadlight_network_tunnel_socket_connections(GSocketConnection *conn1, GSock
                 if (!g_output_stream_write_all(out2, buffer, bytes, NULL, NULL, NULL)) {
                     running = FALSE;
                 }
-                activity = TRUE;
             } else if (bytes <= 0) {
                 running = FALSE;
             }
@@ -1001,7 +1028,6 @@ void deadlight_network_tunnel_socket_connections(GSocketConnection *conn1, GSock
                     if (!g_output_stream_write_all(out1, buffer, bytes, NULL, NULL, NULL)) {
                         running = FALSE;
                     }
-                    activity = TRUE;
                 } else if (bytes == 0) {
                     running = FALSE;
                 } else if (error && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_WOULD_BLOCK)) {
@@ -1016,16 +1042,15 @@ void deadlight_network_tunnel_socket_connections(GSocketConnection *conn1, GSock
                 if (!g_output_stream_write_all(out1, buffer, bytes, NULL, NULL, NULL)) {
                     running = FALSE;
                 }
-                activity = TRUE;
             } else if (bytes <= 0) {
                 running = FALSE;
             }
             g_clear_error(&error);
         }
         
-        // Small sleep if no activity to avoid busy loop
-        if (!activity) {
-            g_usleep(1000); // 1ms - much better than 10ms
+        if (G_IS_POLLABLE_INPUT_STREAM(in1)) {
+            g_pollable_input_stream_create_source(G_POLLABLE_INPUT_STREAM(in1), NULL);
+            // Use main loop integration instead of busy waiting
         }
     }
     
@@ -1182,24 +1207,17 @@ gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error
  * Print detailed pool statistics to log
  */
 static void connection_pool_log_stats(ConnectionPool *pool) {
-    guint idle = 0;
-    guint active = 0;
-    guint64 total_gets = 0;
-    guint64 cache_hits = 0;
-    gdouble hit_rate = 0.0;
-    guint64 evicted = 0, failed = 0;
+    // Current implementation missing actual stats collection
+    // Should call connection_pool_get_stats and log meaningful data
     
-    connection_pool_get_stats(pool, &idle, &active, &total_gets, &cache_hits, &hit_rate, &evicted, &failed);
-    g_info("Pool Statistics: "
-           "Hits: %lu, Misses: %lu, Hit Rate: %.1f%%, "
-           "Active: %u, Idle: %u, Total: %u, "
-           "Evicted: %u, Failed: %u",
-           (unsigned long)cache_hits, 
-           (unsigned long)(total_gets - cache_hits), 
-           hit_rate,
-           active, 
-           idle, 
-           active + idle,
-           (guint)0,
-           (guint)0);
+    guint idle, active;
+    guint64 total_gets, cache_hits;
+    gdouble hit_rate;
+    guint64 evicted, failed;
+    
+    connection_pool_get_stats(pool, &idle, &active, &total_gets, 
+                             &cache_hits, &hit_rate, &evicted, &failed);
+    
+    g_info("Pool Stats: Total=%u, Active=%u, Idle=%u, Hits=%lu, Misses=%lu, HitRate=%.1f%%",
+           idle + active, active, idle, cache_hits, total_gets - cache_hits, hit_rate);
 }

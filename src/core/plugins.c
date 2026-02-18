@@ -81,17 +81,11 @@ static gboolean load_plugins_from_directory(DeadlightContext *context, GError **
     
     g_info("Looking for plugins in: %s", context->plugins->plugin_dir);
     
-    // Check if directory exists
-    if (!g_file_test(context->plugins->plugin_dir, G_FILE_TEST_IS_DIR)) {
-        g_warning("Plugin directory does not exist: %s", context->plugins->plugin_dir);
-        return TRUE; // Not a fatal error
-    }
-    
     // Open directory
     dir = g_dir_open(context->plugins->plugin_dir, 0, &local_error);
     if (!dir) {
-        g_warning("Failed to open plugin directory %s: %s",
-                 context->plugins->plugin_dir, local_error->message);
+        g_info("Plugin directory cannot be opened: %s (%s)", 
+               context->plugins->plugin_dir, local_error->message);
         g_error_free(local_error);
         return TRUE; // Not a fatal error
     }

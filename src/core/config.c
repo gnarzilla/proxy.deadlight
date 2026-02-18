@@ -10,6 +10,7 @@
 #include <string.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "deadlight.h"
 
@@ -20,6 +21,7 @@ static gboolean validate_config_section(DeadlightConfig *config, const gchar *se
 static gboolean create_default_config_file(const gchar *config_path, GError **error);
 static void config_cache_clear(DeadlightConfig *config);
 static void config_update_context_values(DeadlightContext *context);
+gchar *expand_config_path(const gchar *path);
 
 // Default configuration values
 static const struct {
@@ -127,9 +129,165 @@ static const struct {
     {"security", "blocked_domains", "", "Blocked domains (blacklist)"},
     {"security", "max_request_size", "10MB", "Maximum request size"},
     {"security", "max_header_size", "8KB", "Maximum header size"},
+    {"security", "auth_secret", "", "API authentication secret (HMAC)"},
     
     {NULL, NULL, NULL, NULL}
 };
+
+/**
+ * Expand ~ in paths to user's home directory
+ */
+gchar *expand_config_path(const gchar *path) {
+    if (!path || strlen(path) == 0) {
+        return g_strdup("");
+    }
+    
+    if (path[0] == '~' && (path[1] == '/' || path[1] == '\0')) {
+        const gchar *home = g_get_home_dir();
+        if (home) {
+            return g_build_filename(home, path + 1, NULL);
+        }
+    }
+    
+    return g_strdup(path);
+}
+
+/**
+ * Check if configuration has a specific section
+ */
+gboolean deadlight_config_has_section(DeadlightContext *context, const gchar *section) {
+    g_return_val_if_fail(context != NULL, FALSE);
+    g_return_val_if_fail(context->config != NULL, FALSE);
+    g_return_val_if_fail(section != NULL, FALSE);
+    
+    g_mutex_lock(&context->config->cache_mutex);
+    gboolean result = g_key_file_has_group(context->config->keyfile, section);
+    g_mutex_unlock(&context->config->cache_mutex);
+    
+    return result;
+}
+
+/**
+ * Validate entire configuration (cross-section validation)
+ */
+gboolean deadlight_config_validate(DeadlightContext *context, GError **error) {
+    g_return_val_if_fail(context != NULL, FALSE);
+    g_return_val_if_fail(context->config != NULL, FALSE);
+    
+    // Check required sections
+    const gchar *required_sections[] = {"core", "ssl", NULL};
+    for (int i = 0; required_sections[i]; i++) {
+        if (!g_key_file_has_group(context->config->keyfile, required_sections[i])) {
+            g_set_error(error, DEADLIGHT_ERROR, DEADLIGHT_ERROR_CONFIG,
+                       "Missing required section: %s", required_sections[i]);
+            return FALSE;
+        }
+    }
+    
+    // Validate core settings
+    gint port;
+    g_mutex_lock(&context->config->cache_mutex);
+    port = g_key_file_get_integer(context->config->keyfile, "core", "port", NULL);
+    g_mutex_unlock(&context->config->cache_mutex);
+    
+    if (port <= 0 || port > 65535) {
+        g_set_error(error, DEADLIGHT_ERROR, DEADLIGHT_ERROR_CONFIG,
+                   "Invalid port number in [core]: %d (must be 1-65535)", port);
+        return FALSE;
+    }
+    
+    // Validate SSL settings if enabled
+    GError *local_error = NULL;
+    gboolean ssl_enabled;
+    
+    g_mutex_lock(&context->config->cache_mutex);
+    ssl_enabled = g_key_file_get_boolean(context->config->keyfile, "ssl", "enabled", &local_error);
+    g_mutex_unlock(&context->config->cache_mutex);
+    
+    if (local_error) {
+        g_error_free(local_error);
+        ssl_enabled = FALSE;  // Default to false if not set
+    }
+    
+    if (ssl_enabled) {
+        gchar *ca_cert, *ca_key;
+        
+        g_mutex_lock(&context->config->cache_mutex);
+        ca_cert = g_key_file_get_string(context->config->keyfile, "ssl", "ca_cert_file", NULL);
+        ca_key = g_key_file_get_string(context->config->keyfile, "ssl", "ca_key_file", NULL);
+        g_mutex_unlock(&context->config->cache_mutex);
+        
+        gboolean missing_cert = (ca_cert == NULL || strlen(ca_cert) == 0);
+        gboolean missing_key = (ca_key == NULL || strlen(ca_key) == 0);
+        
+        if (missing_cert || missing_key) {
+            g_set_error(error, DEADLIGHT_ERROR, DEADLIGHT_ERROR_CONFIG,
+                       "SSL enabled but missing %s%s%s",
+                       missing_cert ? "CA certificate file" : "",
+                       (missing_cert && missing_key) ? " and " : "",
+                       missing_key ? "CA key file" : "");
+            g_free(ca_cert);
+            g_free(ca_key);
+            return FALSE;
+        }
+        
+        // Expand ~ in paths
+        gchar *expanded_cert = expand_config_path(ca_cert);
+        gchar *expanded_key = expand_config_path(ca_key);
+        
+        // Check if files exist and are readable
+        if (access(expanded_cert, R_OK) != 0) {
+            g_set_error(error, DEADLIGHT_ERROR, DEADLIGHT_ERROR_CONFIG,
+                       "Cannot read CA cert file: %s", expanded_cert);
+            g_free(expanded_cert);
+            g_free(expanded_key);
+            g_free(ca_cert);
+            g_free(ca_key);
+            return FALSE;
+        }
+        
+        if (access(expanded_key, R_OK) != 0) {
+            g_set_error(error, DEADLIGHT_ERROR, DEADLIGHT_ERROR_CONFIG,
+                       "Cannot read CA key file: %s", expanded_key);
+            g_free(expanded_cert);
+            g_free(expanded_key);
+            g_free(ca_cert);
+            g_free(ca_key);
+            return FALSE;
+        }
+        
+        g_free(expanded_cert);
+        g_free(expanded_key);
+        g_free(ca_cert);
+        g_free(ca_key);
+    }
+    
+    // Validate network pool settings
+    if (deadlight_config_has_section(context, "network")) {
+        gint pool_size, idle_timeout;
+        
+        g_mutex_lock(&context->config->cache_mutex);
+        pool_size = g_key_file_get_integer(context->config->keyfile, "network", 
+                                          "connection_pool_size", NULL);
+        idle_timeout = g_key_file_get_integer(context->config->keyfile, "network",
+                                             "connection_pool_timeout", NULL);
+        g_mutex_unlock(&context->config->cache_mutex);
+        
+        if (pool_size <= 0) {
+            g_set_error(error, DEADLIGHT_ERROR, DEADLIGHT_ERROR_CONFIG,
+                       "connection_pool_size must be > 0, got %d", pool_size);
+            return FALSE;
+        }
+        
+        if (idle_timeout < 0) {
+            g_set_error(error, DEADLIGHT_ERROR, DEADLIGHT_ERROR_CONFIG,
+                       "connection_pool_timeout must be >= 0, got %d", idle_timeout);
+            return FALSE;
+        }
+    }
+    
+    return TRUE;
+}
 
 /**
  * Load configuration from file
@@ -139,27 +297,26 @@ gboolean deadlight_config_load(DeadlightContext *context, const gchar *config_fi
     
     // Clean up existing config
     if (context->config) {
-        if (context->config->file_monitor) {
-            g_file_monitor_cancel(context->config->file_monitor);
-            g_object_unref(context->config->file_monitor);
-        }
-        if (context->config->keyfile) {
-            g_key_file_free(context->config->keyfile);
-        }
-        config_cache_clear(context->config);
-        g_free(context->config->config_path);
-        g_free(context->config);
+        deadlight_config_free(context);
     }
-    // [FIX] Address potential memory leak from previous load
+    
+    // Clean up context strings that might be reallocated
     g_free(context->listen_address);
     context->listen_address = NULL;
+    g_free(context->pool_eviction_policy);
+    context->pool_eviction_policy = NULL;
+    g_free(context->auth_secret);
+    context->auth_secret = NULL;
+    g_free(context->auth_endpoint);
+    context->auth_endpoint = NULL;
     
     // Create new config structure
     context->config = g_new0(DeadlightConfig, 1);
     context->config->keyfile = g_key_file_new();
     context->config->string_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
-    context->config->int_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
-    context->config->bool_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    context->config->int_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    context->config->bool_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    g_mutex_init(&context->config->cache_mutex);
     
     // Determine config file path
     const gchar *config_path = config_file ? config_file : DEADLIGHT_DEFAULT_CONFIG_FILE;
@@ -175,15 +332,22 @@ gboolean deadlight_config_load(DeadlightContext *context, const gchar *config_fi
     }
     
     // Load config file
-    if (!g_key_file_load_from_file(context->config->keyfile, config_path, 
-                                  G_KEY_FILE_KEEP_COMMENTS | G_KEY_FILE_KEEP_TRANSLATIONS, 
-                                  error)) {
+    g_mutex_lock(&context->config->cache_mutex);
+    gboolean load_result = g_key_file_load_from_file(context->config->keyfile, config_path, 
+                                                   G_KEY_FILE_KEEP_COMMENTS | G_KEY_FILE_KEEP_TRANSLATIONS, 
+                                                   error);
+    g_mutex_unlock(&context->config->cache_mutex);
+    
+    if (!load_result) {
         g_prefix_error(error, "Failed to load configuration file %s: ", config_path);
         return FALSE;
     }
     
-    // Validate configuration
+    // Validate configuration sections
+    g_mutex_lock(&context->config->cache_mutex);
     gchar **groups = g_key_file_get_groups(context->config->keyfile, NULL);
+    g_mutex_unlock(&context->config->cache_mutex);
+    
     for (gchar **group = groups; *group; group++) {
         if (!validate_config_section(context->config, *group, error)) {
             g_strfreev(groups);
@@ -208,25 +372,8 @@ gboolean deadlight_config_load(DeadlightContext *context, const gchar *config_fi
             g_clear_error(error);
         }
     }
-
-    // Set log level
-    gchar *log_level = deadlight_config_get_string(context, "core", "log_level", DEADLIGHT_DEFAULT_LOG_LEVEL);
-    if (g_strcmp0(log_level, "error") == 0) {
-        context->log_level = DEADLIGHT_LOG_ERROR;
-    } else if (g_strcmp0(log_level, "warning") == 0) {
-        context->log_level = DEADLIGHT_LOG_WARNING;
-    } else if (g_strcmp0(log_level, "info") == 0) {
-        context->log_level = DEADLIGHT_LOG_INFO;
-    } else if (g_strcmp0(log_level, "debug") == 0) {
-        context->log_level = DEADLIGHT_LOG_DEBUG;
-    } else {
-        context->log_level = DEADLIGHT_LOG_INFO;
-    }
-    g_free(log_level);
     
-    // SSL interception setting
-    context->ssl_intercept_enabled = deadlight_config_get_bool(context, "ssl", "enabled", TRUE);
-    
+    // Update context with config values
     config_update_context_values(context);
     
     g_info("Configuration loaded successfully from %s", config_path);
@@ -240,7 +387,10 @@ gboolean deadlight_config_save(DeadlightContext *context, GError **error) {
     g_return_val_if_fail(context != NULL, FALSE);
     g_return_val_if_fail(context->config != NULL, FALSE);
     
+    g_mutex_lock(&context->config->cache_mutex);
     gchar *data = g_key_file_to_data(context->config->keyfile, NULL, error);
+    g_mutex_unlock(&context->config->cache_mutex);
+    
     if (!data) {
         return FALSE;
     }
@@ -263,12 +413,15 @@ gint deadlight_config_get_int(DeadlightContext *context, const gchar *section,
     g_return_val_if_fail(context != NULL, default_value);
     g_return_val_if_fail(context->config != NULL, default_value);
     
+    g_mutex_lock(&context->config->cache_mutex);
+    
     // Check cache first
     gchar *cache_key = g_strdup_printf("%s.%s", section, key);
     gpointer cached_value = g_hash_table_lookup(context->config->int_cache, cache_key);
     
     if (cached_value) {
         gint value = GPOINTER_TO_INT(cached_value);
+        g_mutex_unlock(&context->config->cache_mutex);
         g_free(cache_key);
         return value;
     }
@@ -284,6 +437,7 @@ gint deadlight_config_get_int(DeadlightContext *context, const gchar *section,
     
     // Cache the value
     g_hash_table_insert(context->config->int_cache, cache_key, GINT_TO_POINTER(value));
+    g_mutex_unlock(&context->config->cache_mutex);
     
     return value;
 }
@@ -296,12 +450,15 @@ gchar *deadlight_config_get_string(DeadlightContext *context, const gchar *secti
     g_return_val_if_fail(context != NULL, g_strdup(default_value));
     g_return_val_if_fail(context->config != NULL, g_strdup(default_value));
     
+    g_mutex_lock(&context->config->cache_mutex);
+    
     // Check cache first
     gchar *cache_key = g_strdup_printf("%s.%s", section, key);
     const gchar *cached_value = g_hash_table_lookup(context->config->string_cache, cache_key);
     
     if (cached_value) {
         gchar *result = g_strdup(cached_value);
+        g_mutex_unlock(&context->config->cache_mutex);
         g_free(cache_key);
         return result;
     }
@@ -317,6 +474,7 @@ gchar *deadlight_config_get_string(DeadlightContext *context, const gchar *secti
     
     // Cache the value
     g_hash_table_insert(context->config->string_cache, cache_key, g_strdup(value));
+    g_mutex_unlock(&context->config->cache_mutex);
     
     return value;
 }
@@ -329,12 +487,15 @@ gboolean deadlight_config_get_bool(DeadlightContext *context, const gchar *secti
     g_return_val_if_fail(context != NULL, default_value);
     g_return_val_if_fail(context->config != NULL, default_value);
     
+    g_mutex_lock(&context->config->cache_mutex);
+    
     // Check cache first
     gchar *cache_key = g_strdup_printf("%s.%s", section, key);
     gpointer cached_value = g_hash_table_lookup(context->config->bool_cache, cache_key);
     
     if (cached_value) {
         gboolean value = GPOINTER_TO_INT(cached_value);
+        g_mutex_unlock(&context->config->cache_mutex);
         g_free(cache_key);
         return value;
     }
@@ -350,6 +511,7 @@ gboolean deadlight_config_get_bool(DeadlightContext *context, const gchar *secti
     
     // Cache the value
     g_hash_table_insert(context->config->bool_cache, cache_key, GINT_TO_POINTER(value));
+    g_mutex_unlock(&context->config->cache_mutex);
     
     return value;
 }
@@ -362,11 +524,13 @@ void deadlight_config_set_int(DeadlightContext *context, const gchar *section,
     g_return_if_fail(context != NULL);
     g_return_if_fail(context->config != NULL);
     
+    g_mutex_lock(&context->config->cache_mutex);
     g_key_file_set_integer(context->config->keyfile, section, key, value);
     
     // Update cache
     gchar *cache_key = g_strdup_printf("%s.%s", section, key);
     g_hash_table_insert(context->config->int_cache, cache_key, GINT_TO_POINTER(value));
+    g_mutex_unlock(&context->config->cache_mutex);
 }
 
 /**
@@ -377,11 +541,13 @@ void deadlight_config_set_string(DeadlightContext *context, const gchar *section
     g_return_if_fail(context != NULL);
     g_return_if_fail(context->config != NULL);
     
+    g_mutex_lock(&context->config->cache_mutex);
     g_key_file_set_string(context->config->keyfile, section, key, value);
     
     // Update cache
     gchar *cache_key = g_strdup_printf("%s.%s", section, key);
     g_hash_table_insert(context->config->string_cache, cache_key, g_strdup(value));
+    g_mutex_unlock(&context->config->cache_mutex);
 }
 
 /**
@@ -392,11 +558,53 @@ void deadlight_config_set_bool(DeadlightContext *context, const gchar *section,
     g_return_if_fail(context != NULL);
     g_return_if_fail(context->config != NULL);
     
+    g_mutex_lock(&context->config->cache_mutex);
     g_key_file_set_boolean(context->config->keyfile, section, key, value);
     
     // Update cache
     gchar *cache_key = g_strdup_printf("%s.%s", section, key);
     g_hash_table_insert(context->config->bool_cache, cache_key, GINT_TO_POINTER(value));
+    g_mutex_unlock(&context->config->cache_mutex);
+}
+
+/**
+ * Parse human-readable size strings (e.g., "1GB", "512MB", "64KB")
+ * Returns size in bytes, or default_value on error
+ */
+guint64 deadlight_config_get_size(DeadlightContext *context, const gchar *section,
+                                  const gchar *key, guint64 default_value) {
+    g_return_val_if_fail(context != NULL, default_value);
+    
+    gchar *value_str = deadlight_config_get_string(context, section, key, NULL);
+    if (!value_str) {
+        return default_value;
+    }
+    
+    gchar *endptr;
+    guint64 size = g_ascii_strtoull(value_str, &endptr, 10);
+    
+    if (endptr && *endptr) {
+        switch (g_ascii_toupper(*endptr)) {
+            case 'K':
+                size *= 1024;
+                break;
+            case 'M':
+                size *= 1024 * 1024;
+                break;
+            case 'G':
+                size *= 1024 * 1024 * 1024;
+                break;
+            case 'T':
+                size *= 1024LL * 1024 * 1024 * 1024;
+                break;
+            default:
+                g_warning("Unknown size suffix: %c", *endptr);
+                size = default_value;
+        }
+    }
+    
+    g_free(value_str);
+    return size;
 }
 
 /**
@@ -417,9 +625,14 @@ static void config_file_changed(GFileMonitor *monitor, GFile *file, GFile *other
 
         // Reload keyfile
         GError *error = NULL;
-        if (!g_key_file_load_from_file(context->config->keyfile, context->config->config_path,
-                                      G_KEY_FILE_KEEP_COMMENTS | G_KEY_FILE_KEEP_TRANSLATIONS,
-                                      &error)) {
+        g_mutex_lock(&context->config->cache_mutex);
+        gboolean load_result = g_key_file_load_from_file(context->config->keyfile, 
+                                                        context->config->config_path,
+                                                        G_KEY_FILE_KEEP_COMMENTS | G_KEY_FILE_KEEP_TRANSLATIONS,
+                                                        &error);
+        g_mutex_unlock(&context->config->cache_mutex);
+        
+        if (!load_result) {
             g_warning("Failed to reload configuration file: %s", error->message);
             g_error_free(error);
             // Clear caches even on failure to force re-read on next access
@@ -430,13 +643,13 @@ static void config_file_changed(GFileMonitor *monitor, GFile *file, GFile *other
         // Clear caches before updating
         config_cache_clear(context->config);
 
-        // [REFACTOR] Update context values using the new helper function
+        // Update context values using the new helper function
         config_update_context_values(context);
 
         // Notify plugins of configuration change
         if (context->plugins) {
-            // This would call plugin configuration change callbacks
             g_info("Notifying plugins of configuration change");
+            // This would call plugin configuration change callbacks
         }
 
         g_info("Configuration reloaded successfully");
@@ -529,61 +742,29 @@ static gboolean create_default_config_file(const gchar *config_path, GError **er
 }
 
 /**
- * Parse human-readable size strings (e.g., "1GB", "512MB", "64KB")
- * Returns size in bytes, or default_value on error
- */
-guint64 deadlight_config_get_size(DeadlightContext *context, const gchar *section,
-                                  const gchar *key, guint64 default_value) {
-    g_return_val_if_fail(context != NULL, default_value);
-    
-    gchar *value_str = deadlight_config_get_string(context, section, key, NULL);
-    if (!value_str) {
-        return default_value;
-    }
-    
-    gchar *endptr;
-    guint64 size = g_ascii_strtoull(value_str, &endptr, 10);
-    
-    if (endptr && *endptr) {
-        switch (g_ascii_toupper(*endptr)) {
-            case 'K':
-                size *= 1024;
-                break;
-            case 'M':
-                size *= 1024 * 1024;
-                break;
-            case 'G':
-                size *= 1024 * 1024 * 1024;
-                break;
-            default:
-                g_warning("Unknown size suffix: %c", *endptr);
-                size = default_value;
-        }
-    }
-    
-    g_free(value_str);
-    return size;
-}
-
-/**
  * Updates the 'hot' cached configuration values directly on the context
  * after a load or reload.
  */
 static void config_update_context_values(DeadlightContext *context) {
+    // Core settings
     context->listen_port = deadlight_config_get_int(context, "core", "port", DEADLIGHT_DEFAULT_PORT);
     
-    // Free any existing string before assigning the new one
     g_free(context->listen_address);
     context->listen_address = deadlight_config_get_string(context, "core", "bind_address", "0.0.0.0");
     context->max_connections = deadlight_config_get_int(context, "core", "max_connections", DEADLIGHT_DEFAULT_MAX_CONNECTIONS);
+    
+    // Pool settings
     context->pool_max_per_host = deadlight_config_get_int(context, "network", "connection_pool_size", 10);
     context->pool_idle_timeout = deadlight_config_get_int(context, "network", "connection_pool_timeout", 300);
     context->pool_max_total = deadlight_config_get_int(context, "network", "connection_pool_max_total", 500);
+    
     g_free(context->pool_eviction_policy);
     context->pool_eviction_policy = deadlight_config_get_string(context, "network", "connection_pool_eviction_policy", "lru");
-    context->pool_health_check_interval = deadlight_config_get_int(context, "network","connection_pool_health_check_interval", 60);
+    
+    context->pool_health_check_interval = deadlight_config_get_int(context, "network", "connection_pool_health_check_interval", 60);
     context->pool_reuse_ssl = deadlight_config_get_bool(context, "network", "connection_pool_reuse_ssl", TRUE);
-    // Set log level
+    
+    // Log level
     gchar *log_level = deadlight_config_get_string(context, "core", "log_level", DEADLIGHT_DEFAULT_LOG_LEVEL);
     if (g_strcmp0(log_level, "error") == 0) {
         context->log_level = DEADLIGHT_LOG_ERROR;
@@ -597,8 +778,8 @@ static void config_update_context_values(DeadlightContext *context) {
         context->log_level = DEADLIGHT_LOG_INFO;
     }
     g_free(log_level);
-
-    // ─── SECURITY: API AUTH SECRET ─────────────────────────────────────
+    
+    // Security
     g_free(context->auth_secret);
     context->auth_secret = deadlight_config_get_string(context, "security", "auth_secret", NULL);
     if (context->auth_secret && strlen(context->auth_secret) > 0) {
@@ -608,58 +789,62 @@ static void config_update_context_values(DeadlightContext *context) {
         g_free(context->auth_secret);
         context->auth_secret = NULL;
     }
-
-    // Note: Pool settings aren't stored on context yet, but they should be read
-    // each time from config in network.c. For now, just log on change:
-    gint pool_size = deadlight_config_get_int(context, "network", 
-                                             "connection_pool_size", 10);
-    gint pool_timeout = deadlight_config_get_int(context, "network",
-                                                "connection_pool_timeout", 300);
     
-    g_info("Connection pool config updated: size=%d, timeout=%d",
-           pool_size, pool_timeout);
+    // SSL
+    context->ssl_intercept_enabled = deadlight_config_get_bool(context, "ssl", "enabled", TRUE);
     
-    // TODO: Dynamically reconfigure the pool if it's already running
-    
-    // SSL interception setting
-    context->ssl_intercept_enabled =
-        deadlight_config_get_bool(context, "ssl", "enabled", TRUE);
-
-    // ─── POOL CONFIG ───────────────────────────────────────────
-    context->pool_max_per_host =
-        deadlight_config_get_int(context, "network",
-                                 "connection_pool_size", 10);
-    context->pool_idle_timeout =
-        deadlight_config_get_int(context, "network",
-                                 "connection_pool_timeout", 300);
-    context->pool_max_total =
-        deadlight_config_get_int(context, "network",
-                                 "connection_pool_max_total", 500);
-    g_free(context->pool_eviction_policy);
-    context->pool_eviction_policy =
-        deadlight_config_get_string(context, "network",
-                                    "connection_pool_eviction_policy", "lru");
-    context->pool_health_check_interval =
-        deadlight_config_get_int(context, "network",
-                                 "connection_pool_health_check_interval", 60);
-    context->pool_reuse_ssl =
-        deadlight_config_get_bool(context, "network",
-                                  "connection_pool_reuse_ssl", TRUE);
-
-    g_info("Pool config: per_host=%d idle_t=%d total=%d policy=%s health=%d reuse_ssl=%d",
-           context->pool_max_per_host,
-           context->pool_idle_timeout,
-           context->pool_max_total,
-           context->pool_eviction_policy,
-           context->pool_health_check_interval,
-           context->pool_reuse_ssl);
+    g_info("Config updated: port=%d, pool_size=%d, ssl=%s, auth_secret=%s",
+           context->listen_port, context->pool_max_per_host,
+           context->ssl_intercept_enabled ? "enabled" : "disabled",
+           context->auth_secret ? "set" : "not set");
 }
 
 /**
  * Clear configuration cache
  */
 static void config_cache_clear(DeadlightConfig *config) {
+    g_mutex_lock(&config->cache_mutex);
     g_hash_table_remove_all(config->string_cache);
     g_hash_table_remove_all(config->int_cache);
     g_hash_table_remove_all(config->bool_cache);
+    g_mutex_unlock(&config->cache_mutex);
+}
+
+/**
+ * Free configuration resources
+ */
+void deadlight_config_free(DeadlightContext *context) {
+    if (!context || !context->config) return;
+    
+    DeadlightConfig *config = context->config;
+    
+    if (config->file_monitor) {
+        g_file_monitor_cancel(config->file_monitor);
+        g_object_unref(config->file_monitor);
+    }
+    
+    g_mutex_lock(&config->cache_mutex);
+    
+    if (config->string_cache) {
+        g_hash_table_unref(config->string_cache);
+    }
+    
+    if (config->int_cache) {
+        g_hash_table_unref(config->int_cache);
+    }
+    
+    if (config->bool_cache) {
+        g_hash_table_unref(config->bool_cache);
+    }
+    
+    if (config->keyfile) {
+        g_key_file_free(config->keyfile);
+    }
+    
+    g_mutex_unlock(&config->cache_mutex);
+    g_mutex_clear(&config->cache_mutex);
+    
+    g_free(config->config_path);
+    g_free(config);
+    context->config = NULL;
 }

@@ -86,7 +86,7 @@ connection_pool_reuse_ssl=true
 #Enable plugin system
 enabled=true
 #Plugin directory
-plugin_dir=/usr/lib/deadlight/plugins
+plugin_dir=bin/plugins
 #Auto-load plugins
 autoload=adblocker,logger,stats
 #Enable built-in plugins

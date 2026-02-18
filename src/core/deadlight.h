@@ -32,6 +32,22 @@ static inline GIOStream* g_tls_connection_get_base_io_stream(GTlsConnection *con
 #define DEADLIGHT_DEFAULT_LOG_LEVEL "info"
 #define DEADLIGHT_DEFAULT_MAX_CONNECTIONS 5000
 
+// Error domains and codes
+#define DEADLIGHT_ERROR deadlight_error_quark()
+
+typedef enum {
+    DEADLIGHT_ERROR_CONFIG = 1,
+    DEADLIGHT_ERROR_NETWORK,
+    DEADLIGHT_ERROR_SSL,
+    DEADLIGHT_ERROR_PLUGIN,
+    DEADLIGHT_ERROR_PROTOCOL,
+    DEADLIGHT_ERROR_IO,
+    DEADLIGHT_ERROR_AUTH,
+    DEADLIGHT_ERROR_VPN
+} DeadlightErrorCode;
+
+GQuark deadlight_error_quark(void);
+
 //===[ ENUMS ]===
 typedef enum {
     DEADLIGHT_PROTOCOL_UNKNOWN = 0, DEADLIGHT_PROTOCOL_HTTP, DEADLIGHT_PROTOCOL_HTTPS,
@@ -96,6 +112,7 @@ struct _DeadlightConfig {
     GHashTable *string_cache;
     GHashTable *int_cache;
     GHashTable *bool_cache;
+    GMutex cache_mutex;
 };
 
 struct _DeadlightContext {
@@ -152,6 +169,7 @@ struct _DeadlightConnection {
     gchar *session_token;
     gboolean authenticated;
     gboolean cleaned;
+    gboolean should_stop; // Flag to signal tunnels to stop during shutdown
     DeadlightProtocol protocol;
     DeadlightConnectionState state;
     const DeadlightProtocolHandler *handler;
@@ -230,6 +248,8 @@ struct _DeadlightPlugin {
 // Context API
 DeadlightContext *deadlight_context_new(void);
 void deadlight_context_free(DeadlightContext *context);
+const gchar *deadlight_get_version(void);
+const gchar *deadlight_get_build_date(void);
 
 // Config API
 gboolean deadlight_config_load(DeadlightContext *context, const gchar *config_file, GError **error);
@@ -242,6 +262,10 @@ void deadlight_config_set_string(DeadlightContext *context, const gchar *section
 void deadlight_config_set_bool(DeadlightContext *context, const gchar *section, const gchar *key, gboolean value);
 guint64 deadlight_config_get_size(DeadlightContext *context, const gchar *section,
                                   const gchar *key, guint64 default_value);
+gboolean deadlight_config_has_section(DeadlightContext *context, const gchar *section);
+gboolean deadlight_config_validate(DeadlightContext *context, GError **error);
+void deadlight_config_free(DeadlightContext *context);
+gchar *expand_config_path(const gchar *path);
 
 // Logging API
 void deadlight_log_handler(const gchar *log_domain, GLogLevelFlags log_level, const gchar *message, gpointer user_data);
@@ -252,6 +276,7 @@ void deadlight_logging_cleanup(DeadlightContext *context);
 gboolean deadlight_network_init(DeadlightContext *context, GError **error);
 gboolean deadlight_network_start_listener(DeadlightContext *context, gint port, GError **error);
 void deadlight_network_stop(DeadlightContext *context);
+void deadlight_network_cleanup(DeadlightContext *context);
 gboolean deadlight_network_connect_upstream(
     DeadlightConnection *conn,
     GError **error
@@ -319,7 +344,7 @@ gboolean deadlight_test_module(const gchar *module_name);
 const gchar *deadlight_protocol_to_string(DeadlightProtocol protocol);
 gchar *deadlight_format_bytes(guint64 bytes);
 
-// Cconnection Pool API
+// Connection Pool API
 ConnectionPool* connection_pool_new(
     gint         max_per_host,
     gint         idle_timeout,
