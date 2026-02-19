@@ -27,10 +27,11 @@ jobs:
             pkg-config \
             libglib2.0-dev \
             libssl-dev \
-            libmicrohttpd-dev
+            libmicrohttpd-dev \
+            libjson-glib-dev
 
       - name: Build
-        run: make clean && make UI=1
+        run: make clean && make UI=1 VERSION=${GITHUB_REF_NAME}
 
       - name: Rename binary
         run: |

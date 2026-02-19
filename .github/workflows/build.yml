@@ -20,7 +20,8 @@ jobs:
             pkg-config \
             libglib2.0-dev \
             libssl-dev \
-            libmicrohttpd-dev
+            libmicrohttpd-dev \
+            libjson-glib-dev
 
       - name: Build (core)
         run: make clean && make
