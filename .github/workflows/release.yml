@@ -1,0 +1,66 @@
+name: Deadlight Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+
+  build:
+    name: Build binaries
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libglib2.0-dev \
+            libssl-dev \
+            libmicrohttpd-dev
+
+      - name: Build
+        run: make clean && make UI=1
+
+      - name: Rename binary
+        run: |
+          mkdir -p artifacts
+          cp bin/deadlight artifacts/deadlight-linux-${{ matrix.arch }}
+
+      - name: Generate checksum
+        run: |
+          cd artifacts
+          sha256sum * > checksums.txt
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deadlight-${{ matrix.arch }}
+          path: artifacts/*
+
+
+  release:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            deadlight-amd64/*
+            deadlight-arm64/*
