@@ -72,3 +72,5 @@ jobs:
           files: |
             deadlight-amd64/*
             deadlight-arm64/*
+          overwrite: true
+        continue-on-error: true
