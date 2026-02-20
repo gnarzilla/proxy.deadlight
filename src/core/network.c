@@ -479,11 +479,39 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, GError **
     g_return_val_if_fail(conn != NULL, FALSE);
     g_return_val_if_fail(conn->target_host != NULL, FALSE);
     
-    // Determine connection type we need
+    // For CONNECT tunnels to port 443, try to reuse a TLS connection first
+    // since that's what gets pooled after tunnel close
+    GIOStream *pooled = NULL;
+    
+    if (conn->protocol == DEADLIGHT_PROTOCOL_CONNECT && conn->target_port == 443) {
+        pooled = connection_pool_get(
+            conn->context->conn_pool,
+            conn->target_host,
+            conn->target_port,
+            CONN_TYPE_CLIENT_TLS
+        );
+        
+        if (pooled) {
+            conn->upstream_tls = G_TLS_CONNECTION(g_object_ref(pooled));
+            
+            GIOStream *base = NULL;
+            g_object_get(conn->upstream_tls, "base-io-stream", &base, NULL);
+            if (G_IS_SOCKET_CONNECTION(base)) {
+                conn->upstream_connection = G_SOCKET_CONNECTION(g_object_ref(base));
+            }
+            
+            conn->ssl_established = TRUE;
+            
+            g_info("Connection %lu: Pool HIT - reusing TLS connection to %s:%d",
+                   conn->id, conn->target_host, conn->target_port);
+            return TRUE;
+        }
+    }
+    
+    // Original logic: try desired type
     ConnectionType desired_type = conn->will_use_ssl ? CONN_TYPE_CLIENT_TLS : CONN_TYPE_PLAIN;
     
-    // Try to get from pool first
-    GIOStream *pooled = connection_pool_get(
+    pooled = connection_pool_get(
         conn->context->conn_pool,
         conn->target_host,
         conn->target_port,
@@ -491,20 +519,9 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, GError **
     );
     
     if (pooled) {
-        // Missing: Check if connection is still alive
-        GSocket *socket = g_socket_connection_get_socket(G_SOCKET_CONNECTION(pooled));
-        if (!g_socket_is_connected(socket)) {
-            // Discard and create new connection
-            g_debug("Connection %lu: Pooled connection to %s:%d was not alive, discarding",
-                    conn->id, conn->target_host, conn->target_port);
-            g_object_unref(pooled);
-            pooled = NULL;
-        }
         if (conn->will_use_ssl) {
-            // Reuse TLS connection
             conn->upstream_tls = G_TLS_CONNECTION(g_object_ref(pooled));
             
-            // Get the base socket connection for compatibility
             GIOStream *base = NULL;
             g_object_get(conn->upstream_tls, "base-io-stream", &base, NULL);
             if (G_IS_SOCKET_CONNECTION(base)) {
@@ -516,7 +533,6 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, GError **
             g_info("Connection %lu: Reusing TLS connection to %s:%d from pool",
                    conn->id, conn->target_host, conn->target_port);
         } else {
-            // Reuse plain connection
             conn->upstream_connection = G_SOCKET_CONNECTION(g_object_ref(pooled));
             
             g_info("Connection %lu: Reusing plain connection to %s:%d from pool",
@@ -529,7 +545,7 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, GError **
     // Pool miss - create new connection
     g_debug("Connection %lu: Pool MISS - creating new connection to %s:%d",
             conn->id, conn->target_host, conn->target_port);
-    
+
     GSocketClient *client = g_socket_client_new();
     g_socket_client_set_timeout(client, 30);
     
@@ -735,14 +751,23 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
                     break;
                 }
                 
+                case DEADLIGHT_PROTOCOL_CONNECT:
                 case DEADLIGHT_PROTOCOL_HTTPS:
-                    if (conn->state == DEADLIGHT_STATE_CONNECTED && use_ssl) {
+                {
+                    // CONNECT tunnels: the upstream TLS connection is reusable
+                    // if the tunnel closed cleanly and the socket is healthy.
+                    // The socket health check already passed above.
+                    if (use_ssl && conn->state == DEADLIGHT_STATE_CLOSING) {
+                        should_pool = TRUE;
+                        reason = "CONNECT tunnel closed cleanly";
+                    } else if (conn->state == DEADLIGHT_STATE_CONNECTED && use_ssl) {
                         should_pool = TRUE;
                         reason = "HTTPS clean";
                     } else {
-                        reason = "HTTPS incomplete";
+                        reason = "HTTPS/CONNECT incomplete";
                     }
                     break;
+                }
                 
                 case DEADLIGHT_PROTOCOL_IMAP:
                 case DEADLIGHT_PROTOCOL_IMAPS:
@@ -763,8 +788,7 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
                     }
                     break;
                 
-                // One-way protocols - never pool
-                case DEADLIGHT_PROTOCOL_CONNECT:
+                // Truly non-reusable protocols
                 case DEADLIGHT_PROTOCOL_SOCKS:
                 case DEADLIGHT_PROTOCOL_SOCKS4:
                 case DEADLIGHT_PROTOCOL_SOCKS5:
@@ -781,20 +805,24 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
                     break;
             }
         }
-        
         if (should_pool) {
             g_info("Connection %lu: Returning to pool: %s:%d (SSL=%d, reason=%s)",
                 conn->id, conn->target_host, conn->target_port, use_ssl, reason);
             
+            GIOStream *stream_to_pool = use_ssl 
+                ? G_IO_STREAM(conn->upstream_tls) 
+                : G_IO_STREAM(conn->upstream_connection);
+            
             connection_pool_release(
                 conn->context->conn_pool,
-                G_IO_STREAM(conn->upstream_connection), 
+                stream_to_pool,
                 conn->target_host,
                 conn->target_port,
-                use_ssl ? CONN_TYPE_CLIENT_TLS : CONN_TYPE_PLAIN 
+                use_ssl ? CONN_TYPE_CLIENT_TLS : CONN_TYPE_PLAIN
             );
             
-            // Pool now owns the reference - clear our pointer but don't unref
+            // Pool now owns these — clear both so cleanup doesn't close them
+            conn->upstream_tls = NULL;
             conn->upstream_connection = NULL;
         } else {
             g_debug("Connection %lu: Not pooling: %s:%d (SSL=%d, reason=%s)",
