@@ -5,7 +5,7 @@
 # Project Configuration
 #=============================================================================
 PROJECT  = deadlight
-VERSION ?= dev
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 PREFIX   = /usr/local
 
 #=============================================================================
@@ -137,7 +137,7 @@ dirs:
 $(MAIN_TARGET): $(ALL_OBJECTS) | $(BINDIR)
 	@echo "Linking $(PROJECT)..."
 	@$(CC) $(LDFLAGS) -o $@ $^ $(ALL_LIBS)
-	@echo "Built $(PROJECT) v$(VERSION)"
+	@echo "Built $(PROJECT) $(VERSION)"
 
 #=============================================================================
 # Pattern Rule — compiles any src/**/*.c → obj/**/*.o
