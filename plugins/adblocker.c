@@ -7,7 +7,7 @@
 #include <glib.h>
 #include <gio/gio.h>
 #include <string.h>
-#include "core/deadlight.h"
+#include "deadlight.h"
 
 typedef struct {
     GHashTable *blocked_domains;      // Exact domain matches

@@ -6,8 +6,6 @@
 #include "smtp.h"
 #include "plugins/ratelimiter.h"
 #include "core/utils.h"   
-#include "core/logging.h"  
-#include "plugins/ratelimiter.h" 
 #include "core/logging.h"
 
 typedef struct {
