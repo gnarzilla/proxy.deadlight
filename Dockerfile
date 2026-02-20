@@ -1,6 +1,8 @@
 # Stage 1: Build environment
 FROM alpine:3.19 AS builder
 
+ARG VERSION=dev
+
 RUN apk add --no-cache \
     gcc musl-dev make pkgconfig \
     glib-dev glib-static \
@@ -12,6 +14,9 @@ RUN apk add --no-cache \
 
 WORKDIR /build
 COPY . .
+
+# Pass VERSION through to make
+RUN make UI=1 CFLAGS="-O2" VERSION=${VERSION}
 
 # Build with UI enabled
 RUN make UI=1 CFLAGS="-O2"
@@ -70,3 +75,7 @@ EXPOSE 8080 8081
 
 ENTRYPOINT ["/usr/local/bin/proxy"]
 CMD ["-v", "-c", "/etc/deadlight/deadlight.conf"]
+
+# Export stage - CI binary extraction only
+FROM scratch AS export
+COPY --from=builder /build/bin/deadlight /deadlight

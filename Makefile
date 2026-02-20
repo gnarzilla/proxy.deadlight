@@ -5,7 +5,8 @@
 # Project Configuration
 #=============================================================================
 PROJECT = deadlight
-VERSION = 1.0.0
+VERSION ?= dev
+CFLAGS += -DDEADLIGHT_VERSION=\"$(VERSION)\"
 PREFIX = /usr/local
 
 #=============================================================================

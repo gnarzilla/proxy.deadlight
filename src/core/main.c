@@ -61,7 +61,10 @@ static GOptionEntry entries[] = {
     {NULL}
 };
 
-static const char *VERSION = "1.0.0";
+#ifndef DEADLIGHT_VERSION
+#define DEADLIGHT_VERSION "dev"
+#endif
+
 static const char *BUILD_DATE = __DATE__ " " __TIME__;
 
 // Forward declarations
