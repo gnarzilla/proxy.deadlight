@@ -10,49 +10,41 @@ permissions:
 
 jobs:
   build:
-    name: Build binaries
+    name: Build binary (${{ matrix.arch }})
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
         include:
           - arch: amd64
-            cc: gcc
+            platform: linux/amd64
           - arch: arm64
-            cc: aarch64-linux-gnu-gcc
+            platform: linux/arm64
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build binary inside Docker
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            pkg-config \
-            libglib2.0-dev \
-            libssl-dev \
-            libmicrohttpd-dev \
-            libjson-glib-dev \
-            gcc-aarch64-linux-gnu \
-            libglib2.0-dev:arm64 \
-            libssl-dev:arm64 \
-            libmicrohttpd-dev:arm64 \
-            libjson-glib-dev:arm64
-
-      - name: Enable ARM64 apt architecture
-        if: matrix.arch == 'arm64'
-        run: sudo dpkg --add-architecture arm64
-
-      - name: Build
-        run: make clean && make UI=1 VERSION=${GITHUB_REF_NAME} CC=${{ matrix.cc }}
+          docker buildx build \
+            --platform ${{ matrix.platform }} \
+            --build-arg VERSION=${GITHUB_REF_NAME} \
+            --output type=local,dest=./output \
+            --target export \
+            .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: deadlight-linux-${{ matrix.arch }}
-          path: bin/deadlight
+          path: output/deadlight
 
   release:
     name: Publish Release
@@ -65,12 +57,11 @@ jobs:
         with:
           path: artifacts
 
-      - name: Rename binaries and generate checksums
+      - name: Rename and generate checksums
         run: |
-          cd artifacts
-          mv deadlight-linux-amd64/deadlight deadlight-linux-amd64
-          mv deadlight-linux-arm64/deadlight deadlight-linux-arm64
-          sha256sum deadlight-linux-amd64 deadlight-linux-arm64 > checksums.txt
+          mv artifacts/deadlight-linux-amd64/deadlight artifacts/deadlight-linux-amd64
+          mv artifacts/deadlight-linux-arm64/deadlight artifacts/deadlight-linux-arm64
+          sha256sum artifacts/deadlight-linux-amd64 artifacts/deadlight-linux-arm64 > artifacts/checksums.txt
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
