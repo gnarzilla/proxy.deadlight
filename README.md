@@ -4,65 +4,111 @@ A high-performance, multi-protocol proxy server built for **real-world condition
 
 **Multi-protocol in one binary** · **17.6 MB Docker image** · **Works on ARM64** · **REST API** · **Edge-native design**
 
+[![GitHub Release](https://img.shields.io/github/v/release/gnarzilla/proxy.deadlight)](https://github.com/gnarzilla/proxy.deadlight/releases/latest)
 [![Docker Pulls](https://img.shields.io/docker/pulls/gnarzilla/proxy-deadlight)](https://hub.docker.com/r/gnarzilla/proxy-deadlight)
 [![GitHub](https://img.shields.io/github/license/gnarzilla/proxy.deadlight)](LICENSE)
 
-[Quick Start](#quick-start) · [Features](#features) · [API](#rest-api) · [Configuration](#configuration) · [Documentation](docs/) · [Usage Examples](#usage-examples) · [Architecture](#architecture) · [Roadmap](#roadmap)
+[Quick Start](#quick-start) · [Features](#features) · [API](#rest-api) · [Configuration](#configuration) · [Documentation](docs/) · [Architecture](#architecture) · [Roadmap](#roadmap)
 
 ![SSE Web UI](src/assets/Proxy_SSE_UI.gif)
 
-> **Security Notice:** This proxy can perform TLS interception. 
+> **Security Notice:** This proxy can perform TLS interception.
 > Only deploy on hardware you control. See [Security Considerations](#security-considerations).
+
+---
 
 ## Quick Start
 
-### Docker (Recommended)
+### Download Binary (Fastest)
+
+Grab the latest release for your platform:
 
 ```bash
-# Pull and run
+# Linux amd64
+curl -LO https://github.com/gnarzilla/proxy.deadlight/releases/latest/download/deadlight-linux-amd64
+chmod +x deadlight-linux-amd64
+./deadlight-linux-amd64 -v
+
+# Linux arm64 (Raspberry Pi, ARM servers)
+curl -LO https://github.com/gnarzilla/proxy.deadlight/releases/latest/download/deadlight-linux-arm64
+chmod +x deadlight-linux-arm64
+./deadlight-linux-arm64 -v
+```
+
+Proxy runs on `:8080`, Web UI on `:8081`, API at `/api`.
+
+### Docker
+
+```bash
 docker run -d \
   --name deadlight-proxy \
   -p 8080:8080 \
   -p 8081:8081 \
   gnarzilla/proxy-deadlight:latest
-
-# Access proxy at localhost:8080
-# Web UI at http://localhost:8081
-# REST API at http://localhost:8080/api
 ```
 
-**Docker Compose:**
+<details>
+<summary>Docker Compose</summary>
+
 ```yaml
 version: '3.8'
 services:
   proxy:
     image: gnarzilla/proxy-deadlight:latest
     ports:
-      - "8080:8080"  # Proxy + API
-      - "8081:8081"  # Web UI
+      - "8080:8080"
+      - "8081:8081"
     environment:
       - DEADLIGHT_AUTH_SECRET=your-secret-here
     volumes:
       - ./config:/etc/deadlight
       - ./federation:/var/lib/deadlight/federation
-      - ./blog-cache:/var/lib/deadlight/blog 
+      - ./blog-cache:/var/lib/deadlight/blog
     restart: unless-stopped
 ```
+
+</details>
 
 **Platforms:** `linux/amd64`, `linux/arm64` (Raspberry Pi, ARM servers, Apple Silicon)
 
 ### Build from Source
 
+<details>
+<summary>Build instructions</summary>
+
+**Requirements:** GLib 2.0+, OpenSSL 1.1+, GCC/Clang, json-glib-1.0
+**Optional:** libmicrohttpd (for web UI)
+
 ```bash
+# Install dependencies (Debian/Ubuntu)
+sudo apt-get install build-essential pkg-config libglib2.0-dev \
+  libssl-dev libjson-glib-dev libmicrohttpd-dev
+
+# Build
 git clone https://github.com/gnarzilla/proxy.deadlight.git
 cd proxy.deadlight
-make clean && make UI=1           # With web UI
-./bin/deadlight -c deadlight.conf -v  # Start with verbose logging using the deadlight.conf configuration file.
-sudo ./bin/deadlight deadlight.conf   # Run as root for VPN
+make clean && make UI=1
+
+# Run
+./bin/deadlight -c deadlight.conf -v
 ```
 
-**Requirements:** GLib 2.0+, OpenSSL 1.1+, GCC/Clang  
-**Optional:** libmicrohttpd for web UI (build with `make UI=1`)
+</details>
+
+### Verify It's Working
+
+```bash
+# HTTP proxy
+curl -x http://localhost:8080 http://example.com
+
+# Health check
+curl http://localhost:8080/api/health
+
+# Web UI
+open http://localhost:8081
+```
+
+---
 
 ## Features
 
@@ -71,27 +117,22 @@ sudo ./bin/deadlight deadlight.conf   # Run as root for VPN
 | Feature | Description |
 |---------|-------------|
 | **Multi-Protocol** | HTTP/S, SOCKS4/5, WebSocket, SMTP, IMAP/S, FTP—auto-detected |
-| **TLS Interception** | Man-in-the-middle HTTPS inspection with upstream cert mimicry |
-| **Connection Pooling** | Reuses upstream connections with health checks (0-50% hit rate) |
+| **TLS Interception** | MITM HTTPS inspection with upstream cert mimicry |
+| **Connection Pooling** | Reuses upstream connections with health checks |
 | **VPN Gateway** | Kernel-integrated TUN device for Layer 3 routing |
-| **REST API** | Full-featured API for email, federation, metrics, and management |
+| **REST API** | Email, federation, metrics, and management endpoints |
 | **Blog Cache** | Read-through cache for blog.deadlight with offline fallback |
 | **Plugins** | Ad blocking, rate limiting, custom filters |
-| **Web UI** | Connects via Server-Sent Events for zero-overhead real-time monitoring at `:8081` |
-| **Resource-Efficient** | 17.6 MB Docker image, minimal RAM usage |
+| **Web UI** | SSE-powered real-time monitoring at `:8081` |
+| **Resource-Efficient** | 17.6 MB Docker image, minimal RAM |
 
 ![CLI launch to shutdown](src/assets/proxy.deadlight_cli_ui_boot2shut.gif)
 
-### REST API
+---
 
-Includes a comprehensive REST API for:
+## REST API
 
-- **Email Sending** - Send emails via MailChannels API with optional HMAC authentication
-- **Federation** - Inter-instance communication via email transport (experimental)
-- **Metrics** - Real-time connection stats, protocol breakdown, pool performance
-- **System Info** - External IP detection, health checks
-
-**Quick API Examples:**
+### Quick Examples
 
 ```bash
 # Health check
@@ -111,28 +152,30 @@ curl -X POST http://localhost:8080/api/federation/send \
   -d '{"target_domain":"other.deadlight.boo","content":"Hello!","author":"alice"}'
 ```
 
- **Full API Documentation:** [docs/API.md](docs/API.md)
+### Endpoints
 
-### Available Endpoints
+| Category | Endpoint | Description |
+|----------|----------|-------------|
+| **System** | `GET /api/health` | Health check with version info |
+| | `GET /api/system/ip` | External IP detection |
+| | `GET /api/metrics` | Real-time connection/protocol/pool stats |
+| | `GET /api/stream` | SSE real-time event stream |
+| | `GET /api/dashboard` | Unified metrics + logs |
+| | `GET /api/logs` | Log buffer |
+| **Email** | `POST /api/email/send` | Send email (no auth) |
+| | `POST /api/outbound/email` | Send email (HMAC auth required) |
+| **Federation** | `POST /api/federation/send` | Send post to another instance |
+| | `POST /api/federation/receive` | Receive federated posts |
+| | `GET /api/federation/posts` | List stored posts |
+| | `GET /api/federation/status` | Federation system status |
+| | `GET /api/federation/test/{domain}` | Test domain connectivity |
+| **Blog** | `GET /api/blog/posts` | List blog posts (cached) |
+| | `GET /api/blog/status` | Blog system status |
 
-#### System
-- `GET /api/health` - Health check with version info
-- `GET /api/system/ip` - External IP detection
-- `GET /api/metrics` - Real-time metrics (connections, protocols, pool stats)
-- `GET /api/stream` - SSE real-time event stream
-- `GET /api/deashboard` - unified metrics + logs (polling fallback)
-- `GET /api/logs` - log buffer
+**Full API documentation:** [docs/API.md](docs/API.md)
 
-#### Email
-- `POST /api/email/send` - Send email (no auth)
-- `POST /api/outbound/email` - Send email (HMAC auth required)
-
-#### Federation (Experimental)
-- `POST /api/federation/send` - Send post to another instance via email
-- `POST /api/federation/receive` - Receive and store federated posts
-- `GET /api/federation/posts` - List all stored posts
-- `GET /api/federation/status` - Federation system status
-- `GET /api/federation/test/{domain}` - Test domain connectivity
+<details>
+<summary>Federation Architecture</summary>
 
 ```
    Alice's Proxy                    Bob's Proxy
@@ -149,114 +192,18 @@ curl -X POST http://localhost:8080/api/federation/send \
                     └─ Stores in /var/lib/deadlight/federation/
 ```
 
-#### Blog Integration (with blog.deadlight)
-- `GET /api/blog/posts` - List blog posts (cached locally, syncs from Workers)
-- `GET /api/blog/status` - Blog system status
-- `POST /api/blog/publish` - Publish new post (coming soon)
+</details>
 
-**Caching:** Blog posts are cached locally for 5 minutes (configurable). When Workers is offline, the proxy serves stale cache with a warning, ensuring resilience on intermittent networks.
-
-**Configuration:**
-```ini
-[blog]
-workers_url = https://deadlight.boo
-cache_ttl = 300
-enable_cache = true
-cache_dir = /var/lib/deadlight/blog
-```
-
-**Performance:** Cache HITs are ~400x faster than fetching from Workers (10ms vs 4000ms).
-
-#### Blog (Stubs)
-- `GET /api/blog/status` - Blog backend status
-- `GET /api/blog/posts` - List blog posts
-- `POST /api/blog/publish` - Publish new post (not yet implemented)
-
-### API Configuration
-
-```ini
-# /etc/deadlight/deadlight.conf
-
-[core]
-auth_endpoint = /api/outbound/email
-auth_secret = <random_64_char_hex>
-
-[smtp]
-mailchannels_api_key = <your_mailchannels_api_key>
-```
-
-**Generate secret:** `openssl rand -hex 32`
-
-For complete API documentation, examples, and HMAC authentication guide, see **[docs/API.md](docs/API.md)**
-
-## Security Considerations
-
-### Threat Model
-- **Protected:** Traffic interception by network adversaries (via TLS)
-- **NOT protected:** Compromise of the proxy host itself
-
-### TLS Interception
-When enabled, the proxy terminates TLS and re-encrypts to upstream. 
-This means:
-- Plaintext is visible to the proxy process
-- Plugins can inspect/modify decrypted traffic
-- Credentials in requests are exposed to the proxy
-
-**Recommendation:** Run on trusted hardware. Consider vault.deadlight 
-for credential injection (credentials never reach client devices).
-
-### REST API Security
-- API binds to `0.0.0.0` by default—restrict with `api_bind = 127.0.0.1`
-- HMAC auth required for sensitive endpoints (`/api/outbound/*`)
-- Federation endpoints accept unauthenticated POSTs (by design)
-
-## Credential Management (Planned)
-
-When paired with [vault.deadlight](https://github.com/gnarzilla/vault.deadlight), the proxy can inject credentials into 
-requests without exposing them to client tools or the blog layer.
-
-**Status:** Not yet implemented. Currently, credentials are configured 
-manually in `deadlight.conf` or environment variables.
-
-**Planned integration:**
-- Unix socket API for credential requests
-- Automatic injection into upstream requests
-- Federation identity key management
-
-## TLS Interception Setup
-
-For HTTPS inspection without browser warnings, install the Deadlight CA certificate.
-
-### Docker (Extract CA)
-```bash
-docker run --rm gnarzilla/proxy-deadlight:latest cat /etc/deadlight/ca.crt > deadlight-ca.crt
-```
-
-### Install CA (Linux)
-```bash
-# Debian/Ubuntu
-sudo cp deadlight-ca.crt /usr/local/share/ca-certificates/
-sudo update-ca-certificates
-
-# Fedora/RHEL
-sudo cp deadlight-ca.crt /etc/pki/ca-trust/source/anchors/
-sudo update-ca-trust
-```
-
-### Install CA (Other Platforms)
-- **macOS:** `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain deadlight-ca.crt`
-- **Windows:** Double-click → Install → Trusted Root Certification Authorities
-- **Firefox:** `about:preferences#privacy` → Certificates → Authorities → Import
-
-**Security Note:** Only install on devices you control. Breaks certificate pinning on some sites (GitHub, Mozilla, banks). Use responsibly.
+---
 
 ## Configuration
 
-### Default Config Locations
+### Default Locations
 - **Docker:** `/etc/deadlight/deadlight.conf` (auto-generated)
 - **Native:** `/etc/deadlight/deadlight.conf`
 
 ### Key Sections
+
 ```ini
 [core]
 port = 8080
@@ -279,60 +226,22 @@ autoload = adblocker,ratelimiter
 [vpn]
 enabled = false  # Requires root + --privileged
 tun_device = tun0
+
+[blog]
+workers_url = https://deadlight.boo
+cache_ttl = 300
+enable_cache = true
+cache_dir = /var/lib/deadlight/blog
 ```
 
 **Hot-reload:** Config changes apply automatically (no restart needed).
 
+**Generate auth secret:** `openssl rand -hex 32`
+
 Example configs: [`deadlight.conf.example`](deadlight.conf.example), [`deadlight.conf.docker`](deadlight.conf.docker)
 
-## Usage Examples
-
-### As HTTP/HTTPS Proxy
-```bash
-# Configure browser/system to use http://localhost:8080
-curl -x http://localhost:8080 https://example.com
-```
-
-### As SOCKS Proxy
-```bash
-curl --socks5 localhost:8080 http://example.com
-```
-
-### As Email Gateway
-```bash
-# Send email via REST API
-curl -X POST http://localhost:8080/api/email/send \
-  -H "Content-Type: application/json" \
-  -d '{
-    "to": "recipient@example.com",
-    "subject": "Test Email",
-    "body": "Sent via Deadlight Proxy"
-  }'
-```
-
-### With VPN Mode (Docker)
-```bash
-docker run -d \
-  --name proxy-vpn \
-  --privileged \
-  --cap-add=NET_ADMIN \
-  -p 8080:8080 \
-  gnarzilla/proxy-deadlight
-```
-
-### As Federation Node
-```bash
-# Receive federated post
-curl -X POST http://localhost:8080/api/federation/receive \
-  -H "Content-Type: application/json" \
-  -H "From: alice@other.deadlight.boo" \
-  -d '{"content":"Hello from another instance!","author":"alice"}'
-
-# List all federated posts
-curl http://localhost:8080/api/federation/posts | jq
-```
-
 ### Command-Line Options
+
 ```
 -c, --config FILE   Config file (default: /etc/deadlight/deadlight.conf)
 -p, --port PORT     Override listening port
@@ -340,6 +249,54 @@ curl http://localhost:8080/api/federation/posts | jq
 -d, --daemon        Run as background daemon
 -h, --help          Show usage
 ```
+
+---
+
+## Security Considerations
+
+### TLS Interception
+
+When enabled, the proxy terminates and re-encrypts TLS. This means:
+- Plaintext is visible to the proxy process
+- Plugins can inspect/modify decrypted traffic
+- Credentials in requests are exposed to the proxy
+
+**Recommendation:** Run on trusted hardware only.
+
+<details>
+<summary>Install CA Certificate</summary>
+
+```bash
+# Extract CA from Docker
+docker run --rm gnarzilla/proxy-deadlight:latest cat /etc/deadlight/ca.crt > deadlight-ca.crt
+
+# Debian/Ubuntu
+sudo cp deadlight-ca.crt /usr/local/share/ca-certificates/
+sudo update-ca-certificates
+
+# Fedora/RHEL
+sudo cp deadlight-ca.crt /etc/pki/ca-trust/source/anchors/
+sudo update-ca-trust
+
+# macOS
+sudo security add-trusted-cert -d -r trustRoot \
+  -k /Library/Keychains/System.keychain deadlight-ca.crt
+
+# Windows: Double-click → Install → Trusted Root Certification Authorities
+# Firefox: about:preferences#privacy → Certificates → Authorities → Import
+```
+
+**Warning:** Only install on devices you control. Breaks certificate pinning on some sites.
+
+</details>
+
+### REST API Security
+
+- API binds to `0.0.0.0` by default—restrict with `api_bind = 127.0.0.1`
+- HMAC auth required for sensitive endpoints (`/api/outbound/*`)
+- Federation endpoints accept unauthenticated POSTs (by design)
+
+---
 
 ## Architecture
 
@@ -349,18 +306,18 @@ curl http://localhost:8080/api/federation/posts | jq
 └────────┬────────┘
          │
     ┌────▼─────┐
-    │  Workers │ ← Thread pool
+    │  Workers  │ ← Thread pool
     └────┬─────┘
          │
     ┌────▼──────────┐
-    │  Detection    │ ← Protocol auto-detection
+    │  Detection     │ ← Protocol auto-detection
     └────┬──────────┘
          │
     ┌────▼─────────────────────────┐
     │  Protocol Handlers           │
     │  ├─ HTTP/HTTPS               │
     │  ├─ SOCKS4/5                 │
-    │  ├─ API (REST endpoints)     │ ← NEW
+    │  ├─ API (REST endpoints)     │
     │  ├─ SMTP/IMAP                │
     │  ├─ WebSocket                │
     │  ├─ TLS Interception         │
@@ -370,11 +327,13 @@ curl http://localhost:8080/api/federation/posts | jq
 ```
 
 **Design Philosophy:**
-- **Stateless core** (no local DB/queues, federation uses filesystem)
-- **Edge-native** (optimized for intermittent connectivity)
-- **Plugin-extensible** (modify behavior without core changes)
-- **Performance-focused** (connection pooling, async I/O, worker threads)
-- **API-first** (RESTful interface for programmatic control)
+- **Stateless core** — no local DB/queues, federation uses filesystem
+- **Edge-native** — optimized for intermittent connectivity
+- **Plugin-extensible** — modify behavior without core changes
+- **Performance-focused** — connection pooling, async I/O, worker threads
+- **API-first** — RESTful interface for programmatic control
+
+---
 
 ## Use Cases
 
@@ -388,29 +347,33 @@ curl http://localhost:8080/api/federation/posts | jq
 | **Federation Node** | Inter-instance communication for distributed systems |
 | **Monitoring Hub** | Real-time metrics via REST API for dashboards |
 
-## Documentation
-
-- **[API Reference](docs/API.md)** - Complete REST API documentation
-- **[Quick Start Guide](docs/QUICK_START.md)** - Detailed setup instructions
-- **[Architecture](docs/ARCHITECTURE.md)** - Technical deep dive
-- **[Extending Deadlight](docs/EXTENDING.md)** - Plugin and protocol development
-- **[Contributing](docs/CONTRIBUTING.md)** - How to contribute
+---
 
 ## Extending Deadlight
 
-### Add a Protocol Handler
+<details>
+<summary>Add a Protocol Handler</summary>
+
 1. Create `src/protocols/myprotocol.c`
 2. Implement `detect`, `handle`, `cleanup` functions
 3. Register in `src/core/protocols.c`
 4. Rebuild: `make`
 
-### Add a Plugin
+</details>
+
+<details>
+<summary>Add a Plugin</summary>
+
 1. Create `src/plugins/myplugin.c`
 2. Define hooks (`on_request_headers`, `on_response`, etc.)
 3. Export with `G_MODULE_EXPORT`
 4. Enable in config: `[plugins] autoload = myplugin`
 
+</details>
+
 See [docs/EXTENDING.md](docs/EXTENDING.md) for details.
+
+---
 
 ## Roadmap
 
@@ -419,45 +382,44 @@ See [docs/EXTENDING.md](docs/EXTENDING.md) for details.
 - [x] Federation system (experimental)
 - [x] Connection pool metrics
 - [x] Blog caching with offline fallback
-- [x] Blog backend integration (read-through cache)
-- [ ] API rate limiting tested & vetted
 - [x] Server-Sent Events for real-time dashboard
+- [ ] API rate limiting tested & vetted
 
 ### Medium-term (late 2026)
 - [ ] Dynamic plugin loading (no rebuild required)
 - [ ] Full IPv6 support
 - [ ] Windows/macOS native builds
-- [ ] Advanced plugins (ML-based anomaly detection)
-- [ ] ActivityPub federation support
 - [ ] Prometheus metrics export
+- [ ] ActivityPub federation support
 
 ### Long-term
-- [ ] HF radio transport layer
-  - Enables global IP-over-HF connectivity (5–30 kbit/s) for resilient, infrastructure-free networking using open modems like VARA and ARDOP—perfect for intermittent edge scenarios like remote ops or disaster response.
-  - Start with RX-only testing via RTL-SDR + upconverter and GNU Radio demodulators, piping decoded streams (e.g., KISS/UDP) directly into Deadlight for protocol handling.
-  - Adding TX (e.g., HackRF or Hermes-Lite) is a simple flowgraph swap, unlocking bidirectional transport without core changes.
-  - Targets 2026 delivery for Tier 2 (robust digital modes); full wideband OFDM is future stretch.
+- [ ] HF radio transport layer for resilient, infrastructure-free networking
+
+---
 
 ## Part of the Deadlight Ecosystem
 
-This proxy is designed for **resilient, edge-native infrastructure** where connectivity is intermittent and resources are constrained. Part of the broader [Deadlight project](https://github.com/gnarzilla/edge.deadlight).
+- [blog.deadlight](https://github.com/gnarzilla/blog.deadlight) — Cloudflare Workers blog (<10 KB pages)
+- [meshtastic.deadlight](https://github.com/gnarzilla/meshtastic.deadlight) — Internet-over-LoRa gateway
+- [edge.deadlight](https://github.com/gnarzilla/edge.deadlight) — Unified edge platform
 
-**Related Projects:**
-- [blog.deadlight](https://github.com/gnarzilla/blog.deadlight) - Cloudflare Workers blog (<10 KB pages)
-- [meshtastic.deadlight](https://github.com/gnarzilla/meshtastic.deadlight) - Internet-over-LoRa gateway
-- [edge.deadlight](https://github.com/gnarzilla/edge.deadlight) - Unified edge platform
+## Documentation
 
-**API Integration:** The Deadlight Proxy API is designed to integrate seamlessly with blog.deadlight for content publishing and federation.
+- **[API Reference](docs/API.md)** — Complete REST API documentation
+- **[Quick Start Guide](docs/QUICK_START.md)** — Detailed setup instructions
+- **[Architecture](docs/ARCHITECTURE.md)** — Technical deep dive
+- **[Extending Deadlight](docs/EXTENDING.md)** — Plugin and protocol development
+- **[Contributing](docs/CONTRIBUTING.md)** — How to contribute
 
 ## License
 
-MIT License - see [LICENSE](docs/LICENSE)
+MIT License — see [LICENSE](docs/LICENSE)
 
 ## Support
 
 - **Issues:** [GitHub Issues](https://github.com/gnarzilla/proxy.deadlight/issues)
-- **API Support:** See [docs/API.md](docs/API.md) for troubleshooting
 - **Donate:** [ko-fi.com/gnarzilla](https://ko-fi.com/gnarzilla)
 - **Email:** gnarzilla@deadlight.boo
 
-**Contributions welcome** See [CONTRIBUTING.md](docs/CONTRIBUTING.md)
+**Contributions welcome** — see [CONTRIBUTING.md](docs/CONTRIBUTING.md)
+```
