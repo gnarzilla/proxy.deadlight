@@ -59,14 +59,16 @@ jobs:
 
       - name: Rename and generate checksums
         run: |
-          mv artifacts/deadlight-linux-amd64/deadlight artifacts/deadlight-linux-amd64
-          mv artifacts/deadlight-linux-arm64/deadlight artifacts/deadlight-linux-arm64
-          sha256sum artifacts/deadlight-linux-amd64 artifacts/deadlight-linux-arm64 > artifacts/checksums.txt
+          mkdir -p release
+          cp artifacts/deadlight-linux-amd64/deadlight release/deadlight-linux-amd64
+          cp artifacts/deadlight-linux-arm64/deadlight release/deadlight-linux-arm64
+          cd release
+          sha256sum deadlight-linux-amd64 deadlight-linux-arm64 > checksums.txt
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/deadlight-linux-amd64
-            artifacts/deadlight-linux-arm64
-            artifacts/checksums.txt
+            release/deadlight-linux-amd64
+            release/deadlight-linux-arm64
+            release/checksums.txt
