@@ -17,12 +17,15 @@ CFLAGS = -std=c99 -Wall -Wextra -pedantic -O2 -g
 LDFLAGS = -Wl,--as-needed
 LIBS = -lssl -lcrypto -lpthread -lresolv
 
+# Then append VERSION — now this won't get wiped
+CFLAGS += -DDEADLIGHT_VERSION=\"$(VERSION)\"
+
 # Package config for GLib/GIO
 GLIB_CFLAGS = $(shell pkg-config --cflags glib-2.0 gio-2.0 gio-unix-2.0 json-glib-1.0 gmodule-2.0)
 GLIB_LIBS = $(shell pkg-config --libs glib-2.0 gio-2.0 gio-unix-2.0 json-glib-1.0 gmodule-2.0)
 
 # Combined flags
-ALL_CFLAGS = $(CFLAGS) $(GLIB_CFLAGS) -DDEADLIGHT_VERSION=\"$(VERSION)\" -Isrc
+ALL_CFLAGS = $(CFLAGS) $(GLIB_CFLAGS) -Isrc
 ALL_LIBS = $(LIBS) $(GLIB_LIBS)
 
 #=============================================================================
