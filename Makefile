@@ -6,7 +6,6 @@
 #=============================================================================
 PROJECT = deadlight
 VERSION ?= dev
-CFLAGS += -DDEADLIGHT_VERSION=\"$(VERSION)\"
 PREFIX = /usr/local
 
 #=============================================================================
@@ -14,11 +13,9 @@ PREFIX = /usr/local
 #=============================================================================
 CC = gcc
 CFLAGS = -std=c99 -Wall -Wextra -pedantic -O2 -g
+CFLAGS += -DDEADLIGHT_VERSION=\"$(VERSION)\"
 LDFLAGS = -Wl,--as-needed
 LIBS = -lssl -lcrypto -lpthread -lresolv
-
-# Then append VERSION — now this won't get wiped
-CFLAGS += -DDEADLIGHT_VERSION=\"$(VERSION)\"
 
 # Package config for GLib/GIO
 GLIB_CFLAGS = $(shell pkg-config --cflags glib-2.0 gio-2.0 gio-unix-2.0 json-glib-1.0 gmodule-2.0)
@@ -120,11 +117,11 @@ plugins: $(PLUGIN_TARGETS)
 
 $(PLUGIN_BINDIR)/adblocker.so: $(PLUGINDIR)/adblocker.c $(PLUGINDIR)/adblocker.h | $(PLUGIN_BINDIR)
 	@echo "Building AdBlocker plugin..."
-	@$(CC) $(CFLAGS) $(GLIB_CFLAGS) -DDEADLIGHT_VERSION=\"$(VERSION)\" -Isrc -Isrc/core -fPIC -shared -o $@ $< $(ALL_LIBS)
+	@$(CC) $(CFLAGS) $(GLIB_CFLAGS) -Isrc -Isrc/core -fPIC -shared -o $@ $< $(ALL_LIBS)
 
 $(PLUGIN_BINDIR)/ratelimiter.so: $(PLUGINDIR)/ratelimiter.c $(PLUGINDIR)/ratelimiter.h | $(PLUGIN_BINDIR)
 	@echo "Building RateLimiter plugin..."
-	@$(CC) $(CFLAGS) $(GLIB_CFLAGS) -DDEADLIGHT_VERSION=\"$(VERSION)\" -Isrc -Isrc/core -fPIC -shared -o $@ $< $(ALL_LIBS)
+	@$(CC) $(CFLAGS) $(GLIB_CFLAGS) -Isrc -Isrc/core -fPIC -shared -o $@ $< $(ALL_LIBS)
 
 #=============================================================================
 # Utility Targets
