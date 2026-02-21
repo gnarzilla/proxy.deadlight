@@ -12,7 +12,7 @@ buffer_size=65536
 #Log level: error, warning, info, debug
 log_level=info
 #Log file path (empty for stdout)
-log_file=~
+log_file=
 #/.deadlight/proxy.log-2-20-26
 #Number of worker threads
 worker_threads=4
