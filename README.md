@@ -6,6 +6,7 @@ A high-performance, multi-protocol proxy server built for **real-world condition
 
 [![GitHub Release](https://img.shields.io/github/v/release/gnarzilla/proxy.deadlight)](https://github.com/gnarzilla/proxy.deadlight/releases/latest)
 [![Docker Pulls](https://img.shields.io/docker/pulls/gnarzilla/proxy-deadlight)](https://hub.docker.com/r/gnarzilla/proxy-deadlight)
+[![Docker Image Size](https://img.shields.io/docker/image-size/gnarzilla/proxy-deadlight/latest)](https://hub.docker.com/r/gnarzilla/proxy-deadlight)
 [![GitHub](https://img.shields.io/github/license/gnarzilla/proxy.deadlight)](LICENSE)
 
 [Quick Start](#quick-start) · [Features](#features) · [API](#rest-api) · [Configuration](#configuration) · [Documentation](docs/) · [Architecture](#architecture) · [Roadmap](#roadmap)
