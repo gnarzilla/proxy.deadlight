@@ -415,7 +415,7 @@ See [docs/EXTENDING.md](docs/EXTENDING.md) for details.
 
 ## License
 
-MIT License — see [LICENSE](docs/LICENSE)
+MIT License — see [LICENSE](LICENSE)
 
 ## Support
 
