@@ -99,15 +99,26 @@ static DeadlightHandlerResult handle_plain_http(DeadlightConnection *conn, GErro
         return HANDLER_ERROR; 
     }
 
-    // Check for local requests BEFORE setting target / connecting
+    // Check for local requests BEFORE setting target / connecting.
+    // Hard rules: loopback + the proxy's own listen address.
+    // Soft rule: any hostname the operator added to [proxy] local_hostnames
+    // in deadmesh.conf (comma-separated). Personal machine names like
+    // emilyssidepc, mulley-mooneye, or Tailscale *.ts.net addresses belong
+    // there, not hardcoded in source.
     gboolean is_local = (g_strcmp0(host, "localhost") == 0 ||
                          g_strcmp0(host, "127.0.0.1") == 0 ||
                          g_strcmp0(host, "::1") == 0 ||
-                         g_strcmp0(host, "deadlight") == 0 ||                // compose service name
-                         (conn->context->listen_address && g_strcmp0(host, conn->context->listen_address) == 0) ||
-                         strstr(host, "emilyssidepc") != NULL ||
-                         strstr(host, "mulley-mooneye") != NULL ||
-                         strstr(host, "ts.net") != NULL);
+                         g_strcmp0(host, "deadlight") == 0 ||   /* compose svc */
+                         (conn->context->listen_address &&
+                          g_strcmp0(host, conn->context->listen_address) == 0));
+
+    /* Check operator-configured local hostnames (local_hostnames in [proxy]) */
+    if (!is_local && conn->context->local_hostnames) {
+        for (gchar **lh = conn->context->local_hostnames; *lh && !is_local; lh++) {
+            if (g_strcmp0(host, *lh) == 0 || strstr(host, *lh) != NULL)
+                is_local = TRUE;
+        }
+    }
 
     if (is_local) {
         g_debug("Connection %lu: Detected local request to %s:%d → handling internally", conn->id, host, port);

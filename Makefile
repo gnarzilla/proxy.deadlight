@@ -151,9 +151,22 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.c
 # Generated UI Assets
 #=============================================================================
 ifeq ($(UI),1)
-$(SRCDIR)/ui/assets.c: $(SRCDIR)/ui/index.html
+# Assets to embed (HTML + favicons)
+UI_ASSETS = \
+	$(SRCDIR)/ui/index.html \
+	$(SRCDIR)/ui/favicon.ico \
+	$(SRCDIR)/ui/favicon.png
+
+# Generate single assets.c file from all UI assets
+$(SRCDIR)/ui/assets.c: $(UI_ASSETS)
 	@echo "Generating UI assets..."
-	@xxd -i $< > $@
+	@echo "/* Auto-generated UI assets */" > $@
+	@echo "" >> $@
+	@for asset in $(UI_ASSETS); do \
+		echo "Embedding $$asset..."; \
+		xxd -i $$asset >> $@; \
+		echo "" >> $@; \
+	done
 
 # Make sure the generated file exists before we try to compile it
 $(OBJDIR)/ui/assets.o: $(SRCDIR)/ui/assets.c
