@@ -824,10 +824,16 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
             // Pool now owns these — clear both so cleanup doesn't close them
             conn->upstream_tls = NULL;
             conn->upstream_connection = NULL;
-        } else {
-            g_debug("Connection %lu: Not pooling: %s:%d (SSL=%d, reason=%s)",
-                conn->id, conn->target_host, conn->target_port, use_ssl, reason);
-        }
+            } else {
+                        g_debug("Connection %lu: Not pooling: %s:%d (SSL=%d, reason=%s)",
+                            conn->id, conn->target_host, conn->target_port, use_ssl, reason);
+
+                        // Remove from pool's active table before closing
+                        GIOStream *stream_to_discard = use_ssl
+                            ? G_IO_STREAM(conn->upstream_tls)
+                            : G_IO_STREAM(conn->upstream_connection);
+                        connection_pool_discard(conn->context->conn_pool, stream_to_discard);
+            }
     }
     
     // === CLOSE TLS CONNECTIONS (before underlying sockets) ===

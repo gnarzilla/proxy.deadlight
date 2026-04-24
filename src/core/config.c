@@ -592,10 +592,10 @@ guint64 deadlight_config_get_size(DeadlightContext *context, const gchar *sectio
                 size *= 1024 * 1024;
                 break;
             case 'G':
-                size *= 1024 * 1024 * 1024;
+                size *= (guint64)1024 * 1024 * 1024;
                 break;
             case 'T':
-                size *= 1024LL * 1024 * 1024 * 1024;
+                size *= (guint64)1024 * 1024 * 1024 * 1024;
                 break;
             default:
                 g_warning("Unknown size suffix: %c", *endptr);
@@ -780,6 +780,7 @@ static void config_update_context_values(DeadlightContext *context) {
     g_free(log_level);
     
     // Security
+    g_mutex_lock(&context->config_values_mutex);
     g_free(context->auth_secret);
     context->auth_secret = deadlight_config_get_string(context, "security", "auth_secret", NULL);
     if (context->auth_secret && strlen(context->auth_secret) > 0) {
@@ -793,6 +794,8 @@ static void config_update_context_values(DeadlightContext *context) {
     // SSL
     context->ssl_intercept_enabled = deadlight_config_get_bool(context, "ssl", "enabled", TRUE);
     
+    g_mutex_unlock(&context->config_values_mutex);
+
     g_info("Config updated: port=%d, pool_size=%d, ssl=%s, auth_secret=%s",
            context->listen_port, context->pool_max_per_host,
            context->ssl_intercept_enabled ? "enabled" : "disabled",

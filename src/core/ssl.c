@@ -339,37 +339,57 @@ static X509* extract_x509_from_gtls_certificate(GTlsCertificate *gtls_cert) {
 }
 
 // Copy relevant extensions from upstream certificate
-static void copy_relevant_extensions(X509 *cert, X509 *upstream_cert, X509 *ca_cert, const char *hostname) {
+static void copy_relevant_extensions(X509 *cert, X509 *upstream_cert,
+                                     X509 *ca_cert, const char *hostname) {
     X509V3_CTX ctx;
     X509V3_set_ctx_nodb(&ctx);
     X509V3_set_ctx(&ctx, ca_cert, cert, NULL, NULL, 0);
-    
-    gchar *san = g_strdup_printf("DNS:%s", hostname);
-    X509_EXTENSION *ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_subject_alt_name, san);
-    if (ext) {
-        X509_add_ext(cert, ext, -1);
-        X509_EXTENSION_free(ext);
-    }
-    g_free(san);
-    
+
+    // Copy upstream SANs directly if present
+    int san_loc = X509_get_ext_by_NID(upstream_cert, NID_subject_alt_name, -1);
+    if (san_loc >= 0) {
+        X509_EXTENSION *upstream_san = X509_get_ext(upstream_cert, san_loc);
+        X509_EXTENSION *san_copy = X509_EXTENSION_dup(upstream_san);
+        if (san_copy) {
+            X509_add_ext(cert, san_copy, -1);
+            X509_EXTENSION_free(san_copy);
+        }
+    } else {
+        // Fallback: generate SAN from hostname only
+        gchar *san = g_strdup_printf("DNS:%s", hostname);
+        X509_EXTENSION *ext = X509V3_EXT_conf_nid(NULL, &ctx,
+                                                   NID_subject_alt_name, san);
+        if (ext) {
+            X509_add_ext(cert, ext, -1);
+            X509_EXTENSION_free(ext);
+        }
+        g_free(san);
+    }                          // <-- this was missing
+
+    // Key usage — copy from upstream if present
+    X509_EXTENSION *ext;
     int ext_loc = X509_get_ext_by_NID(upstream_cert, NID_key_usage, -1);
     if (ext_loc >= 0) {
-        ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_key_usage, "digitalSignature,keyEncipherment");
+        ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_key_usage,
+                                  "digitalSignature,keyEncipherment");
         if (ext) {
             X509_add_ext(cert, ext, -1);
             X509_EXTENSION_free(ext);
         }
     }
-    
+
+    // Extended key usage — copy from upstream if present
     ext_loc = X509_get_ext_by_NID(upstream_cert, NID_ext_key_usage, -1);
     if (ext_loc >= 0) {
-        ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_ext_key_usage, "serverAuth,clientAuth");
+        ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_ext_key_usage,
+                                  "serverAuth,clientAuth");
         if (ext) {
             X509_add_ext(cert, ext, -1);
             X509_EXTENSION_free(ext);
         }
     }
-    
+
+    // Always add basic constraints
     ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_basic_constraints, "CA:FALSE");
     if (ext) {
         X509_add_ext(cert, ext, -1);
@@ -653,7 +673,6 @@ gboolean deadlight_ssl_create_ca_certificate(const gchar *cert_file,
                                            GError **error) {
     X509 *cert = NULL;
     EVP_PKEY *pkey = NULL;
-    BIGNUM *bn = NULL;
     X509_NAME *name = NULL;
     FILE *fp = NULL;
     gboolean success = FALSE;
@@ -780,7 +799,6 @@ cleanup:
     if (cert) X509_free(cert);
     if (pkey) EVP_PKEY_free(pkey);
     if (pctx) EVP_PKEY_CTX_free(pctx);
-    if (bn) BN_free(bn);
     
     return success;
 }

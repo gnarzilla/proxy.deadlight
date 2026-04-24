@@ -156,6 +156,7 @@ struct _DeadlightContext {
     gchar *auth_secret;
     gboolean shutdown_requested;
     GMutex stats_mutex;
+    GMutex config_values_mutex;
     gchar **local_hostnames; // NULL-terminated array of local hostnames
 };
 
@@ -392,6 +393,7 @@ void connection_pool_get_stats(
     guint64 *evicted,
     guint64 *failed
 );
+void connection_pool_discard(ConnectionPool *pool, GIOStream *stream);
 
 #ifdef __cplusplus
 }

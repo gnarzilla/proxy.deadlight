@@ -71,6 +71,16 @@ static void http_cleanup(DeadlightConnection *conn) {
     (void)conn;
 }
 
+static gboolean is_loopback_address(const gchar *host) {
+    if (g_strcmp0(host, "localhost") == 0) return TRUE;
+    if (g_strcmp0(host, "127.0.0.1") == 0) return TRUE;
+    if (g_strcmp0(host, "::1") == 0) return TRUE;
+    if (g_strcmp0(host, "0.0.0.0") == 0) return TRUE;
+    // 127.x.x.x range
+    if (g_str_has_prefix(host, "127.")) return TRUE;
+    return FALSE;
+}
+
 static DeadlightHandlerResult handle_plain_http(DeadlightConnection *conn, GError **error) {
     conn->current_request = deadlight_request_new(conn);
 
@@ -164,9 +174,9 @@ static DeadlightHandlerResult handle_plain_http(DeadlightConnection *conn, GErro
 
     // Proxy loop prevention
     if (conn->target_port == conn->context->listen_port &&
-        (g_strcmp0(conn->target_host, conn->context->listen_address) == 0 ||
-         g_strcmp0(conn->target_host, "localhost") == 0 ||
-         g_strcmp0(conn->target_host, "127.0.0.1") == 0)) {
+        (is_loopback_address(conn->target_host) ||
+        (conn->context->listen_address && 
+        g_strcmp0(conn->target_host, conn->context->listen_address) == 0))) {
         g_warning("Connection %lu: Detected proxy loop. Denying.", conn->id);
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "Proxy loop detected");
         g_free(host);
@@ -259,38 +269,50 @@ static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError *
     conn->target_host = g_strdup(host);
     conn->target_port = port;
 
+    // Connect TCP upstream
     if (!deadlight_network_connect_upstream(conn, error)) {
         g_free(host);
         return HANDLER_ERROR;
     }
-    g_free(host); // The host string is no longer needed after this point.
+    g_free(host);
 
+    // Send 200 NOW — client is waiting for this before sending any TLS ClientHello
     const gchar *response = "HTTP/1.1 200 Connection Established\r\n\r\n";
-    GOutputStream *client_output = g_io_stream_get_output_stream(G_IO_STREAM(conn->client_connection));
-    if (g_output_stream_write_all(client_output, response, strlen(response), NULL, NULL, error) == FALSE) {
+    GOutputStream *client_output = g_io_stream_get_output_stream(
+        G_IO_STREAM(conn->client_connection));
+    if (!g_output_stream_write_all(client_output, response, strlen(response), 
+                                    NULL, NULL, error)) {
         return HANDLER_ERROR;
     }
 
+    // NOW do upstream TLS + cert generation — client is no longer blocked
     if (conn->context->ssl_intercept_enabled) {
-        if (deadlight_ssl_intercept_connection(conn, error)) {
+            if (!deadlight_ssl_intercept_connection(conn, error)) {
+                return HANDLER_ERROR;
+            }
+
             g_info("Connection %lu: Tunneling with intercepted client TLS.", conn->id);
             g_info("Connection %lu: Tunneling with upstream TLS.", conn->id);
-            
-            if (start_ssl_tunnel_blocking(conn, error)) {
+
+            GError *tunnel_error = NULL;
+            start_ssl_tunnel_blocking(conn, &tunnel_error);
+
+            if (tunnel_error) {
+                g_debug("Connection %lu: SSL tunnel closed with error: %s",
+                        conn->id, tunnel_error->message);
+                g_error_free(tunnel_error);
+                // conn->state remains TUNNELING — cleanup will not pool
+            }
+            // Whether clean or error, tunnel has run to completion.
+            // Pooling decision is driven by conn->state in cleanup_connection_internal.
+            return HANDLER_SUCCESS_CLEANUP_NOW;
+
+        } else {
+            g_info("Connection %lu: SSL intercept disabled. Starting plain TCP tunnel.", conn->id);
+            if (deadlight_network_tunnel_data(conn, error)) {
                 return HANDLER_SUCCESS_CLEANUP_NOW;
             } else {
                 return HANDLER_ERROR;
             }
-        } else {
-            return HANDLER_ERROR;
         }
-    } else {
-        // Non-intercepted CONNECT - plain TCP tunnel
-        g_info("Connection %lu: SSL intercept disabled. Starting plain TCP tunnel.", conn->id);
-        if (deadlight_network_tunnel_data(conn, error)) {
-            return HANDLER_SUCCESS_CLEANUP_NOW;
-        } else {
-            return HANDLER_ERROR;
-        }
-    }
 }

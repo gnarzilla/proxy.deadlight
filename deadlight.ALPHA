@@ -4,7 +4,7 @@ port=8080
 #IP address to bind to
 bind_address=0.0.0.0
 #Maximum concurrent connections
-max_connections=500
+max_connections=5000
 #Connection timeout in seconds
 connection_timeout=30
 #Buffer size for data transfer
@@ -13,9 +13,9 @@ buffer_size=65536
 log_level=info
 #Log file path (empty for stdout)
 log_file=
-#/.deadlight/proxy.log-2-20-26
+#/.deadlight/proxy.log-DATE
 #Number of worker threads
-worker_threads=4
+worker_threads=8
 
 [ssl]
 #Enable SSL interception
@@ -71,7 +71,7 @@ tcp_nodelay=true
 #Enable TCP keepalive
 tcp_keepalive=true
 #Max connections per upstream host
-connection_pool_size=10
+connection_pool_size=20
 #Idle connection timeout (seconds)
 connection_pool_timeout=300
 #Total pool size across all hosts

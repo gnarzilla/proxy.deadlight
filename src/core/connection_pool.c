@@ -56,6 +56,7 @@ static void pooled_connection_free(PooledConnection *pc);
 static gboolean connection_is_healthy(GIOStream *stream, ConnectionType type);
 static gchar* make_pool_key(const gchar *host, guint16 port, ConnectionType type);
 static void evict_to_limit(ConnectionPool *pool);
+void connection_pool_discard(ConnectionPool *pool, GIOStream *stream);
 
 //==============================================================
 // HELPER FUNCTIONS
@@ -82,23 +83,43 @@ static void pooled_connection_free(PooledConnection *pc) {
 }
 
 /**
+ * Remove a connection from the active table without returning it to idle.
+ * Call this when a connection is being closed and should not be reused.
+ */
+void connection_pool_discard(ConnectionPool *pool, GIOStream *stream) {
+    if (!pool || !stream) return;
+
+    g_mutex_lock(&pool->mutex);
+
+    PooledConnection *pc = g_hash_table_lookup(pool->active_connections, stream);
+    if (pc) {
+        g_hash_table_steal(pool->active_connections, stream);
+        pooled_connection_free(pc);
+        pool->connections_closed++;
+    }
+
+    g_mutex_unlock(&pool->mutex);
+}
+
+/**
  * Get the underlying socket from any stream type
  */
 static GSocket* get_underlying_socket(GIOStream *stream, ConnectionType type) {
     GSocket *socket = NULL;
-    
-    if (type == CONN_TYPE_CLIENT_TLS || type == CONN_TYPE_SERVER_TLS) {
-        GTlsConnection *tls = G_TLS_CONNECTION(stream);
 
+    if (type == CONN_TYPE_CLIENT_TLS || type == CONN_TYPE_SERVER_TLS) {
         GIOStream *base = NULL;
-        g_object_get(tls, "base-io-stream", &base, NULL);
-        if (G_IS_SOCKET_CONNECTION(base)) {
-            socket = g_socket_connection_get_socket(G_SOCKET_CONNECTION(base));
+        g_object_get(G_TLS_CONNECTION(stream), "base-io-stream", &base, NULL);
+        if (base) {
+            if (G_IS_SOCKET_CONNECTION(base)) {
+                socket = g_socket_connection_get_socket(G_SOCKET_CONNECTION(base));
+            }
+            g_object_unref(base);  // release the ref added by g_object_get
         }
     } else {
         socket = g_socket_connection_get_socket(G_SOCKET_CONNECTION(stream));
     }
-    
+
     return socket;
 }
 
@@ -107,23 +128,37 @@ static GSocket* get_underlying_socket(GIOStream *stream, ConnectionType type) {
  */
 static gboolean connection_is_healthy(GIOStream *stream, ConnectionType type) {
     if (!stream) return FALSE;
-    
+
     GSocket *socket = get_underlying_socket(stream, type);
     if (!socket) return FALSE;
-    
-    // Check socket state
-    if (!g_socket_is_connected(socket)) {
-        return FALSE;
+
+    if (!g_socket_is_connected(socket)) return FALSE;
+    if (g_socket_condition_check(socket, G_IO_ERR | G_IO_HUP) != 0) return FALSE;
+
+    // For TLS connections, verify the TLS session is still valid
+    if (type == CONN_TYPE_CLIENT_TLS || type == CONN_TYPE_SERVER_TLS) {
+        if (!G_IS_TLS_CONNECTION(stream)) return FALSE;
+        GTlsConnection *tls = G_TLS_CONNECTION(stream);
+
+        // If peer certificate is gone, session was invalidated
+        GTlsCertificate *peer = g_tls_connection_get_peer_certificate(tls);
+        if (!peer) {
+            g_debug("Pool: TLS connection has no peer certificate - session invalid");
+            return FALSE;
+        }
+
+        // Check for GnuTLS session errors via a non-blocking peek
+        // g_tls_connection_get_peer_certificate_errors returns flags
+        // about the cert status - if validation flags are set unexpectedly
+        // the session should not be reused
+        GTlsCertificateFlags cert_errors = 
+            g_tls_connection_get_peer_certificate_errors(tls);
+        if (cert_errors != 0) {
+            g_debug("Pool: TLS cert errors on pooled connection: 0x%x", cert_errors);
+            return FALSE;
+        }
     }
-    
-    // Check for errors/hangup without blocking
-    if (g_socket_condition_check(socket, G_IO_ERR | G_IO_HUP) != 0) {
-        return FALSE;
-    }
-    
-    // For TLS connections, we could add more sophisticated checks here
-    // For now, socket health is sufficient
-    
+
     return TRUE;
 }
 
