@@ -405,7 +405,7 @@ See [docs/EXTENDING.md](docs/EXTENDING.md) for details.
 ## Part of the Deadlight Ecosystem
 
 - [blog.deadlight](https://github.com/gnarzilla/blog.deadlight) — Cloudflare Workers blog (<10 KB pages)
-- [meshtastic.deadlight](https://github.com/gnarzilla/meshtastic.deadlight) — Internet-over-LoRa gateway
+- [deadmesh](https://github.com/gnarzilla/deadmesh) — Internet-over-LoRa gateway
 - [edge.deadlight](https://github.com/gnarzilla/edge.deadlight) — Unified edge platform
 
 ## Documentation
@@ -427,4 +427,3 @@ MIT License — see [LICENSE](LICENSE)
 - **Email:** gnarzilla@deadlight.boo
 
 **Contributions welcome** — see [CONTRIBUTING.md](docs/CONTRIBUTING.md)
-```
