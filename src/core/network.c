@@ -183,7 +183,7 @@ void deadlight_network_stop(DeadlightContext *context) {
         
         if (context->connections) {
             g_mutex_lock(&context->network->connection_mutex);
-
+            
             GHashTableIter iter;
             gpointer key, value;
             g_hash_table_iter_init(&iter, context->connections);
@@ -191,15 +191,15 @@ void deadlight_network_stop(DeadlightContext *context) {
                 DeadlightConnection *c = (DeadlightConnection *)value;
                 c->should_stop = TRUE;
             }
-
+            
             guint count = g_hash_table_size(context->connections);
             g_info("Closing %u active connections...", count);
-
+            
             // g_hash_table_destroy calls remove_all internally — don't call both
             g_hash_table_destroy(context->connections);
             context->connections = NULL;
             context->active_connections = 0;
-
+            
             g_mutex_unlock(&context->network->connection_mutex);
         }
         
