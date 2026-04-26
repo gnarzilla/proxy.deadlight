@@ -295,6 +295,8 @@ gboolean deadlight_tls_tunnel_data(DeadlightConnection *conn, GError **error);
 void deadlight_connection_free(DeadlightConnection *conn);
 GSocketConnection* deadlight_network_connect_tcp(DeadlightContext *context, const gchar *host, guint16 port, GError **error);
 void deadlight_network_tunnel_socket_connections(GSocketConnection *conn1, GSocketConnection *conn2);
+void deadlight_network_lock_connections(DeadlightContext *ctx);
+void deadlight_network_unlock_connections(DeadlightContext *ctx);
 
 // Protocol API
 gboolean deadlight_protocol_handle_response(DeadlightConnection *connection, GError **error);
@@ -345,6 +347,11 @@ gboolean deadlight_test_module(const gchar *module_name);
 // Utility API
 const gchar *deadlight_protocol_to_string(DeadlightProtocol protocol);
 gchar *deadlight_format_bytes(guint64 bytes);
+const gchar *deadlight_state_to_string(DeadlightConnectionState state);
+// Connection table locking — use these when iterating ctx->connections
+// from outside network.c to avoid races with cleanup_connection_internal
+void deadlight_network_lock_connections(DeadlightContext *ctx);
+void deadlight_network_unlock_connections(DeadlightContext *ctx);
 
 // Connection Pool API
 ConnectionPool* connection_pool_new(

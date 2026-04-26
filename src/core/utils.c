@@ -5,6 +5,19 @@
 #include <glib.h>
 #include <openssl/hmac.h>
 
+const gchar* deadlight_state_to_string(DeadlightConnectionState state) {
+    switch (state) {
+        case DEADLIGHT_STATE_INIT:       return "INIT";
+        case DEADLIGHT_STATE_DETECTING:  return "DETECTING";
+        case DEADLIGHT_STATE_CONNECTING: return "CONNECTING";
+        case DEADLIGHT_STATE_CONNECTED:  return "CONNECTED";
+        case DEADLIGHT_STATE_TUNNELING:  return "TUNNELING";
+        case DEADLIGHT_STATE_CLOSING:    return "CLOSING";
+        case DEADLIGHT_STATE_CLOSED:     return "CLOSED";
+        default:                         return "UNKNOWN";
+    }
+}
+
 gboolean validate_hmac_bytes(const gchar *auth_header,
                              const guint8 *payload,
                              gsize payload_len,

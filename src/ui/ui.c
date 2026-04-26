@@ -17,6 +17,7 @@ static int json_response(struct MHD_Connection *conn, const char *json)
                                                                (void *)json,
                                                                MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(resp, "Content-Type", "application/json");
+    MHD_add_response_header(resp, "Access-Control-Allow-Origin", "*");
     int ret = MHD_queue_response(conn, MHD_HTTP_OK, resp);
     MHD_destroy_response(resp);
     return ret;
@@ -159,14 +160,11 @@ void stop_ui_server(void)
 static enum MHD_Result
 handle_api_connections(DeadlightContext *context, struct MHD_Connection *conn, const char *method)
 {
-    if (strcmp(method, "GET") != 0) {
-        return MHD_NO;
-    }
+    if (strcmp(method, "GET") != 0) return MHD_NO;
 
-    GString *json_str = g_string_new("[");
+    GString *json_str = g_string_new("{\"connections\":[");
     gboolean first = TRUE;
 
-    // Lock the mutex to safely iterate over the connections hash table
     g_mutex_lock(&context->stats_mutex);
 
     if (context->connections) {
@@ -175,36 +173,30 @@ handle_api_connections(DeadlightContext *context, struct MHD_Connection *conn, c
         g_hash_table_iter_init(&iter, context->connections);
         while (g_hash_table_iter_next(&iter, &key, &value)) {
             DeadlightConnection *d_conn = (DeadlightConnection *)value;
-
-            if (!first) {
-                g_string_append(json_str, ",");
-            }
-            
-            // Extract the data for the JSON response
-            g_string_append_printf(json_str, "{"
-                "\"id\": %" G_GUINT64_FORMAT ","
-                "\"remote\": \"%s\","
-                "\"proto\": \"%s\","
-                "\"tx\": %" G_GUINT64_FORMAT ","
-                "\"rx\": %" G_GUINT64_FORMAT
-                "}",
+            if (!first) g_string_append(json_str, ",");
+            g_string_append_printf(json_str,
+                "{\"id\":%" G_GUINT64_FORMAT
+                ",\"host\":\"%s\""
+                ",\"port\":%d"
+                ",\"protocol\":\"%s\""
+                ",\"tx\":%" G_GUINT64_FORMAT
+                ",\"rx\":%" G_GUINT64_FORMAT "}",
                 d_conn->id,
-                d_conn->client_address ? d_conn->client_address : "N/A",
+                d_conn->target_host ? d_conn->target_host : "",
+                d_conn->target_port,
                 deadlight_protocol_to_string(d_conn->protocol),
                 d_conn->bytes_client_to_upstream,
-                d_conn->bytes_upstream_to_client
-            );
+                d_conn->bytes_upstream_to_client);
             first = FALSE;
         }
     }
 
-    // Unlock the mutex as soon as we're done with the shared data
+    guint active = context->connections ? g_hash_table_size(context->connections) : 0;
     g_mutex_unlock(&context->stats_mutex);
 
-    g_string_append(json_str, "]");
+    g_string_append_printf(json_str, "],\"active\":%u}", active);
 
     enum MHD_Result ret = json_response(conn, json_str->str);
     g_string_free(json_str, TRUE);
-
     return ret;
 }

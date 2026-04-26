@@ -16,7 +16,10 @@ typedef struct {
 } FederationDiscovery;
 
 // SSE Stream State
+#define SSE_STREAM_MAGIC 0x53534500u
+
 typedef struct {
+    guint32 magic;                   // Must be SSE_STREAM_MAGIC
     DeadlightConnection *conn;
     GOutputStream *output;
     GSource *update_timer;
@@ -26,47 +29,64 @@ typedef struct {
 } SSEStreamState;
 
 // Forward declarations
+// Protocol handler
 static gsize api_detect(const guint8 *data, gsize len);
 static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **error);
 static void api_cleanup(DeadlightConnection *conn);
+
+// Endpoint handlers
 static DeadlightHandlerResult api_handle_system_endpoint(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
 static DeadlightHandlerResult api_handle_federation_endpoint(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
 static DeadlightHandlerResult api_handle_email_endpoint(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
 static DeadlightHandlerResult api_handle_blog_endpoint(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
 static DeadlightHandlerResult api_handle_outbound_email(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
 static DeadlightHandlerResult api_handle_metrics_endpoint(DeadlightConnection *conn, GError **error);
-static DeadlightHandlerResult api_send_404(DeadlightConnection *conn, GError **error);
-static DeadlightHandlerResult api_send_json_response(DeadlightConnection *conn, gint status_code, const gchar *status_text, const gchar *json_body, GError **error);
+static DeadlightHandlerResult api_handle_logs_endpoint(DeadlightConnection *conn, GError **error);
+static DeadlightHandlerResult api_handle_dashboard_endpoint(DeadlightConnection *conn, GError **error);
+static DeadlightHandlerResult api_handle_stream_endpoint(DeadlightConnection *conn, GError **error);
+static DeadlightHandlerResult api_handle_wellknown_deadlight(DeadlightConnection *conn, GError **error);
+static DeadlightHandlerResult api_handle_connections_endpoint(DeadlightConnection *conn, GError **error);
+
+// Federation
 static DeadlightHandlerResult api_federation_send(DeadlightConnection *conn, GError **error);
 static DeadlightHandlerResult api_federation_receive(DeadlightConnection *conn, DeadlightRequest *request, GError **error);
 static DeadlightHandlerResult api_federation_test_domain(DeadlightConnection *conn, const gchar *domain, GError **error);
-static gboolean email_send_via_mailchannels(DeadlightConnection *conn, const gchar *from, const gchar *to, const gchar *subject, const gchar *body, GError **error);
-static DeadlightHandlerResult api_handle_logs_endpoint(DeadlightConnection *conn, GError **error); 
-static DeadlightHandlerResult api_send_404(DeadlightConnection *conn, GError **error);
 static FederationDiscovery* discover_federated_instance(const gchar *target_domain, GError **error);
 static void federation_discovery_free(FederationDiscovery *discovery);
-static DeadlightHandlerResult api_handle_wellknown_deadlight(DeadlightConnection *conn, GError **error);
 
-static DeadlightHandlerResult api_handle_dashboard_endpoint(DeadlightConnection *conn, GError **error);
-// SSE (Server-Sent Events) support
+// Email
+static gboolean email_send_via_mailchannels(DeadlightConnection *conn, const gchar *from, const gchar *to, const gchar *subject, const gchar *body, GError **error);
+
+// Response helpers
+static DeadlightHandlerResult api_send_json_response(DeadlightConnection *conn, gint status_code, const gchar *status_text, const gchar *json_body, GError **error);
+static DeadlightHandlerResult api_send_error(DeadlightConnection *conn, gint code, const gchar *status, GError *cause, const gchar *fallback, GError **error);
+static DeadlightHandlerResult api_send_404(DeadlightConnection *conn, GError **error);
+
+// JSON / metrics builders
+static gchar* api_build_metrics_json(DeadlightContext *ctx);
 static gchar* api_build_dashboard_json(DeadlightContext *ctx);
-static DeadlightHandlerResult api_handle_stream_endpoint(DeadlightConnection *conn, GError **error);
-static gboolean sse_send_update(gpointer user_data);
-static void sse_stream_cleanup(SSEStreamState *state);
-static gboolean sse_send_event(GOutputStream *out, const gchar *event_type, 
-                               const gchar *data, GError **error);
-static void api_cleanup_sse_stream(DeadlightConnection *conn);
 
-// Prometheus metrics (called from http.c)
-DeadlightHandlerResult api_handle_prometheus_metrics(DeadlightConnection *conn, GError **error);
-
-// Helper functions
-static JsonObject* parse_request_body(DeadlightConnection *conn, GError **error);
-static gboolean validate_json_fields(JsonObject *obj, const gchar **required_fields, gsize num_fields, GError **error);
-static gchar* fetch_from_workers(const gchar *workers_url, const gchar *endpoint, GError **error);
+// Cache helpers
 static gboolean is_cache_fresh(const gchar *cache_file, gint ttl_seconds);
 static gchar* read_cache_file(const gchar *cache_file, GError **error);
 static gboolean write_cache_file(const gchar *cache_file, const gchar *content, GError **error);
+
+// HTTP fetch
+static gchar* http_get_raw(const gchar *host, guint16 port, gboolean use_tls, const gchar *path, guint timeout_seconds, GError **error);
+static gchar* fetch_from_workers(const gchar *workers_url, const gchar *endpoint, GError **error);
+
+// Request helpers
+static JsonObject* parse_request_body(DeadlightConnection *conn, GError **error);
+static gboolean validate_json_fields(JsonObject *obj, const gchar **required_fields, gsize num_fields, GError **error);
+
+// SSE
+static gboolean sse_send_update(gpointer user_data);
+static void sse_stream_cleanup(SSEStreamState *state);
+static gboolean sse_send_event(GOutputStream *out, const gchar *event_type, const gchar *data, GError **error);
+static void api_cleanup_sse_stream(DeadlightConnection *conn);
+
+// Prometheus (called from http.c)
+DeadlightHandlerResult api_handle_prometheus_metrics(DeadlightConnection *conn, GError **error);
 
 
 // Federation discovery implementation
@@ -227,27 +247,27 @@ void deadlight_register_api_handler(void) {
 static gsize api_detect(const guint8 *data, gsize len) {
     if (len < 9) return 0;
 
-    // Check for /api/ endpoints
-    if ((len >= 9 && memcmp(data, "GET /api/", 9) == 0) ||
-        (len >= 10 && memcmp(data, "POST /api/", 10) == 0) ||
-        (len >= 9 && memcmp(data, "PUT /api/", 9) == 0) ||
-        (len >= 12 && memcmp(data, "DELETE /api/", 12) == 0) ||
+    // Fast path: method + /api/ prefix
+    if ((len >= 9  && memcmp(data, "GET /api/",     9)  == 0) ||
+        (len >= 10 && memcmp(data, "POST /api/",    10) == 0) ||
+        (len >= 9  && memcmp(data, "PUT /api/",     9)  == 0) ||
+        (len >= 12 && memcmp(data, "DELETE /api/",  12) == 0) ||
         (len >= 13 && memcmp(data, "OPTIONS /api/", 13) == 0)) {
         return 100;
     }
-    
-    // Check for .well-known/deadlight
-    if (len >= 24 && memcmp(data, "GET /.well-known/deadlight", 26) == 0) {
+
+    // /.well-known/deadlight — was checking len >= 24 against 26-byte string
+    if (len >= 26 && memcmp(data, "GET /.well-known/deadlight", 26) == 0) {
         return 100;
     }
 
-    // Slow path: Check for /api/ anywhere in first line (absolute URI)
+    // Slow path: absolute URI with /api/ anywhere in first line
     const guint8 *ptr = data;
     const guint8 *end = data + MIN(len, 512);
 
     while (ptr < end && *ptr != '\r' && *ptr != '\n') {
-        if (ptr + 5 < end && memcmp(ptr, "/api/", 5) == 0) {
-            g_debug("API Detect: Found absolute URI match");
+        if ((gsize)(end - ptr) >= 5 && memcmp(ptr, "/api/", 5) == 0) {
+            g_debug("API detect: absolute URI match");
             return 100;
         }
         ptr++;
@@ -259,6 +279,36 @@ static gsize api_detect(const guint8 *data, gsize len) {
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════════════
+
+static DeadlightHandlerResult api_send_error(DeadlightConnection *conn,
+                                              gint code,
+                                              const gchar *status,
+                                              GError *cause,
+                                              const gchar *fallback,
+                                              GError **error) {
+    const gchar *message = (cause && cause->message) ? cause->message : fallback;
+
+    JsonBuilder *builder = json_builder_new();
+    json_builder_begin_object(builder);
+    json_builder_set_member_name(builder, "error");
+    json_builder_add_string_value(builder, message);
+    json_builder_end_object(builder);
+
+    JsonGenerator *gen = json_generator_new();
+    JsonNode *root = json_builder_get_root(builder);
+    json_generator_set_root(gen, root);
+    gchar *body = json_generator_to_data(gen, NULL);
+
+    DeadlightHandlerResult result = api_send_json_response(conn, code, status, body, error);
+
+    g_free(body);
+    json_node_unref(root);
+    g_object_unref(gen);
+    g_object_unref(builder);
+    if (cause) g_error_free(cause);
+
+    return result;
+}
 
 /**
  * Parse JSON request body from connection buffer
@@ -351,17 +401,18 @@ static gboolean validate_json_fields(JsonObject *obj, const gchar **required_fie
 // ═══════════════════════════════════════════════════════════════════════════
 static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **error) {
     g_info("API handler for connection %lu", conn->id);
-    
-    // Debug: Show raw request
-    gchar *request_preview = g_strndup((gchar*)conn->client_buffer->data, 
-                                       MIN(conn->client_buffer->len, 500));
-    g_debug("API conn %lu: Raw request (%u bytes):\n%s", 
-            conn->id, conn->client_buffer->len, request_preview);
-    g_free(request_preview);
 
-    // Parse HTTP request
+    // Debug: show raw request
+    gchar *preview = g_strndup((gchar *)conn->client_buffer->data,
+                                MIN(conn->client_buffer->len, 500));
+    g_debug("API conn %lu: Raw request (%u bytes):\n%s",
+            conn->id, conn->client_buffer->len, preview);
+    g_free(preview);
+
+    // Parse HTTP request — single call, was duplicated before
     DeadlightRequest *request = deadlight_request_new(conn);
-    gchar *request_str = g_strndup((gchar*)conn->client_buffer->data, conn->client_buffer->len);
+    gchar *request_str = g_strndup((gchar *)conn->client_buffer->data,
+                                    conn->client_buffer->len);
 
     if (!deadlight_request_parse_headers(request, request_str, strlen(request_str))) {
         g_warning("API conn %lu: Failed to parse request headers", conn->id);
@@ -369,117 +420,191 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
         deadlight_request_free(request);
         return HANDLER_ERROR;
     }
-
-    if (!deadlight_request_parse_headers(request, request_str, strlen(request_str))) {
-        g_warning("API conn %lu: Failed to parse request headers", conn->id);
-        g_free(request_str);
-        deadlight_request_free(request);
-        return HANDLER_ERROR;
-    }
-    
-    conn->current_request = request;
-    
-    g_debug("API conn %lu: Parsed - Method: '%s', URI: '%s', Body length: %u", 
-            conn->id, request->method, request->uri, 
-            request->body ? request->body->len : 0);
-    
     g_free(request_str);
 
-    // Check rate limit (before processing request)
+    conn->current_request = request;
+
+    g_debug("API conn %lu: Method='%s' URI='%s' body=%u bytes",
+            conn->id, request->method, request->uri,
+            request->body ? request->body->len : 0);
+
+    // Rate limit check
     if (conn->context->plugins_data) {
-        gboolean should_limit = deadlight_ratelimiter_check_request(
-            conn->context, 
-            conn->client_address, 
-            request->uri
-        );
-        
-        if (should_limit) {
-            g_warning("API: Rate limit exceeded for %s on %s", 
-                     conn->client_address, request->uri);
-            
-            const gchar *response = 
+        gboolean limited = deadlight_ratelimiter_check_request(
+            conn->context, conn->client_address, request->uri);
+
+        if (limited) {
+            g_warning("API: Rate limit exceeded for %s on %s",
+                      conn->client_address, request->uri);
+
+            const gchar *rl_response =
                 "HTTP/1.1 429 Too Many Requests\r\n"
                 "Content-Type: application/json\r\n"
                 "Retry-After: 60\r\n"
                 "X-RateLimit-Limit: 60\r\n"
                 "X-RateLimit-Remaining: 0\r\n"
-                "Content-Length: 58\r\n"
+                "Content-Length: 48\r\n"
                 "\r\n"
                 "{\"error\":\"Rate limit exceeded\",\"retry_after\":60}";
-            
-            GOutputStream *client_os = g_io_stream_get_output_stream(
+
+            GOutputStream *os = g_io_stream_get_output_stream(
                 G_IO_STREAM(conn->client_connection));
-            g_output_stream_write_all(client_os, response, strlen(response), NULL, NULL, error);
-            
+            g_output_stream_write_all(os, rl_response, strlen(rl_response),
+                                      NULL, NULL, error);
+
+            conn->current_request = NULL;
             deadlight_request_free(request);
             return HANDLER_SUCCESS_CLEANUP_NOW;
         }
     }
 
-    DeadlightHandlerResult result = HANDLER_ERROR;
-
-    // Handle CORS preflight
+    // CORS preflight
     if (g_str_equal(request->method, "OPTIONS")) {
-        const gchar *response = 
+        const gchar *cors =
             "HTTP/1.1 200 OK\r\n"
             "Access-Control-Allow-Origin: https://deadlight.boo\r\n"
             "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n"
             "Access-Control-Allow-Headers: Content-Type, X-API-Key, Authorization\r\n"
             "Content-Length: 0\r\n"
             "\r\n";
-        
-        GOutputStream *client_os = g_io_stream_get_output_stream(G_IO_STREAM(conn->client_connection));
-        g_output_stream_write_all(client_os, response, strlen(response), NULL, NULL, error);
-        result = HANDLER_SUCCESS_CLEANUP_NOW;
-    }
-    // Route to appropriate handler
-    else if (g_str_equal(request->uri, "/api/health")) {
-        gchar *json_response = g_strdup_printf(
-            "{\"status\":\"ok\",\"version\":\"%s\",\"timestamp\":%ld,\"proxy\":\"deadlight\"}",
-            DEADLIGHT_VERSION_STRING,
-            time(NULL)
-        );
-        result = api_send_json_response(conn, 200, "OK", json_response, error);
-        g_free(json_response);
-    }
-    else if (g_str_equal(request->uri, "/.well-known/deadlight")) {
-        result = api_handle_wellknown_deadlight(conn, error);
-    }
-    else if (g_str_has_prefix(request->uri, "/api/system/")) {
-        result = api_handle_system_endpoint(conn, request, error);
-    }
-    else if (g_str_has_prefix(request->uri, "/api/email/")) {
-        result = api_handle_email_endpoint(conn, request, error);
-    }
-    else if (g_str_has_prefix(request->uri, "/api/outbound/email")) {
-        result = api_handle_outbound_email(conn, request, error);
-    }
-    else if (g_str_has_prefix(request->uri, "/api/blog/")) {
-        result = api_handle_blog_endpoint(conn, request, error);
-    }
-    else if (g_str_has_prefix(request->uri, "/api/federation/")) {
-        result = api_handle_federation_endpoint(conn, request, error);
-    }
-    else if (g_str_equal(request->uri, "/api/logs")) {
-        result = api_handle_logs_endpoint(conn, error);
-    }
-    else if (g_str_equal(request->uri, "/api/dashboard")) {
-         result = api_handle_dashboard_endpoint(conn, error);
-    }
-    else if (g_str_equal(request->uri, "/api/stream")) {
-        result = api_handle_stream_endpoint(conn, error);
-    }
-    else if (g_str_has_prefix(request->uri, "/api/metrics")) {
-         result = api_handle_metrics_endpoint(conn, error);
+        GOutputStream *os = g_io_stream_get_output_stream(
+            G_IO_STREAM(conn->client_connection));
+        g_output_stream_write_all(os, cors, strlen(cors), NULL, NULL, error);
+        conn->current_request = NULL;
+        deadlight_request_free(request);
+        return HANDLER_SUCCESS_CLEANUP_NOW;
     }
 
+    DeadlightHandlerResult result;
+    const gchar *uri = request->uri;
+
+    // ── Route table ──────────────────────────────────────────────────────
+    if (g_str_equal(uri, "/api/health")) {
+        gchar *body = g_strdup_printf(
+            "{\"status\":\"ok\",\"version\":\"%s\","
+            "\"timestamp\":%ld,\"proxy\":\"deadlight\"}",
+            DEADLIGHT_VERSION_STRING, time(NULL));
+        result = api_send_json_response(conn, 200, "OK", body, error);
+        g_free(body);
+    }
+    else if (g_str_equal(uri, "/.well-known/deadlight")) {
+        result = api_handle_wellknown_deadlight(conn, error);
+    }
+    else if (g_str_equal(uri, "/api/connections")) {
+        result = api_handle_connections_endpoint(conn, error);
+    }
+    else if (g_str_has_prefix(uri, "/api/system/")) {
+        result = api_handle_system_endpoint(conn, request, error);
+    }
+    else if (g_str_has_prefix(uri, "/api/email/")) {
+        result = api_handle_email_endpoint(conn, request, error);
+    }
+    else if (g_str_has_prefix(uri, "/api/outbound/email")) {
+        result = api_handle_outbound_email(conn, request, error);
+    }
+    else if (g_str_has_prefix(uri, "/api/blog/")) {
+        result = api_handle_blog_endpoint(conn, request, error);
+    }
+    else if (g_str_has_prefix(uri, "/api/federation/")) {
+        result = api_handle_federation_endpoint(conn, request, error);
+    }
+    else if (g_str_equal(uri, "/api/logs")) {
+        result = api_handle_logs_endpoint(conn, error);
+    }
+    else if (g_str_equal(uri, "/api/dashboard")) {
+        result = api_handle_dashboard_endpoint(conn, error);
+    }
+    else if (g_str_equal(uri, "/api/stream")) {
+        result = api_handle_stream_endpoint(conn, error);
+    }
+    else if (g_str_has_prefix(uri, "/api/metrics")) {
+        result = api_handle_metrics_endpoint(conn, error);
+    }
     else {
-        g_debug("API handler: No route matched for URI: %s", request->uri);
+        g_debug("API: No route for URI: %s", uri);
         result = api_send_404(conn, error);
     }
+    // ── End route table ──────────────────────────────────────────────────
+
     conn->current_request = NULL;
     deadlight_request_free(request);
     return result;
+}
+
+/**
+ * Perform a simple HTTP/HTTPS GET request and return the response body.
+ * Caller must g_free() the returned string.
+ * Returns NULL on failure with error set.
+ */
+static gchar* http_get_raw(const gchar *host,
+                            guint16 port,
+                            gboolean use_tls,
+                            const gchar *path,
+                            guint timeout_seconds,
+                            GError **error) {
+    GSocketClient *client = g_socket_client_new();
+    g_socket_client_set_timeout(client, timeout_seconds);
+    if (use_tls) {
+        g_socket_client_set_tls(client, TRUE);
+    }
+
+    GSocketConnection *conn = g_socket_client_connect_to_host(
+        client, host, port, NULL, error);
+    g_object_unref(client);
+
+    if (!conn) {
+        g_prefix_error(error, "Failed to connect to %s:%u: ", host, (guint)port);
+        return NULL;
+    }
+
+    // Build request
+    GString *request = g_string_new(NULL);
+    g_string_append_printf(request, "GET %s HTTP/1.1\r\n", path);
+    g_string_append_printf(request, "Host: %s\r\n", host);
+    g_string_append(request, "Connection: close\r\n");
+    g_string_append(request, "User-Agent: Deadlight-Proxy/" DEADLIGHT_VERSION_STRING "\r\n");
+    g_string_append(request, "\r\n");
+
+    GOutputStream *out = g_io_stream_get_output_stream(G_IO_STREAM(conn));
+    gsize written;
+    if (!g_output_stream_write_all(out, request->str, request->len,
+                                   &written, NULL, error)) {
+        g_string_free(request, TRUE);
+        g_object_unref(conn);
+        g_prefix_error(error, "Failed to write request to %s: ", host);
+        return NULL;
+    }
+    g_string_free(request, TRUE);
+
+    // Read full response
+    GInputStream *in = g_io_stream_get_input_stream(G_IO_STREAM(conn));
+    GString *response = g_string_new(NULL);
+    gchar buf[4096];
+    gssize bytes_read;
+
+    while ((bytes_read = g_input_stream_read(in, buf, sizeof(buf), NULL, error)) > 0) {
+        g_string_append_len(response, buf, bytes_read);
+    }
+    g_object_unref(conn);
+
+    if (bytes_read < 0) {
+        // error already set by g_input_stream_read
+        g_string_free(response, TRUE);
+        return NULL;
+    }
+
+    // Find body
+    const gchar *body_start = strstr(response->str, "\r\n\r\n");
+    if (!body_start) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                    "No header/body separator in response from %s", host);
+        g_string_free(response, TRUE);
+        return NULL;
+    }
+
+    gchar *body = g_strdup(body_start + 4);
+    g_string_free(response, TRUE);
+    return body;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -506,14 +631,15 @@ static DeadlightHandlerResult api_handle_logs_endpoint(DeadlightConnection *conn
 // ENDPOINT HANDLERS
 // ═══════════════════════════════════════════════════════════════════════════
 
-static DeadlightHandlerResult api_handle_system_endpoint(DeadlightConnection *conn, 
-                                                         DeadlightRequest *request, 
-                                                         GError **error) {
+static DeadlightHandlerResult api_handle_system_endpoint(DeadlightConnection *conn,
+                                                          DeadlightRequest *request,
+                                                          GError **error) {
     if (g_str_equal(request->uri, "/api/system/ip")) {
         gchar *ip = get_external_ip();
-        gchar *json_response = g_strdup_printf("{\"external_ip\":\"%s\",\"port\":8080}", ip);
-        DeadlightHandlerResult result = api_send_json_response(conn, 200, "OK", json_response, error);
-        g_free(json_response);
+        gchar *body = g_strdup_printf(
+            "{\"external_ip\":\"%s\",\"port\":%d}", ip, conn->context->listen_port);
+        DeadlightHandlerResult result = api_send_json_response(conn, 200, "OK", body, error);
+        g_free(body);
         g_free(ip);
         return result;
     }
@@ -620,164 +746,138 @@ static DeadlightHandlerResult api_handle_federation_endpoint(DeadlightConnection
 }
 
 static DeadlightHandlerResult api_handle_email_endpoint(DeadlightConnection *conn,
-                                                        DeadlightRequest *request,
-                                                        GError **error) {
-    if (!g_str_equal(request->method, "POST") || !g_str_has_suffix(request->uri, "/send")) {
+                                                         DeadlightRequest *request,
+                                                         GError **error) {
+    if (!g_str_equal(request->method, "POST") ||
+        !g_str_has_suffix(request->uri, "/send")) {
         return api_send_404(conn, error);
     }
 
     GError *parse_error = NULL;
     JsonObject *obj = parse_request_body(conn, &parse_error);
     if (!obj) {
-        gchar *err_msg = g_strdup_printf("{\"error\":\"%s\"}", 
-                                         parse_error ? parse_error->message : "Invalid JSON");
-        DeadlightHandlerResult result = api_send_json_response(conn, 400, "Bad Request", err_msg, error);
-        g_free(err_msg);
-        if (parse_error) g_error_free(parse_error);
-        return result;
+        return api_send_error(conn, 400, "Bad Request", parse_error, "Invalid JSON", error);
     }
 
-    // Validate required fields
+    GError *validate_error = NULL;
     const gchar *required[] = {"to", "body"};
-    if (!validate_json_fields(obj, required, 2, &parse_error)) {
-        gchar *err_msg = g_strdup_printf("{\"error\":\"%s\"}", parse_error->message);
-        DeadlightHandlerResult result = api_send_json_response(conn, 400, "Bad Request", err_msg, error);
-        g_free(err_msg);
-        g_error_free(parse_error);
+    if (!validate_json_fields(obj, required, 2, &validate_error)) {
         json_object_unref(obj);
-        return result;
+        return api_send_error(conn, 400, "Bad Request", validate_error, "Missing fields", error);
     }
 
-    const gchar *to = json_object_get_string_member(obj, "to");
-    const gchar *from = json_object_has_member(obj, "from") 
-                      ? json_object_get_string_member(obj, "from")
-                      : "noreply@deadlight.boo";
+    const gchar *to      = json_object_get_string_member(obj, "to");
+    const gchar *from    = json_object_has_member(obj, "from")
+                         ? json_object_get_string_member(obj, "from")
+                         : "noreply@deadlight.boo";
     const gchar *subject = json_object_has_member(obj, "subject")
                          ? json_object_get_string_member(obj, "subject")
                          : "Message from Deadlight";
-    const gchar *body = json_object_get_string_member(obj, "body");
+    const gchar *body    = json_object_get_string_member(obj, "body");
 
     GError *send_error = NULL;
     gboolean sent = email_send_via_mailchannels(conn, from, to, subject, body, &send_error);
-    
+
     DeadlightHandlerResult result;
     if (sent) {
         result = api_send_json_response(conn, 200, "OK",
             "{\"status\":\"sent\",\"provider\":\"mailchannels\"}", error);
     } else {
-        gchar *err_json = g_strdup_printf(
-            "{\"error\":\"Failed to send email: %s\"}",
-            send_error ? send_error->message : "unknown error");
-        result = api_send_json_response(conn, 502, "Bad Gateway", err_json, error);
-        g_free(err_json);
+        result = api_send_error(conn, 502, "Bad Gateway", send_error,
+                                "Email send failed", error);
+        send_error = NULL; // api_send_error consumed it
     }
 
-    if (send_error) g_error_free(send_error);
     json_object_unref(obj);
     return result;
 }
-
 static DeadlightHandlerResult api_handle_outbound_email(DeadlightConnection *conn,
-                                                        DeadlightRequest *request,
-                                                        GError **error) {
+                                                         DeadlightRequest *request,
+                                                         GError **error) {
     if (!g_str_equal(request->method, "POST")) {
         return api_send_json_response(conn, 405, "Method Not Allowed",
-                                     "{\"error\":\"POST required\"}", error);
+                                      "{\"error\":\"POST required\"}", error);
     }
 
     g_info("API: Outbound email request from %s", conn->client_address);
 
-    // Parse JSON body
     GError *parse_error = NULL;
     JsonObject *obj = parse_request_body(conn, &parse_error);
     if (!obj) {
-        gchar *err_msg = g_strdup_printf("{\"error\":\"%s\"}", 
-                                         parse_error ? parse_error->message : "Invalid JSON");
-        DeadlightHandlerResult result = api_send_json_response(conn, 400, "Bad Request", err_msg, error);
-        g_free(err_msg);
-        if (parse_error) g_error_free(parse_error);
-        return result;
+        return api_send_error(conn, 400, "Bad Request", parse_error, "Invalid JSON", error);
     }
 
-    // Validate required fields
+    GError *validate_error = NULL;
     const gchar *required[] = {"from", "to", "subject", "body"};
-    if (!validate_json_fields(obj, required, 4, &parse_error)) {
-        gchar *err_msg = g_strdup_printf("{\"error\":\"%s\"}", parse_error->message);
-        DeadlightHandlerResult result = api_send_json_response(conn, 400, "Bad Request", err_msg, error);
-        g_free(err_msg);
-        g_error_free(parse_error);
+    if (!validate_json_fields(obj, required, 4, &validate_error)) {
         json_object_unref(obj);
-        return result;
+        return api_send_error(conn, 400, "Bad Request", validate_error, "Missing fields", error);
     }
 
-    const gchar *from = json_object_get_string_member(obj, "from");
-    const gchar *to = json_object_get_string_member(obj, "to");
+    const gchar *from    = json_object_get_string_member(obj, "from");
+    const gchar *to      = json_object_get_string_member(obj, "to");
     const gchar *subject = json_object_get_string_member(obj, "subject");
-    const gchar *body = json_object_get_string_member(obj, "body");
+    const gchar *body    = json_object_get_string_member(obj, "body");
 
-    // Additional validation
     if (strlen(to) == 0) {
         json_object_unref(obj);
         return api_send_json_response(conn, 400, "Bad Request",
-                                     "{\"error\":\"'to' field cannot be empty\"}", error);
+                                      "{\"error\":\"'to' field cannot be empty\"}", error);
     }
 
     // Ensure request->body is populated for HMAC validation
     if (!request->body || request->body->len == 0) {
-        const gchar *body_start = strstr((gchar*)conn->client_buffer->data, "\r\n\r\n");
+        const gchar *body_start = strstr((gchar *)conn->client_buffer->data, "\r\n\r\n");
         if (body_start) {
             body_start += 4;
-            gsize body_len = conn->client_buffer->len - (body_start - (gchar*)conn->client_buffer->data);
+            gsize body_len = conn->client_buffer->len -
+                             (body_start - (gchar *)conn->client_buffer->data);
             request->body = g_byte_array_sized_new(body_len);
-            g_byte_array_append(request->body, (const guint8*)body_start, body_len);
+            g_byte_array_append(request->body, (const guint8 *)body_start, body_len);
         }
     }
 
     // HMAC authentication
     const gchar *auth_header = deadlight_request_get_header(request, "Authorization");
-    
-    // Debug HMAC validation
+
     if (g_getenv("DEADLIGHT_DEBUG_HMAC")) {
-        g_info("HMAC Debug Info:");
-        g_info("  Auth header: %s", auth_header ? auth_header : "NULL");
-        g_info("  Body length: %u bytes", request->body->len);
-        g_info("  Secret length: %zu bytes", strlen(conn->context->auth_secret));
-        
-        // Show first 50 bytes of body
-        gchar *body_preview = g_strndup((gchar*)request->body->data, MIN(50, request->body->len));
-        g_info("  Body preview: %s", body_preview);
-        g_free(body_preview);
+        g_info("HMAC debug — auth: %s, body: %u bytes, secret length: %zu",
+               auth_header ? auth_header : "NULL",
+               request->body ? request->body->len : 0,
+               strlen(conn->context->auth_secret));
     }
-    
-    if (!auth_header || !validate_hmac_bytes(auth_header, request->body->data, 
-                                             request->body->len, conn->context->auth_secret)) {
-        g_warning("HMAC validation failed for outbound email");
-        g_warning("  Received header: %s", auth_header ? auth_header : "missing");
-        g_warning("  Expected: Check payload matches exactly (no whitespace changes)");
+
+    if (!auth_header ||
+        !validate_hmac_bytes(auth_header,
+                             request->body->data,
+                             request->body->len,
+                             conn->context->auth_secret)) {
+        g_warning("HMAC validation failed — header: %s",
+                  auth_header ? auth_header : "missing");
         json_object_unref(obj);
         return api_send_json_response(conn, 401, "Unauthorized",
-                                     "{\"error\":\"Invalid credentials\"}", error);
+                                      "{\"error\":\"Invalid credentials\"}", error);
     }
 
-    g_info("HMAC validated successfully - sending email");
+    g_info("HMAC validated — sending email to %s", to);
 
-    // Send email
     GError *send_error = NULL;
     gboolean sent = email_send_via_mailchannels(conn, from, to, subject, body, &send_error);
-    
+
     DeadlightHandlerResult result;
     if (sent) {
-        g_info("API: Email sent successfully to %s", to);
+        g_info("API: Email sent to %s", to);
         result = api_send_json_response(conn, 202, "Accepted",
-                                       "{\"status\":\"sent\",\"provider\":\"mailchannels\"}", error);
+                                        "{\"status\":\"sent\",\"provider\":\"mailchannels\"}",
+                                        error);
     } else {
-        g_warning("API: Failed to send email via MailChannels: %s", 
+        g_warning("API: MailChannels failed: %s",
                   send_error ? send_error->message : "unknown");
-        result = api_send_json_response(conn, 502, "Bad Gateway",
-                                       "{\"error\":\"Email provider failed\"}", error);
+        result = api_send_error(conn, 502, "Bad Gateway", send_error,
+                                "Email provider failed", error);
+        send_error = NULL; // api_send_error consumed it
     }
 
-    if (send_error) g_error_free(send_error);
     json_object_unref(obj);
     return result;
 }
@@ -923,120 +1023,116 @@ static DeadlightHandlerResult api_handle_blog_endpoint(DeadlightConnection *conn
     return api_send_404(conn, error);
 }
 
-static DeadlightHandlerResult api_handle_metrics_endpoint(DeadlightConnection *conn, 
-                                                          GError **error) {
-    DeadlightContext *ctx = conn->context;
+static DeadlightHandlerResult api_handle_metrics_endpoint(DeadlightConnection *conn,
+                                                           GError **error) {
     g_info("API metrics endpoint for conn %lu", conn->id);
 
-    if (!ctx) {
+    if (!conn->context) {
         return api_send_json_response(conn, 500, "Internal Server Error",
-                                     "{\"error\":\"NULL context\"}", error);
+                                      "{\"error\":\"NULL context\"}", error);
     }
 
-    // Count active connections by protocol
-    gint protocol_counts[13] = {0}; // Array indexed by DeadlightProtocol enum
-    
+    gchar *json = api_build_metrics_json(conn->context);
+    DeadlightHandlerResult result = api_send_json_response(conn, 200, "OK", json, error);
+    g_free(json);
+    return result;
+}
+static DeadlightHandlerResult api_handle_connections_endpoint(DeadlightConnection *conn,
+                                                               GError **error) {
+    DeadlightContext *ctx = conn->context;
+
+    JsonBuilder *builder = json_builder_new();
+    json_builder_begin_object(builder);
+    json_builder_set_member_name(builder, "connections");
+    json_builder_begin_array(builder);
+
+    guint active_count = 0;
+
     if (ctx->connections) {
+        // Must use connection_mutex, not stats_mutex.
+        // cleanup_connection_internal holds connection_mutex when removing
+        // from this table — stats_mutex is only held for the bytes counter.
+        deadlight_network_lock_connections(ctx);
+
         GHashTableIter iter;
         gpointer key, value;
         g_hash_table_iter_init(&iter, ctx->connections);
-        
+
         while (g_hash_table_iter_next(&iter, &key, &value)) {
-            DeadlightConnection *active_conn = (DeadlightConnection*)value;
-            if (active_conn && active_conn->protocol < 13) {
-                protocol_counts[active_conn->protocol]++;
-            }
+            DeadlightConnection *c = (DeadlightConnection *)value;
+
+            // cleaned is set at the very top of cleanup_connection_internal,
+            // before any fields are freed — safe to check under the mutex
+            if (!c || c->cleaned) continue;
+
+            active_count++;
+
+            gdouble duration = c->connection_timer
+                ? g_timer_elapsed(c->connection_timer, NULL) : 0.0;
+
+            json_builder_begin_object(builder);
+
+            json_builder_set_member_name(builder, "id");
+            json_builder_add_int_value(builder, (gint64)c->id);
+
+            json_builder_set_member_name(builder, "host");
+            json_builder_add_string_value(builder,
+                c->target_host ? c->target_host : "unknown");
+
+            json_builder_set_member_name(builder, "port");
+            json_builder_add_int_value(builder, (gint64)c->target_port);
+
+            json_builder_set_member_name(builder, "protocol");
+            json_builder_add_string_value(builder,
+                deadlight_protocol_to_string(c->protocol));
+
+            json_builder_set_member_name(builder, "state");
+            json_builder_add_string_value(builder,
+                deadlight_state_to_string(c->state));
+
+            json_builder_set_member_name(builder, "rx");
+            json_builder_add_int_value(builder,
+                (gint64)c->bytes_upstream_to_client);
+
+            json_builder_set_member_name(builder, "tx");
+            json_builder_add_int_value(builder,
+                (gint64)c->bytes_client_to_upstream);
+
+            json_builder_set_member_name(builder, "duration");
+            json_builder_add_double_value(builder, duration);
+
+            json_builder_set_member_name(builder, "client");
+            json_builder_add_string_value(builder,
+                c->client_address ? c->client_address : "unknown");
+
+            json_builder_end_object(builder);
         }
+
+        deadlight_network_unlock_connections(ctx);
     }
 
-    GString *json = g_string_new(NULL);
-    g_string_append(json, "{");
+    json_builder_end_array(builder);
 
-    // Basic metrics
-    g_string_append_printf(json,
-        "\"active_connections\":%lu,"
-        "\"total_connections\":%lu,"
-        "\"bytes_transferred\":%ld,",
-        (gulong)ctx->active_connections,
-        (gulong)ctx->total_connections,
-        ctx->bytes_transferred
-    );
+    json_builder_set_member_name(builder, "total");
+    json_builder_add_int_value(builder, (gint64)ctx->total_connections);
 
-    // Uptime
-    double uptime = 0.0;
-    if (ctx->uptime_timer) {
-        uptime = g_timer_elapsed(ctx->uptime_timer, NULL);
-    }
-    g_string_append_printf(json, "\"uptime\":%.2f,", uptime);
+    json_builder_set_member_name(builder, "active");
+    json_builder_add_int_value(builder, (gint64)active_count);
 
-    // Connection pool stats
-    if (ctx->conn_pool) {
-        guint idle, active;
-        guint64 total_gets, hits, evicted, failed;
-        gdouble hit_rate;
-        
-        connection_pool_get_stats(ctx->conn_pool, &idle, &active, 
-                                 &total_gets, &hits, &hit_rate, &evicted, &failed);
-        
-        g_string_append(json, "\"connection_pool\":{");
-        g_string_append_printf(json, "\"idle\":%u,", idle);
-        g_string_append_printf(json, "\"active\":%u,", active);
-        g_string_append_printf(json, "\"total_requests\":%lu,", total_gets);
-        g_string_append_printf(json, "\"cache_hits\":%lu,", hits);
-        g_string_append_printf(json, "\"hit_rate\":%.2f,", hit_rate * 100);
-        g_string_append_printf(json, "\"evicted\":%lu,", evicted);
-        g_string_append_printf(json, "\"failed\":%lu", failed);
-        g_string_append(json, "},");
-    }
+    json_builder_end_object(builder);
 
-    // Protocol summary with real counts
-    g_string_append(json, "\"protocols\":{");
-    g_string_append_printf(json, "\"HTTP\":{\"active\":%d},", 
-                          protocol_counts[DEADLIGHT_PROTOCOL_HTTP]);
-    g_string_append_printf(json, "\"HTTPS\":{\"active\":%d},", 
-                          protocol_counts[DEADLIGHT_PROTOCOL_HTTPS]);
-    g_string_append_printf(json, "\"WebSocket\":{\"active\":%d},", 
-                          protocol_counts[DEADLIGHT_PROTOCOL_WEBSOCKET]);
-    g_string_append_printf(json, "\"SOCKS\":{\"active\":%d},", 
-                          protocol_counts[DEADLIGHT_PROTOCOL_SOCKS]);
-    g_string_append_printf(json, "\"SMTP\":{\"active\":%d},", 
-                          protocol_counts[DEADLIGHT_PROTOCOL_SMTP]);
-    g_string_append_printf(json, "\"IMAP\":{\"active\":%d},", 
-                          protocol_counts[DEADLIGHT_PROTOCOL_IMAP]);
-    g_string_append_printf(json, "\"FTP\":{\"active\":%d},", 
-                          protocol_counts[DEADLIGHT_PROTOCOL_FTP]);
-    g_string_append_printf(json, "\"API\":{\"active\":%d}", 
-                          protocol_counts[DEADLIGHT_PROTOCOL_API]);
-    g_string_append(json, "},");
+    JsonGenerator *gen = json_generator_new();
+    JsonNode *root = json_builder_get_root(builder);
+    json_generator_set_root(gen, root);
+    gchar *json = json_generator_to_data(gen, NULL);
 
-    // Server info
-    g_string_append(json, "\"server_info\":{");
-    g_string_append_printf(json, "\"version\":\"%s\",", DEADLIGHT_VERSION_STRING);
-    g_string_append_printf(json, "\"port\":%d,", ctx->listen_port);
-    g_string_append_printf(json, "\"ssl_intercept\":%s,", 
-                          ctx->ssl_intercept_enabled ? "true" : "false");
-    g_string_append_printf(json, "\"max_connections\":%d", ctx->max_connections);
-    g_string_append(json, "},");
+    DeadlightHandlerResult result = api_send_json_response(conn, 200, "OK", json, error);
 
-    // Rate limiter stats
-    if (ctx->plugins_data) {
-        guint64 limited = 0, passed = 0;
-        deadlight_ratelimiter_get_stats(ctx, &limited, &passed);
-        
-        g_string_append(json, "\"rate_limiter\":{");
-        g_string_append_printf(json, "\"total_limited\":%lu,", limited);
-        g_string_append_printf(json, "\"total_passed\":%lu,", passed);
-        g_string_append_printf(json, "\"rejection_rate\":%.2f", 
-                              passed > 0 ? (100.0 * limited / (limited + passed)) : 0.0);
-        g_string_append(json, "}");
-    } else {
-        g_string_append(json, "\"rate_limiter\":null");
-    }
+    g_free(json);
+    json_node_unref(root);
+    g_object_unref(gen);
+    g_object_unref(builder);
 
-    g_string_append(json, "}");
-
-    DeadlightHandlerResult result = api_send_json_response(conn, 200, "OK", json->str, error);
-    g_string_free(json, TRUE);
     return result;
 }
 
@@ -1044,48 +1140,38 @@ static DeadlightHandlerResult api_handle_metrics_endpoint(DeadlightConnection *c
 // FEDERATION IMPLEMENTATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-static DeadlightHandlerResult api_federation_send(DeadlightConnection *conn, 
-                                                  GError **error) {
+static DeadlightHandlerResult api_federation_send(DeadlightConnection *conn,
+                                                   GError **error) {
     g_info("API federation send for conn %lu", conn->id);
 
     GError *parse_error = NULL;
     JsonObject *obj = parse_request_body(conn, &parse_error);
     if (!obj) {
-        gchar *err_msg = g_strdup_printf("{\"error\":\"%s\"}", 
-                                         parse_error ? parse_error->message : "Invalid JSON");
-        DeadlightHandlerResult result = api_send_json_response(conn, 400, "Bad Request", err_msg, error);
-        g_free(err_msg);
-        if (parse_error) g_error_free(parse_error);
-        return result;
+        return api_send_error(conn, 400, "Bad Request", parse_error, "Invalid JSON", error);
     }
 
+    GError *validate_error = NULL;
     const gchar *required[] = {"target_domain", "content", "author"};
-    if (!validate_json_fields(obj, required, 3, &parse_error)) {
-        gchar *err_msg = g_strdup_printf("{\"error\":\"%s\"}", parse_error->message);
-        DeadlightHandlerResult result = api_send_json_response(conn, 400, "Bad Request", err_msg, error);
-        g_free(err_msg);
-        g_error_free(parse_error);
+    if (!validate_json_fields(obj, required, 3, &validate_error)) {
         json_object_unref(obj);
-        return result;
+        return api_send_error(conn, 400, "Bad Request", validate_error, "Missing fields", error);
     }
 
     const gchar *target_domain = json_object_get_string_member(obj, "target_domain");
-    const gchar *target_user G_GNUC_UNUSED = json_object_has_member(obj, "target_user") 
-                                ? json_object_get_string_member(obj, "target_user") 
-                                : NULL;
-    const gchar *content = json_object_get_string_member(obj, "content");
-    const gchar *author = json_object_get_string_member(obj, "author");
+    const gchar *content       = json_object_get_string_member(obj, "content");
+    const gchar *author        = json_object_get_string_member(obj, "author");
+    // target_user removed — was declared G_GNUC_UNUSED and never referenced
 
-    // STEP 1: Try direct HTTPS federation
     GError *discovery_error = NULL;
-    FederationDiscovery *discovery = discover_federated_instance(target_domain, &discovery_error);
-    
+    FederationDiscovery *discovery = discover_federated_instance(target_domain,
+                                                                  &discovery_error);
+
     if (discovery && discovery->supports_https) {
         g_info("Federation: Attempting direct HTTPS to %s", discovery->federation_endpoint);
-        
-        // Extract host from endpoint URL
+
         gchar *host = NULL;
         guint16 port = 443;
+
         if (g_str_has_prefix(discovery->federation_endpoint, "https://")) {
             host = g_strdup(discovery->federation_endpoint + 8);
             gchar *slash = strchr(host, '/');
@@ -1093,33 +1179,36 @@ static DeadlightHandlerResult api_federation_send(DeadlightConnection *conn,
         } else {
             host = g_strdup(target_domain);
         }
-        
-        // Create a temporary connection struct to use the proxy's network layer
+
         DeadlightConnection *fed_conn_ctx = g_new0(DeadlightConnection, 1);
-        fed_conn_ctx->context = conn->context;
+        fed_conn_ctx->context     = conn->context;
         fed_conn_ctx->target_host = g_strdup(host);
         fed_conn_ctx->target_port = port;
         fed_conn_ctx->will_use_ssl = TRUE;
-        fed_conn_ctx->id = conn->id;
-        
-        // Use your existing network connection function
+        fed_conn_ctx->id          = conn->id;
+
         GError *connect_error = NULL;
         if (deadlight_network_connect_upstream(fed_conn_ctx, &connect_error)) {
-            g_info("Federation: Connected to %s via proxy network layer", host);
-            
+            g_info("Federation: Connected to %s", host);
+
             if (fed_conn_ctx->upstream_tls) {
-                // Build POST request
                 gchar *path = strrchr(discovery->federation_endpoint, '/');
                 if (!path) path = "/api/federation/receive";
 
-                // Build federation POST payload (Blog-compatible format)
+                const gchar *our_domain = deadlight_config_get_string(
+                    conn->context, "federation", "domain", "proxy.deadlight.boo");
+
+                // Build payload — fix: use temp vars so g_strdup_printf results
+                // are freed. Previously they were passed directly to
+                // json_builder_add_string_value which copies them, leaking the
+                // original allocation.
                 JsonBuilder *builder = json_builder_new();
                 json_builder_begin_object(builder);
 
-                // Top-level fields the blog expects
+                gchar *from_field = g_strdup_printf("%s@%s", author, our_domain);
                 json_builder_set_member_name(builder, "from");
-                json_builder_add_string_value(builder, g_strdup_printf("%s@%s", author,
-                    deadlight_config_get_string(conn->context, "federation", "domain", "proxy.deadlight.boo")));
+                json_builder_add_string_value(builder, from_field);
+                g_free(from_field);
 
                 json_builder_set_member_name(builder, "subject");
                 json_builder_add_string_value(builder, "Federated Post via Proxy");
@@ -1130,188 +1219,179 @@ static DeadlightHandlerResult api_federation_send(DeadlightConnection *conn,
                 json_builder_set_member_name(builder, "timestamp");
                 json_builder_add_int_value(builder, time(NULL));
 
-                // The critical headers object
                 json_builder_set_member_name(builder, "headers");
                 json_builder_begin_object(builder);
-                    json_builder_set_member_name(builder, "X-Deadlight-Type");
-                    json_builder_add_string_value(builder, "federation");
-                    
-                    json_builder_set_member_name(builder, "Message-ID");
-                    json_builder_add_string_value(builder, g_strdup_printf("<%ld@proxy.deadlight.boo>", time(NULL)));
-                json_builder_end_object(builder);
 
-                json_builder_end_object(builder);
-                
+                json_builder_set_member_name(builder, "X-Deadlight-Type");
+                json_builder_add_string_value(builder, "federation");
+
+                gchar *msg_id = g_strdup_printf("<%ld@proxy.deadlight.boo>", time(NULL));
+                json_builder_set_member_name(builder, "Message-ID");
+                json_builder_add_string_value(builder, msg_id);
+                g_free(msg_id);
+
+                json_builder_end_object(builder); // headers
+                json_builder_end_object(builder); // root
+
                 JsonGenerator *gen = json_generator_new();
                 JsonNode *root = json_builder_get_root(builder);
                 json_generator_set_root(gen, root);
                 gchar *json_payload = json_generator_to_data(gen, NULL);
-                
+
                 GString *http_request = g_string_new(NULL);
                 g_string_append_printf(http_request, "POST %s HTTP/1.1\r\n", path);
                 g_string_append_printf(http_request, "Host: %s\r\n", host);
                 g_string_append(http_request, "Content-Type: application/json\r\n");
-                g_string_append_printf(http_request, "Content-Length: %zu\r\n", strlen(json_payload));
-                g_string_append_printf(http_request, "From: federation@%s\r\n", 
-                                    deadlight_config_get_string(conn->context, "federation", "domain", "proxy.deadlight.boo"));
-                g_string_append(http_request, "Connection: close\r\n");
-                g_string_append(http_request, "\r\n");
+                g_string_append_printf(http_request, "Content-Length: %zu\r\n",
+                                       strlen(json_payload));
+                g_string_append_printf(http_request, "From: federation@%s\r\n", our_domain);
+                g_string_append(http_request, "Connection: close\r\n\r\n");
                 g_string_append(http_request, json_payload);
 
-                g_info("Federation: Sending payload:\n%s", json_payload);
-                
-                GOutputStream *out = g_io_stream_get_output_stream(G_IO_STREAM(fed_conn_ctx->upstream_tls));
+                g_info("Federation: Sending %zu bytes to %s", http_request->len, host);
+
+                GOutputStream *out = g_io_stream_get_output_stream(
+                    G_IO_STREAM(fed_conn_ctx->upstream_tls));
                 gsize written;
                 GError *write_error = NULL;
-                
-                if (g_output_stream_write_all(out, http_request->str, http_request->len, &written, NULL, &write_error)) {
-                    g_info("Federation: Sent %zu bytes to %s", written, host);
-                    
-                    // Read response
-                    GInputStream *in = g_io_stream_get_input_stream(G_IO_STREAM(fed_conn_ctx->upstream_tls));
+
+                if (g_output_stream_write_all(out, http_request->str, http_request->len,
+                                              &written, NULL, &write_error)) {
+                    GInputStream *in = g_io_stream_get_input_stream(
+                        G_IO_STREAM(fed_conn_ctx->upstream_tls));
                     gchar buf[2048];
-                    gssize bytes = g_input_stream_read(in, buf, sizeof(buf)-1, NULL, NULL);
-                    
+                    gssize bytes = g_input_stream_read(in, buf, sizeof(buf) - 1,
+                                                       NULL, NULL);
+
                     if (bytes > 0) {
                         buf[bytes] = '\0';
                         g_debug("Federation: Response: %s", buf);
-                        
+
                         if (strstr(buf, "200 OK") || strstr(buf, "202 Accepted")) {
-                            g_info("Federation: Direct HTTPS delivery succeeded to %s", target_domain);
-                            
+                            g_info("Federation: HTTPS delivery succeeded to %s",
+                                   target_domain);
+
                             gchar *response = g_strdup_printf(
-                                "{\"status\":\"sent\",\"transport\":\"https\",\"target\":\"%s\"}",
+                                "{\"status\":\"sent\","
+                                "\"transport\":\"https\","
+                                "\"target\":\"%s\"}",
                                 target_domain);
-                            
-                            DeadlightHandlerResult result = api_send_json_response(conn, 200, "OK", response, error);
-                            
-                            // Cleanup
+
+                            DeadlightHandlerResult result =
+                                api_send_json_response(conn, 200, "OK", response, error);
+
                             g_free(response);
                             g_string_free(http_request, TRUE);
                             g_free(json_payload);
                             json_node_unref(root);
                             g_object_unref(gen);
                             g_object_unref(builder);
-                            
-                            if (fed_conn_ctx->upstream_connection) {
+                            if (fed_conn_ctx->upstream_connection)
                                 g_object_unref(fed_conn_ctx->upstream_connection);
-                            }
                             g_free(fed_conn_ctx->target_host);
                             g_free(fed_conn_ctx);
                             g_free(host);
                             federation_discovery_free(discovery);
                             json_object_unref(obj);
-                            
                             return result;
-                        } else {
-                            g_warning("Federation: Server returned non-success: %s", buf);
                         }
+
+                        g_warning("Federation: Non-success response: %s", buf);
                     }
                 } else {
-                    g_warning("Federation: Write failed: %s", write_error ? write_error->message : "unknown");
+                    g_warning("Federation: Write failed: %s",
+                              write_error ? write_error->message : "unknown");
                     if (write_error) g_error_free(write_error);
                 }
-                
+
                 g_string_free(http_request, TRUE);
                 g_free(json_payload);
                 json_node_unref(root);
                 g_object_unref(gen);
                 g_object_unref(builder);
+
             } else {
-                g_warning("Federation: TLS not established");
+                g_warning("Federation: TLS not established for %s", host);
             }
-            
-            if (fed_conn_ctx->upstream_connection) {
+
+            if (fed_conn_ctx->upstream_connection)
                 g_object_unref(fed_conn_ctx->upstream_connection);
-            }
+
         } else {
-            g_warning("Federation: Connection failed: %s", connect_error ? connect_error->message : "unknown");
+            g_warning("Federation: Connection failed to %s: %s", host,
+                      connect_error ? connect_error->message : "unknown");
             if (connect_error) g_error_free(connect_error);
         }
-        
+
         g_free(fed_conn_ctx->target_host);
         g_free(fed_conn_ctx);
         g_free(host);
     } else {
-        g_info("Federation: Direct HTTPS not available, using email transport");
+        g_info("Federation: HTTPS not available, falling back to email");
     }
-    
+
     if (discovery_error) {
         g_warning("Federation: Discovery failed: %s", discovery_error->message);
         g_error_free(discovery_error);
     }
     federation_discovery_free(discovery);
 
-    // STEP 2: Fallback to email (your existing code)
-    g_info("Federation: Falling back to email transport for %s", target_domain);
-    
-    gchar *subject = g_strdup_printf("[Federation] Post from %s", author);
+    // Fallback: email transport
+    g_info("Federation: Email fallback to %s", target_domain);
+
+    gchar *subject    = g_strdup_printf("[Federation] Post from %s", author);
     gchar *to_address = g_strdup_printf("federation@%s", target_domain);
-    
+
     GError *send_error = NULL;
     gboolean sent = email_send_via_mailchannels(conn, "federation@deadlight.boo",
-                                                to_address, subject, content, &send_error);
-    
+                                                 to_address, subject, content,
+                                                 &send_error);
     DeadlightHandlerResult result;
     if (sent) {
-        g_info("Federation: Sent post to %s via email", target_domain);
+        g_info("Federation: Email fallback succeeded to %s", target_domain);
         result = api_send_json_response(conn, 200, "OK",
             "{\"status\":\"sent\",\"transport\":\"email\"}", error);
     } else {
-        g_warning("Federation: Email fallback also failed: %s", 
+        g_warning("Federation: All transports failed for %s: %s", target_domain,
                   send_error ? send_error->message : "unknown");
-        gchar *err_json = g_strdup_printf(
-            "{\"error\":\"All federation transports failed: %s\"}",
-            send_error ? send_error->message : "unknown");
-        result = api_send_json_response(conn, 502, "Bad Gateway", err_json, error);
-        g_free(err_json);
+        result = api_send_error(conn, 502, "Bad Gateway", send_error,
+                                "All federation transports failed", error);
+        send_error = NULL; // consumed
     }
 
     g_free(subject);
     g_free(to_address);
-    if (send_error) g_error_free(send_error);
     json_object_unref(obj);
     return result;
 }
 
-static DeadlightHandlerResult api_federation_receive(DeadlightConnection *conn, 
-                                                     DeadlightRequest *request, 
-                                                     GError **error) {
+static DeadlightHandlerResult api_federation_receive(DeadlightConnection *conn,
+                                                      DeadlightRequest *request,
+                                                      GError **error) {
     g_info("API federation receive for conn %lu", conn->id);
-    
+
     const gchar *from_header = deadlight_request_get_header(request, "From");
     if (from_header) {
-        g_info("Federation: Received content from %s", from_header);
+        g_info("Federation: Received from %s", from_header);
     }
-    
-    // Parse the incoming federated content
+
     GError *parse_error = NULL;
     JsonObject *obj = parse_request_body(conn, &parse_error);
     if (!obj) {
-        gchar *err_msg = g_strdup_printf("{\"error\":\"%s\"}", 
-                                         parse_error ? parse_error->message : "Invalid JSON");
-        DeadlightHandlerResult result = api_send_json_response(conn, 400, "Bad Request", err_msg, error);
-        g_free(err_msg);
-        if (parse_error) g_error_free(parse_error);
-        return result;
+        return api_send_error(conn, 400, "Bad Request", parse_error, "Invalid JSON", error);
     }
-    
-    // Extract content and author
-    const gchar *content = json_object_has_member(obj, "content") 
+
+    const gchar *content = json_object_has_member(obj, "content")
                          ? json_object_get_string_member(obj, "content") : "";
-    const gchar *author = json_object_has_member(obj, "author")
-                        ? json_object_get_string_member(obj, "author") : "unknown";
-    
-    // Store federated content to file
+    const gchar *author  = json_object_has_member(obj, "author")
+                         ? json_object_get_string_member(obj, "author") : "unknown";
+
     const gchar *storage_dir = "/var/lib/deadlight/federation";
     g_mkdir_with_parents(storage_dir, 0755);
-    
-    // Create timestamped filename
+
     time_t now = time(NULL);
-    gchar *filename = g_strdup_printf("%s/post_%ld_%s.json", 
-                                      storage_dir, now, author);
-    
-    // Build storage object with metadata
+    gchar *filename = g_strdup_printf("%s/post_%ld_%s.json", storage_dir, now, author);
+
     JsonBuilder *builder = json_builder_new();
     json_builder_begin_object(builder);
     json_builder_set_member_name(builder, "timestamp");
@@ -1323,76 +1403,68 @@ static DeadlightHandlerResult api_federation_receive(DeadlightConnection *conn,
     json_builder_set_member_name(builder, "content");
     json_builder_add_string_value(builder, content);
     json_builder_end_object(builder);
-    
+
     JsonGenerator *gen = json_generator_new();
     json_generator_set_pretty(gen, TRUE);
     JsonNode *root = json_builder_get_root(builder);
     json_generator_set_root(gen, root);
-    
+
     GError *write_error = NULL;
     gboolean stored = json_generator_to_file(gen, filename, &write_error);
-    
-    gchar *response_json;
-    gint status_code;
-    
+
+    DeadlightHandlerResult result;
     if (stored) {
         g_info("Federation: Stored post from %s to %s", author, filename);
-        response_json = g_strdup_printf(
-            "{\"status\":\"received\",\"queued\":true,\"stored\":\"%s\",\"from\":\"%s\"}",
+        gchar *body = g_strdup_printf(
+            "{\"status\":\"received\",\"queued\":true,"
+            "\"stored\":\"%s\",\"from\":\"%s\"}",
             filename, from_header ? from_header : "unknown");
-        status_code = 200;
+        result = api_send_json_response(conn, 200, "OK", body, error);
+        g_free(body);
     } else {
-        g_warning("Federation: Failed to store post: %s", 
+        g_warning("Federation: Storage failed: %s",
                   write_error ? write_error->message : "unknown");
-        response_json = g_strdup(
-            "{\"status\":\"received\",\"queued\":false,\"error\":\"Storage failed\"}");
-        status_code = 500;
+        result = api_send_error(conn, 500, "Internal Server Error", write_error,
+                                "Storage failed", error);
+        write_error = NULL; // consumed
     }
-    
-    DeadlightHandlerResult result = api_send_json_response(conn, status_code, 
-        status_code == 200 ? "OK" : "Internal Server Error", response_json, error);
-    
-    g_free(response_json);
+
     g_free(filename);
-    if (write_error) g_error_free(write_error);
     json_node_unref(root);
     g_object_unref(gen);
     g_object_unref(builder);
     json_object_unref(obj);
-    
     return result;
 }
 
-static DeadlightHandlerResult api_federation_test_domain(DeadlightConnection *conn, 
-                                                         const gchar *domain, 
-                                                         GError **error) {
-    g_info("API federation domain test for: %s", domain);
-    
-    // Test connectivity via DNS + TCP probe
+static DeadlightHandlerResult api_federation_test_domain(DeadlightConnection *conn,
+                                                          const gchar *domain,
+                                                          GError **error) {
+    g_info("Federation: Testing domain %s", domain);
+
     GResolver *resolver = g_resolver_get_default();
     GError *lookup_error = NULL;
     GList *addresses = g_resolver_lookup_by_name(resolver, domain, NULL, &lookup_error);
-    
+
     gboolean reachable = FALSE;
     const gchar *status = "unknown";
-    
+
     if (addresses) {
-        // Try to connect to SMTP port (587 or 25)
         GSocketClient *client = g_socket_client_new();
-        g_socket_client_set_timeout(client, 5); // 5 second timeout
-        
+        g_socket_client_set_timeout(client, 5);
+
         GError *connect_error = NULL;
         GSocketConnection *test_conn = g_socket_client_connect_to_host(
             client, domain, 587, NULL, &connect_error);
-        
+
         if (test_conn) {
             reachable = TRUE;
             status = "verified";
             g_object_unref(test_conn);
         } else {
-            // Try port 25 as fallback
             g_clear_error(&connect_error);
-            test_conn = g_socket_client_connect_to_host(client, domain, 25, NULL, &connect_error);
+            test_conn = g_socket_client_connect_to_host(
+                client, domain, 25, NULL, &connect_error);
             if (test_conn) {
                 reachable = TRUE;
                 status = "verified";
@@ -1401,27 +1473,32 @@ static DeadlightHandlerResult api_federation_test_domain(DeadlightConnection *co
                 status = "unreachable";
             }
         }
-        
+
         if (connect_error) g_error_free(connect_error);
         g_object_unref(client);
         g_list_free_full(addresses, g_object_unref);
     } else {
         status = "dns_failed";
-        g_info("Federation test: DNS lookup failed for %s: %s", 
-               domain, lookup_error ? lookup_error->message : "unknown");
+        g_info("Federation: DNS failed for %s: %s", domain,
+               lookup_error ? lookup_error->message : "unknown");
     }
-    
+
     if (lookup_error) g_error_free(lookup_error);
     g_object_unref(resolver);
-    
-    gchar *json_response = g_strdup_printf(
-        "{\"domain\":\"%s\",\"status\":\"%s\",\"trust_level\":\"%s\","
-        "\"test_time\":%ld,\"active\":%s}", 
-        domain, status, reachable ? "verified" : "unverified",
-        time(NULL), reachable ? "true" : "false");
-    
-    DeadlightHandlerResult result = api_send_json_response(conn, 200, "OK", json_response, error);
-    g_free(json_response);
+
+    gchar *body = g_strdup_printf(
+        "{\"domain\":\"%s\","
+        "\"status\":\"%s\","
+        "\"trust_level\":\"%s\","
+        "\"test_time\":%ld,"
+        "\"active\":%s}",
+        domain, status,
+        reachable ? "verified" : "unverified",
+        time(NULL),
+        reachable ? "true" : "false");
+
+    DeadlightHandlerResult result = api_send_json_response(conn, 200, "OK", body, error);
+    g_free(body);
     return result;
 }
 
@@ -1591,23 +1668,8 @@ cleanup:
 // ═══════════════════════════════════════════════════════════════════════════
 
 static DeadlightHandlerResult api_send_404(DeadlightConnection *conn, GError **error) {
-    const gchar *response = 
-        "HTTP/1.1 404 Not Found\r\n"
-        "Content-Type: application/json\r\n"
-        "Content-Length: 34\r\n"
-        "Connection: close\r\n"
-        "\r\n"
-        "{\"error\":\"API endpoint not found\"}";
-    
-    GOutputStream *client_os = g_io_stream_get_output_stream(
-        G_IO_STREAM(conn->client_connection));
-    
-    if (!g_output_stream_write_all(client_os, response, strlen(response), NULL, NULL, error)) {
-        g_warning("API conn %lu: Failed to send 404 response", conn->id);
-        return HANDLER_ERROR;
-    }
-    
-    return HANDLER_SUCCESS_CLEANUP_NOW;
+    return api_send_json_response(conn, 404, "Not Found",
+                                  "{\"error\":\"API endpoint not found\"}", error);
 }
 
 static DeadlightHandlerResult api_send_json_response(DeadlightConnection *conn, 
@@ -1692,96 +1754,38 @@ static gboolean write_cache_file(const gchar *cache_file, const gchar *content, 
 /**
  * Fetch data from Workers via HTTP
  */
-static gchar* fetch_from_workers(const gchar *workers_url, const gchar *endpoint, GError **error) {
-    // Parse URL to get host and use HTTPS
+static gchar* fetch_from_workers(const gchar *workers_url,
+                                  const gchar *endpoint,
+                                  GError **error) {
     gchar *host = NULL;
     guint16 port = 443;
-    
-    // Extract hostname from URL (strip https://)
+    gboolean use_tls = TRUE;
+
     if (g_str_has_prefix(workers_url, "https://")) {
         host = g_strdup(workers_url + 8);
     } else if (g_str_has_prefix(workers_url, "http://")) {
         host = g_strdup(workers_url + 7);
         port = 80;
+        use_tls = FALSE;
     } else {
         host = g_strdup(workers_url);
     }
-    
-    // Remove trailing slash if present
-    if (g_str_has_suffix(host, "/")) {
-        host[strlen(host) - 1] = '\0';
+
+    // Strip trailing slash
+    gsize len = strlen(host);
+    if (len > 0 && host[len - 1] == '/') {
+        host[len - 1] = '\0';
     }
-    
-    g_info("Fetching from Workers: %s%s", host, endpoint);
-    
-    // Create temporary connection for fetch
-    GSocketClient *client = g_socket_client_new();
-    g_socket_client_set_timeout(client, 10); // 10 second timeout
-    
-    if (port == 443) {
-        g_socket_client_set_tls(client, TRUE);
-    }
-    
-    GSocketConnection *conn = g_socket_client_connect_to_host(client, host, port, NULL, error);
-    g_object_unref(client);
-    
-    if (!conn) {
-        g_prefix_error(error, "Failed to connect to Workers: ");
-        g_free(host);
-        return NULL;
-    }
-    
-    // Build HTTP request
-    GString *request = g_string_new(NULL);
-    g_string_append_printf(request, "GET %s HTTP/1.1\r\n", endpoint);
-    g_string_append_printf(request, "Host: %s\r\n", host);
-    g_string_append(request, "Connection: close\r\n");
-    g_string_append(request, "User-Agent: Deadlight-Proxy/1.0\r\n");
-    g_string_append(request, "\r\n");
-    
-    // Send request
-    GOutputStream *out = g_io_stream_get_output_stream(G_IO_STREAM(conn));
-    gsize written;
-    if (!g_output_stream_write_all(out, request->str, request->len, &written, NULL, error)) {
-        g_string_free(request, TRUE);
-        g_object_unref(conn);
-        g_free(host);
-        return NULL;
-    }
-    g_string_free(request, TRUE);
-    
-    // Read response
-    GInputStream *in = g_io_stream_get_input_stream(G_IO_STREAM(conn));
-    GString *response = g_string_new(NULL);
-    gchar buf[4096];
-    gssize bytes_read;
-    
-    while ((bytes_read = g_input_stream_read(in, buf, sizeof(buf), NULL, error)) > 0) {
-        g_string_append_len(response, buf, bytes_read);
-    }
-    
-    g_object_unref(conn);
+
+    g_info("Blog: Fetching from Workers: https://%s%s", host, endpoint);
+
+    gchar *result = http_get_raw(host, port, use_tls, endpoint, 10, error);
     g_free(host);
-    
-    if (bytes_read < 0) {
-        g_string_free(response, TRUE);
-        return NULL;
+
+    if (!result) {
+        g_prefix_error(error, "Workers fetch failed: ");
     }
-    
-    // Extract body from HTTP response
-    const gchar *body_start = strstr(response->str, "\r\n\r\n");
-    if (!body_start) {
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, 
-                   "Invalid HTTP response (no header/body separator)");
-        g_string_free(response, TRUE);
-        return NULL;
-    }
-    
-    body_start += 4; // Skip \r\n\r\n
-    gchar *body = g_strdup(body_start);
-    g_string_free(response, TRUE);
-    
-    return body;
+    return result;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1789,7 +1793,6 @@ static gchar* fetch_from_workers(const gchar *workers_url, const gchar *endpoint
 // ═══════════════════════════════════════════════════════════════════════════
 // Purpose: Single endpoint that returns metrics + logs in one HTTP response
 // Reduces polling overhead by 50% (one request instead of two)
-// Add this to your existing api.c file
 
 /**
  * /api/dashboard - Unified metrics + logs endpoint
@@ -1893,67 +1896,176 @@ DeadlightHandlerResult api_handle_prometheus_metrics(DeadlightConnection *conn, 
 }
 
 /**
+ * Build a JSON string containing all proxy metrics.
+ * Used by both /api/metrics and /api/dashboard (via api_build_dashboard_json).
+ * Caller must g_free() the returned string.
+ */
+static gchar* api_build_metrics_json(DeadlightContext *ctx) {
+    if (!ctx) return g_strdup("{\"error\":\"NULL context\"}");
+
+    // Count active connections by protocol
+    gint protocol_counts[13] = {0};
+
+    if (ctx->connections) {
+        deadlight_network_lock_connections(ctx);
+
+        GHashTableIter iter;
+        gpointer key, value;
+        g_hash_table_iter_init(&iter, ctx->connections);
+        while (g_hash_table_iter_next(&iter, &key, &value)) {
+            DeadlightConnection *c = (DeadlightConnection *)value;
+            if (c && !c->cleaned && c->protocol < 13) {
+                protocol_counts[c->protocol]++;
+            }
+        }
+
+        deadlight_network_unlock_connections(ctx);
+    }
+
+    GString *json = g_string_new("{");
+
+    // Basic counters
+    g_string_append_printf(json,
+        "\"active_connections\":%lu,"
+        "\"total_connections\":%lu,"
+        "\"bytes_transferred\":%ld,",
+        (gulong)ctx->active_connections,
+        (gulong)ctx->total_connections,
+        ctx->bytes_transferred);
+
+    // Uptime
+    gdouble uptime = ctx->uptime_timer
+        ? g_timer_elapsed(ctx->uptime_timer, NULL) : 0.0;
+    g_string_append_printf(json, "\"uptime\":%.2f,", uptime);
+
+    // Connection pool
+    if (ctx->conn_pool) {
+        guint idle, active;
+        guint64 total_gets, hits, evicted, failed;
+        gdouble hit_rate;
+
+        connection_pool_get_stats(ctx->conn_pool, &idle, &active,
+                                  &total_gets, &hits, &hit_rate, &evicted, &failed);
+        g_string_append_printf(json,
+            "\"connection_pool\":{"
+            "\"idle\":%u,"
+            "\"active\":%u,"
+            "\"total_requests\":%lu,"
+            "\"cache_hits\":%lu,"
+            "\"hit_rate\":%.2f,"
+            "\"evicted\":%lu,"
+            "\"failed\":%lu},",
+            idle, active, total_gets, hits, hit_rate, evicted, failed);
+    }
+
+    // Protocol breakdown
+    g_string_append_printf(json,
+        "\"protocols\":{"
+        "\"HTTP\":{\"active\":%d},"
+        "\"HTTPS\":{\"active\":%d},"
+        "\"WebSocket\":{\"active\":%d},"
+        "\"SOCKS\":{\"active\":%d},"
+        "\"SMTP\":{\"active\":%d},"
+        "\"IMAP\":{\"active\":%d},"
+        "\"FTP\":{\"active\":%d},"
+        "\"API\":{\"active\":%d}},",
+        protocol_counts[DEADLIGHT_PROTOCOL_HTTP],
+        protocol_counts[DEADLIGHT_PROTOCOL_HTTPS],
+        protocol_counts[DEADLIGHT_PROTOCOL_WEBSOCKET],
+        protocol_counts[DEADLIGHT_PROTOCOL_SOCKS],
+        protocol_counts[DEADLIGHT_PROTOCOL_SMTP],
+        protocol_counts[DEADLIGHT_PROTOCOL_IMAP],
+        protocol_counts[DEADLIGHT_PROTOCOL_FTP],
+        protocol_counts[DEADLIGHT_PROTOCOL_API]);
+
+    // Server info
+    g_string_append_printf(json,
+        "\"server_info\":{"
+        "\"version\":\"%s\","
+        "\"port\":%d,"
+        "\"ssl_intercept\":%s,"
+        "\"max_connections\":%d},",
+        DEADLIGHT_VERSION_STRING,
+        ctx->listen_port,
+        ctx->ssl_intercept_enabled ? "true" : "false",
+        ctx->max_connections);
+
+    // Rate limiter
+    if (ctx->plugins_data) {
+        guint64 limited = 0, passed = 0;
+        deadlight_ratelimiter_get_stats(ctx, &limited, &passed);
+        g_string_append_printf(json,
+            "\"rate_limiter\":{"
+            "\"total_limited\":%lu,"
+            "\"total_passed\":%lu,"
+            "\"rejection_rate\":%.2f}",
+            limited, passed,
+            passed > 0 ? (100.0 * limited / (limited + passed)) : 0.0);
+    } else {
+        g_string_append(json, "\"rate_limiter\":null");
+    }
+
+    g_string_append(json, "}");
+    return g_string_free(json, FALSE);
+}
+
+/**
  * Handle /api/stream - Server-Sent Events endpoint
  * 
  * Keeps connection open and pushes updates every 2 seconds (or on change)
  * Client uses: const events = new EventSource('/api/stream');
  */
-static DeadlightHandlerResult api_handle_stream_endpoint(DeadlightConnection *conn, 
-                                                         GError **error) {
+static DeadlightHandlerResult api_handle_stream_endpoint(DeadlightConnection *conn,
+                                                          GError **error) {
     g_info("SSE: Client %lu connected to event stream", conn->id);
-    
-    // Send SSE headers
+
     GOutputStream *client_os = g_io_stream_get_output_stream(
         G_IO_STREAM(conn->client_connection));
-    
-    const gchar *sse_headers = 
+
+    const gchar *sse_headers =
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: text/event-stream\r\n"
         "Cache-Control: no-cache\r\n"
         "Connection: keep-alive\r\n"
         "Access-Control-Allow-Origin: *\r\n"
-        "X-Accel-Buffering: no\r\n"  // Disable nginx buffering
+        "X-Accel-Buffering: no\r\n"
         "\r\n";
-    
-    if (!g_output_stream_write_all(client_os, sse_headers, strlen(sse_headers), 
+
+    if (!g_output_stream_write_all(client_os, sse_headers, strlen(sse_headers),
                                     NULL, NULL, error)) {
         g_warning("SSE: Failed to send headers to client %lu", conn->id);
         return HANDLER_ERROR;
     }
-    
-    // Flush immediately to establish SSE connection
+
     if (!g_output_stream_flush(client_os, NULL, error)) {
         g_warning("SSE: Failed to flush headers to client %lu", conn->id);
         return HANDLER_ERROR;
     }
-    
-    // Send initial data immediately
+
+    // Send initial snapshot immediately so the UI doesn't wait 2 seconds
     gchar *initial_json = api_build_dashboard_json(conn->context);
     if (initial_json) {
         sse_send_event(client_os, "dashboard", initial_json, NULL);
         g_free(initial_json);
     }
-    
-    // Create SSE stream state
+
+    // Allocate state — magic number makes api_cleanup_sse_stream safe to call
+    // on any API connection's protocol_data without risking a misread cast
     SSEStreamState *state = g_new0(SSEStreamState, 1);
-    state->conn = conn;
-    state->output = client_os;
-    state->closed = FALSE;
+    state->magic                  = SSE_STREAM_MAGIC;
+    state->conn                   = conn;
+    state->output                 = client_os;
+    state->closed                 = FALSE;
     state->last_total_connections = conn->context->total_connections;
     state->last_bytes_transferred = conn->context->bytes_transferred;
-    
-    // Schedule periodic updates (every 2 seconds)
+
     state->update_timer = g_timeout_source_new_seconds(2);
     g_source_set_callback(state->update_timer, sse_send_update, state, NULL);
     g_source_attach(state->update_timer, NULL);
-    
-    // Store state in connection for cleanup
+
     conn->protocol_data = state;
-    
+
     g_info("SSE: Stream established for client %lu", conn->id);
-    
-    // Return ASYNC to prevent immediate cleanup
-    // The connection stays open until client disconnects or error occurs
     return HANDLER_SUCCESS_ASYNC;
 }
 
@@ -1967,60 +2079,57 @@ static DeadlightHandlerResult api_handle_stream_endpoint(DeadlightConnection *co
  * Only sends updates if metrics have changed (reduces bandwidth)
  */
 static gboolean sse_send_update(gpointer user_data) {
-    SSEStreamState *state = (SSEStreamState*)user_data;
-    
+    SSEStreamState *state = (SSEStreamState *)user_data;
+
     if (state->closed) {
         g_debug("SSE: Stream %lu already closed, stopping timer", state->conn->id);
         return G_SOURCE_REMOVE;
     }
-    
+
     DeadlightContext *ctx = state->conn->context;
-    
-    // Only send if metrics changed
-    gboolean metrics_changed = 
-        (ctx->total_connections != state->last_total_connections) ||
-        (ctx->bytes_transferred != state->last_bytes_transferred);
-    
+
+    gboolean metrics_changed =
+        (ctx->total_connections  != state->last_total_connections) ||
+        (ctx->bytes_transferred  != state->last_bytes_transferred);
+
     if (!metrics_changed) {
-        // Send heartbeat to keep connection alive
+        // Heartbeat keeps the connection alive through proxies/load balancers
+        // that would otherwise close idle keep-alive connections
         const gchar *heartbeat = ": heartbeat\n\n";
-        GError *error = NULL;
-        
+        GError *err = NULL;
+
         if (!g_output_stream_write_all(state->output, heartbeat, strlen(heartbeat),
-                                       NULL, NULL, &error)) {
-            g_warning("SSE: Failed to send heartbeat to client %lu: %s",
-                     state->conn->id, error ? error->message : "unknown");
-            if (error) g_error_free(error);
+                                       NULL, NULL, &err)) {
+            g_warning("SSE: Heartbeat failed for client %lu: %s",
+                      state->conn->id, err ? err->message : "unknown");
+            if (err) g_error_free(err);
             sse_stream_cleanup(state);
             return G_SOURCE_REMOVE;
         }
-        
+
         g_output_stream_flush(state->output, NULL, NULL);
         return G_SOURCE_CONTINUE;
     }
-    
-    // Build dashboard JSON
+
     gchar *json = api_build_dashboard_json(ctx);
     if (!json) {
         g_warning("SSE: Failed to build dashboard JSON for client %lu", state->conn->id);
         return G_SOURCE_CONTINUE;
     }
-    
-    // Send update event
-    GError *error = NULL;
-    if (!sse_send_event(state->output, "dashboard", json, &error)) {
-        g_warning("SSE: Failed to send update to client %lu: %s",
-                 state->conn->id, error ? error->message : "unknown");
-        if (error) g_error_free(error);
+
+    GError *err = NULL;
+    if (!sse_send_event(state->output, "dashboard", json, &err)) {
+        g_warning("SSE: Send failed for client %lu: %s",
+                  state->conn->id, err ? err->message : "unknown");
+        if (err) g_error_free(err);
         g_free(json);
         sse_stream_cleanup(state);
         return G_SOURCE_REMOVE;
     }
-    
-    // Update tracked metrics
+
     state->last_total_connections = ctx->total_connections;
     state->last_bytes_transferred = ctx->bytes_transferred;
-    
+
     g_free(json);
     return G_SOURCE_CONTINUE;
 }
@@ -2030,17 +2139,17 @@ static gboolean sse_send_update(gpointer user_data) {
  */
 static void sse_stream_cleanup(SSEStreamState *state) {
     if (!state) return;
-    
+
     g_info("SSE: Cleaning up stream for client %lu", state->conn->id);
-    
+
     state->closed = TRUE;
-    
+
     if (state->update_timer) {
         g_source_destroy(state->update_timer);
         g_source_unref(state->update_timer);
         state->update_timer = NULL;
     }
-    
+
     state->output = NULL;
     g_free(state);
 }
@@ -2057,36 +2166,32 @@ static void sse_stream_cleanup(SSEStreamState *state) {
  *   data: {"metrics":{...},"logs":[...]}
  *   
  */
-static gboolean sse_send_event(GOutputStream *out, const gchar *event_type,
-                               const gchar *data, GError **error) {
+static gboolean sse_send_event(GOutputStream *out,
+                                const gchar *event_type,
+                                const gchar *data,
+                                GError **error) {
     GString *event = g_string_new(NULL);
-    
-    // Event type (optional, defaults to "message")
+
     if (event_type) {
         g_string_append_printf(event, "event: %s\n", event_type);
     }
-    
-    // Data (can be multi-line, each line prefixed with "data: ")
-    gchar **lines = g_strsplit(data, "\n", -1);
-    for (gint i = 0; lines[i] != NULL; i++) {
-        if (strlen(lines[i]) > 0) {
-            g_string_append_printf(event, "data: %s\n", lines[i]);
-        }
-    }
-    g_strfreev(lines);
-    
-    // End of event (double newline)
+
+    // Write the entire payload as a single data line.
+    // SSE allows only one data: line per event when the payload is
+    // guaranteed to be single-line (minified JSON from api_build_dashboard_json).
+    // The previous line-splitting approach silently dropped blank lines,
+    // which would corrupt any pretty-printed or multi-paragraph content.
+    g_string_append_printf(event, "data: %s\n", data);
+
+    // Blank line terminates the event
     g_string_append(event, "\n");
-    
-    // Write to stream
+
     gboolean success = g_output_stream_write_all(out, event->str, event->len,
                                                   NULL, NULL, error);
-    
     if (success) {
-        // Flush immediately for low latency
         g_output_stream_flush(out, NULL, NULL);
     }
-    
+
     g_string_free(event, TRUE);
     return success;
 }
@@ -2097,141 +2202,41 @@ static gboolean sse_send_event(GOutputStream *out, const gchar *event_type,
  * Extracted to shared function so /api/dashboard and /api/stream use same logic
  */
 static gchar* api_build_dashboard_json(DeadlightContext *ctx) {
-    if (!ctx) {
-        return g_strdup("{\"error\":\"NULL context\"}");
-    }
-    
-    // Count active connections by protocol
-    gint protocol_counts[13] = {0};
-    
-    if (ctx->connections) {
-        GHashTableIter iter;
-        gpointer key, value;
-        g_hash_table_iter_init(&iter, ctx->connections);
-        
-        while (g_hash_table_iter_next(&iter, &key, &value)) {
-            DeadlightConnection *active_conn = (DeadlightConnection*)value;
-            if (active_conn && active_conn->protocol < 13) {
-                protocol_counts[active_conn->protocol]++;
-            }
-        }
-    }
-    
-    GString *json = g_string_new(NULL);
-    g_string_append(json, "{\"metrics\":{");
-    
-    // Basic metrics
-    g_string_append_printf(json,
-        "\"active_connections\":%lu,"
-        "\"total_connections\":%lu,"
-        "\"bytes_transferred\":%ld,",
-        (gulong)ctx->active_connections,
-        (gulong)ctx->total_connections,
-        ctx->bytes_transferred
-    );
-    
-    // Uptime
-    double uptime = 0.0;
-    if (ctx->uptime_timer) {
-        uptime = g_timer_elapsed(ctx->uptime_timer, NULL);
-    }
-    g_string_append_printf(json, "\"uptime\":%.2f,", uptime);
-    
-    // Connection pool stats
-    if (ctx->conn_pool) {
-        guint idle, active;
-        guint64 total_gets, hits, evicted, failed;
-        gdouble hit_rate;
-        
-        connection_pool_get_stats(ctx->conn_pool, &idle, &active,
-                                 &total_gets, &hits, &hit_rate, &evicted, &failed);
-        
-        g_string_append(json, "\"connection_pool\":{");
-        g_string_append_printf(json, "\"idle\":%u,", idle);
-        g_string_append_printf(json, "\"active\":%u,", active);
-        g_string_append_printf(json, "\"total_requests\":%lu,", total_gets);
-        g_string_append_printf(json, "\"cache_hits\":%lu,", hits);
-        g_string_append_printf(json, "\"hit_rate\":%.2f,", hit_rate * 100);
-        g_string_append_printf(json, "\"evicted\":%lu,", evicted);
-        g_string_append_printf(json, "\"failed\":%lu", failed);
-        g_string_append(json, "},");
-    }
-    
-    // Protocol summary
-    g_string_append(json, "\"protocols\":{");
-    g_string_append_printf(json, "\"HTTP\":{\"active\":%d},", 
-                          protocol_counts[DEADLIGHT_PROTOCOL_HTTP]);
-    g_string_append_printf(json, "\"HTTPS\":{\"active\":%d},", 
-                          protocol_counts[DEADLIGHT_PROTOCOL_HTTPS]);
-    g_string_append_printf(json, "\"WebSocket\":{\"active\":%d},", 
-                          protocol_counts[DEADLIGHT_PROTOCOL_WEBSOCKET]);
-    g_string_append_printf(json, "\"SOCKS\":{\"active\":%d},", 
-                          protocol_counts[DEADLIGHT_PROTOCOL_SOCKS]);
-    g_string_append_printf(json, "\"SMTP\":{\"active\":%d},", 
-                          protocol_counts[DEADLIGHT_PROTOCOL_SMTP]);
-    g_string_append_printf(json, "\"IMAP\":{\"active\":%d},", 
-                          protocol_counts[DEADLIGHT_PROTOCOL_IMAP]);
-    g_string_append_printf(json, "\"FTP\":{\"active\":%d},", 
-                          protocol_counts[DEADLIGHT_PROTOCOL_FTP]);
-    g_string_append_printf(json, "\"API\":{\"active\":%d}", 
-                          protocol_counts[DEADLIGHT_PROTOCOL_API]);
-    g_string_append(json, "},");
-    
-    // Server info
-    g_string_append(json, "\"server_info\":{");
-    g_string_append_printf(json, "\"version\":\"%s\",", DEADLIGHT_VERSION_STRING);
-    g_string_append_printf(json, "\"port\":%d,", ctx->listen_port);
-    g_string_append_printf(json, "\"ssl_intercept\":%s,",
-                          ctx->ssl_intercept_enabled ? "true" : "false");
-    g_string_append_printf(json, "\"max_connections\":%d", ctx->max_connections);
-    g_string_append(json, "},");
-    
-    // Rate limiter stats
-    if (ctx->plugins_data) {
-        guint64 limited = 0, passed = 0;
-        deadlight_ratelimiter_get_stats(ctx, &limited, &passed);
-        
-        g_string_append(json, "\"rate_limiter\":{");
-        g_string_append_printf(json, "\"total_limited\":%lu,", limited);
-        g_string_append_printf(json, "\"total_passed\":%lu,", passed);
-        g_string_append_printf(json, "\"rejection_rate\":%.2f",
-                              passed > 0 ? (100.0 * limited / (limited + passed)) : 0.0);
-        g_string_append(json, "}");
-    } else {
-        g_string_append(json, "\"rate_limiter\":null");
-    }
-    
-    g_string_append(json, "},");  // Close metrics
-    
-    // Logs
-    gchar *json_logs = deadlight_logging_get_buffered_json();
-    if (json_logs) {
-        g_string_append(json, "\"logs\":");
-        g_string_append(json, json_logs);
-        g_free(json_logs);
-    } else {
-        g_string_append(json, "\"logs\":[]");
-    }
-    
-    g_string_append(json, "}");  // Close root
-    
-    return g_string_free(json, FALSE);  // Return string, free GString
+    if (!ctx) return g_strdup("{\"error\":\"NULL context\"}");
+
+    gchar *metrics = api_build_metrics_json(ctx);
+    gchar *logs    = deadlight_logging_get_buffered_json();
+
+    gchar *result = g_strdup_printf("{\"metrics\":%s,\"logs\":%s}",
+                                    metrics,
+                                    logs ? logs : "[]");
+    g_free(metrics);
+    g_free(logs);
+    return result;
 }
 
 /**
  * SSE cleanup hook for api.c cleanup function
  * 
- * Add this to your existing api_cleanup() function:
  */
 static void api_cleanup_sse_stream(DeadlightConnection *conn) {
-    if (conn->protocol_data && conn->protocol == DEADLIGHT_PROTOCOL_API) {
-        // Check if this was an SSE stream by looking for SSEStreamState
-        SSEStreamState *state = (SSEStreamState*)conn->protocol_data;
-        if (state && state->update_timer) {
-            sse_stream_cleanup(state);
-            conn->protocol_data = NULL;
-        }
+    if (!conn->protocol_data) return;
+
+    // All API connections share protocol_data. We can only safely interpret
+    // it as SSEStreamState if the magic number matches — other API endpoints
+    // may store different structures here in future.
+    SSEStreamState *state = (SSEStreamState *)conn->protocol_data;
+
+    if (state->magic != SSE_STREAM_MAGIC) {
+        // Not an SSE stream — leave it for whoever owns it
+        return;
     }
+
+    if (!state->closed) {
+        sse_stream_cleanup(state);
+    }
+
+    conn->protocol_data = NULL;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2239,9 +2244,6 @@ static void api_cleanup_sse_stream(DeadlightConnection *conn) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 static void api_cleanup(DeadlightConnection *conn) {
-    g_debug("API cleanup called for conn %lu", conn->id);
-    
-    // Clean up any API-specific resources if needed
-    api_cleanup_sse_stream(conn);  
-    (void)conn; // Suppress unused parameter warning
+    g_debug("API cleanup for conn %lu", conn->id);
+    api_cleanup_sse_stream(conn);
 }
