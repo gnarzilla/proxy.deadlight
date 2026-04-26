@@ -129,8 +129,6 @@ open http://localhost:8081
 
 ![SSE Web UI](src/assets/Proxy_SSE_UI.gif)
 
-![CLI launch to shutdown](src/assets/proxy.deadlight_cli_ui_boot2shut.gif)
-
 ---
 
 ## REST API
