@@ -91,7 +91,7 @@ cd proxy.deadlight
 make clean && make UI=1
 
 # Run
-./bin/deadlight -c deadlight.conf -v
+./bin/deadlight -c deadlight-conf -v
 ```
 
 </details>
