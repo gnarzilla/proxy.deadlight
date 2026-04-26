@@ -129,7 +129,7 @@ open http://localhost:8081
 | **Web UI** | SSE-powered real-time monitoring at `:8081` |
 | **Resource-Efficient** | 17.6 MB Docker image, minimal RAM |
 
-![Web UI with connection table](src/assets/media/webui_4.26.26.gif)
+![Web UI with connection table](src/assets/media/webui-4-26-26.gif)
 
 ---
 
