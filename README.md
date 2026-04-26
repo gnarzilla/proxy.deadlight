@@ -96,6 +96,8 @@ make clean && make UI=1
 
 </details>
 
+![CLI boot](src/assets/media/cli-boot-4-26-26.gif)
+
 ### Verify It's Working
 
 ```bash
