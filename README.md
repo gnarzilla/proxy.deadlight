@@ -11,7 +11,7 @@ A high-performance, multi-protocol proxy server built for **real-world condition
 
 [Quick Start](#quick-start) · [Features](#features) · [API](#rest-api) · [Configuration](#configuration) · [Documentation](docs/) · [Architecture](#architecture) · [Roadmap](#roadmap)
 
-![SSE Web UI](src/assets/Proxy_SSE_UI.gif)
+![UI with live connection table](src/assets/media/webui-04-25-26.gif)
 
 > **Security Notice:** This proxy can perform TLS interception.
 > Only deploy on hardware you control. See [Security Considerations](#security-considerations).
@@ -127,7 +127,7 @@ open http://localhost:8081
 | **Web UI** | SSE-powered real-time monitoring at `:8081` |
 | **Resource-Efficient** | 17.6 MB Docker image, minimal RAM |
 
-![CLI launch to shutdown](src/assets/proxy.deadlight_cli_ui_boot2shut.gif)
+![SSE Web UI](src/assets/Proxy_SSE_UI.gif)
 
 ---
 
