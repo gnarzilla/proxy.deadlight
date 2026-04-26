@@ -1,0 +1,182 @@
+# proxy.deadlight v1.1.0
+# https://deadlight.boo | https://proxy.deadlight.boo
+
+# ─────────────────────────────────────────────────────────────
+# Core proxy settings
+# Read by deadlight_init() at startup
+# ─────────────────────────────────────────────────────────────
+[core]
+port                = 8080
+bind_address        = 0.0.0.0
+max_connections     = 500
+connection_timeout  = 30
+buffer_size         = 65536
+# error | warning | info | debug
+log_level           = debug
+# empty = stdout
+log_file            =
+worker_threads      = 4
+
+# ─────────────────────────────────────────────────────────────
+# SSL/TLS interception
+# Read by deadlight_ssl_init()
+# CA must be trusted by clients for interception to work —
+# see: deadlight --gen-ca to generate a new CA pair
+# ─────────────────────────────────────────────────────────────
+[ssl]
+enabled             = true
+ca_cert_file        = /home/thatch/.deadlight/ca.crt
+ca_key_file         = /home/thatch/.deadlight/ca.key
+cert_cache_dir      = /tmp/deadlight_certs
+cert_cache_size     = 1000
+cipher_suites       = HIGH:!aNULL:!MD5
+protocols           = TLSv1.2,TLSv1.3
+
+# ─────────────────────────────────────────────────────────────
+# TLS intercept policy
+# Read by deadlight_ssl_intercept_connection()
+# Hosts in passthrough are tunneled opaque — no MITM, no cert gen
+# Wildcards supported: *.example.com matches all subdomains
+# SCT / aggressive cert validation, crash telemetry
+# ─────────────────────────────────────────────────────────────
+[intercept]
+enabled             = true
+log_passthrough     = true
+passthrough         = 
+
+# ─────────────────────────────────────────────────────────────
+# Protocol handlers
+# Read by deadlight_protocol_register_all()
+# Disable protocols you don't need to reduce attack surface
+# ─────────────────────────────────────────────────────────────
+[protocols]
+http_enabled                = true
+https_enabled               = true
+socks4_enabled              = true
+socks5_enabled              = true
+connect_enabled             = true
+imap_enabled                = true
+imaps_enabled               = true
+smtp_enabled                = true
+# seconds before detection gives up
+protocol_detection_timeout  = 5
+
+# ─────────────────────────────────────────────────────────────
+# Network / connection pool
+# Generous defaults — tighten for production
+# ─────────────────────────────────────────────────────────────
+[network]
+upstream_timeout                        = 30
+keepalive_timeout                       = 300
+dns_timeout                             = 5
+# empty = system resolver
+dns_servers                             =
+ipv6_enabled                            = true
+tcp_nodelay                             = true
+tcp_keepalive                           = true
+# max conns per upstream host
+connection_pool_size                    = 10
+# idle eviction (seconds)
+connection_pool_timeout                 = 300
+# total pool across all hosts
+connection_pool_max_total               = 500
+# lru | fifo | none
+connection_pool_eviction_policy         = lru
+# seconds between health checks
+connection_pool_health_check_interval   = 60
+connection_pool_reuse_ssl               = true
+
+# ─────────────────────────────────────────────────────────────
+# Plugin system
+# Read by deadlight_plugin_manager_init()
+# plugin_dir is relative to the binary unless an absolute path is given
+# ─────────────────────────────────────────────────────────────
+[plugins]
+enabled             = true
+plugin_dir          = bin/plugins
+autoload            = adblocker,logger,stats
+builtin_enabled     = true
+
+# ─────────────────────────────────────────────────────────────
+# Plugin: adblocker
+# ─────────────────────────────────────────────────────────────
+[plugin.adblocker]
+enabled             = true
+blocklist_url       = https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+blocklist_file      = /var/cache/deadlight/blocklist.txt
+# 86400 = daily
+update_interval     = 86400
+custom_rules        =
+
+# ─────────────────────────────────────────────────────────────
+# Plugin: logger
+# ─────────────────────────────────────────────────────────────
+[plugin.logger]
+enabled             = true
+log_requests        = true
+log_responses       = false
+# combined | common | json
+log_format          = combined
+# empty = stdout alongside main log
+log_file            =
+max_log_size        = 100MB
+# daily | weekly | size
+log_rotation        = daily
+
+# ─────────────────────────────────────────────────────────────
+# Plugin: stats
+# ─────────────────────────────────────────────────────────────
+[plugin.stats]
+enabled             = true
+stats_interval      = 60
+# minutes of history retained
+history_size        = 1440
+web_interface       = true
+web_port            = 8081
+
+# ─────────────────────────────────────────────────────────────
+# Plugin: auth
+# Disabled by default — enable when ready to lock down the API
+# ─────────────────────────────────────────────────────────────
+[plugin.auth]
+enabled             = false
+# basic | digest
+auth_type           = basic
+auth_file           = /etc/deadlight/users.txt
+auth_realm          = deadlight
+require_auth        = false
+
+# ─────────────────────────────────────────────────────────────
+# Response cache
+# ─────────────────────────────────────────────────────────────
+[cache]
+enabled             = true
+cache_dir           = /tmp/deadlight_cache
+max_cache_size      = 1GB
+default_ttl         = 3600
+cache_methods       = GET,HEAD
+cache_responses     = 200,301,302,404
+
+# ─────────────────────────────────────────────────────────────
+# Security
+# allowed_domains / blocked_domains are access control lists,
+# distinct from [intercept] passthrough (which is about MITM policy)
+# ─────────────────────────────────────────────────────────────
+[security]
+enable_security_headers = true
+block_private_ips       = false
+# whitelist — empty = allow all
+allowed_domains         =
+# blacklist — comma-separated
+blocked_domains         =
+max_request_size        = 10MB
+max_header_size         = 8KB
+# set this to enable /api/outbound/email auth
+auth_secret             =
+
+# ─────────────────────────────────────────────────────────────
+# VPN gateway (experimental)
+# Read by deadlight_vpn_init()
+# ─────────────────────────────────────────────────────────────
+[vpn]
+enabled             = false

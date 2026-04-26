@@ -242,7 +242,6 @@ static gboolean load_ca_certificate(DeadlightSSLManager *ssl_mgr, GError **error
 
 /**
  * Establish an SSL/TLS connection to an upstream server
- * NOW with pool awareness!
  */
 gboolean deadlight_network_establish_upstream_ssl(DeadlightConnection *conn, GError **error) {
     // NEW: If TLS already established (from pool), skip handshake
@@ -287,13 +286,28 @@ gboolean deadlight_network_establish_upstream_ssl(DeadlightConnection *conn, GEr
                  "database", conn->context->ssl->system_trust_db,
                  NULL);
 
+    // constrain upstream to http/1.1 to match client-side tunnel
+    const gchar *upstream_alpn[] = {"http/1.1", NULL};
+    g_object_set(G_OBJECT(conn->upstream_tls),
+                "advertised-protocols", upstream_alpn,
+                NULL);
+
     if (!g_tls_connection_handshake(conn->upstream_tls, NULL, error)) {
         g_warning("Upstream TLS handshake failed for conn %lu to host %s: %s", 
-                  conn->id, conn->target_host, (*error)->message);
+                conn->id, conn->target_host, (*error)->message);
         g_object_unref(conn->upstream_tls);
         conn->upstream_tls = NULL;
         return FALSE;
     }
+
+    // log what upstream actually negotiated
+    gchar *negotiated = NULL;
+    g_object_get(G_OBJECT(conn->upstream_tls),
+                "negotiated-protocol", &negotiated,
+                NULL);
+    g_debug("Connection %lu: Negotiated protocol with upstream %s: %s",
+            conn->id, conn->target_host, negotiated ? negotiated : "none");
+    g_free(negotiated);
     
     GTlsCertificate *peer_cert = g_tls_connection_get_peer_certificate(conn->upstream_tls);
     if (peer_cert) {
@@ -641,16 +655,13 @@ gboolean deadlight_ssl_intercept_connection(DeadlightConnection *conn, GError **
                 "advertised-protocols", alpn_protos,
                 NULL);
 
-    gchar **client_protos = NULL;
+    gchar *negotiated = NULL;
     g_object_get(conn->client_tls,
-                "advertised-protocols", &client_protos,
+                "negotiated-protocol", &negotiated,
                 NULL);
-    if (client_protos) {
-        for (int i = 0; client_protos[i]; i++) {
-            g_debug("Client advertised protocol: %s", client_protos[i]);
-        }
-        g_strfreev(client_protos);
-    }
+    g_debug("Connection %lu: Negotiated protocol with client: %s",
+            conn->id, negotiated ? negotiated : "none");
+    g_free(negotiated);
 
     if (!g_tls_connection_handshake(conn->client_tls, NULL, error)) {
         g_warning("Client TLS handshake failed for conn %lu to host %s: %s", 
