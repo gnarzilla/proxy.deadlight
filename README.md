@@ -11,8 +11,6 @@ A high-performance, multi-protocol proxy server built for **real-world condition
 
 [Quick Start](#quick-start) · [Features](#features) · [API](#rest-api) · [Configuration](#configuration) · [Documentation](docs/) · [Architecture](#architecture) · [Roadmap](#roadmap)
 
-![UI with live connection table](src/assets/media/webui-4-26-26.gif)
-
 ![UI with live connection table](src/assets/media/webui-4-25-26.gif)
 
 > **Security Notice:** This proxy can perform TLS interception.
