@@ -158,6 +158,8 @@ struct _DeadlightContext {
     GMutex stats_mutex;
     GMutex config_values_mutex;
     gchar **local_hostnames; // NULL-terminated array of local hostnames
+    GQueue  *pending_sse_events;   /* queue of g_strdup'd SSE frame strings */
+    GMutex   pending_sse_mutex;
 };
 
 struct _DeadlightConnection {
@@ -181,6 +183,7 @@ struct _DeadlightConnection {
     gboolean ssl_established;
     gboolean will_use_ssl;
     gboolean is_connect_tunnel;
+    gboolean tls_passthrough;
     GByteArray *client_buffer;
     GByteArray *upstream_buffer;
     guint64 bytes_client_to_upstream;
@@ -352,6 +355,15 @@ const gchar *deadlight_state_to_string(DeadlightConnectionState state);
 // from outside network.c to avoid races with cleanup_connection_internal
 void deadlight_network_lock_connections(DeadlightContext *ctx);
 void deadlight_network_unlock_connections(DeadlightContext *ctx);
+/* SSE push — enqueues an SSE event for delivery on the next api.c timer tick.
+ * Safe to call from any thread.                                             */
+void         deadlight_sse_enqueue(DeadlightContext *context,
+                                   const gchar *event_type,
+                                   const gchar *json_data);
+
+/* Drain pending SSE events — called by api.c SSE timer; returns a
+ * NULL-terminated array of frame strings (caller must g_strfreev).         */
+gchar      **deadlight_sse_drain(DeadlightContext *context);
 
 // Connection Pool API
 ConnectionPool* connection_pool_new(

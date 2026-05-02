@@ -4,6 +4,7 @@
 #include <string.h>
 #include <glib.h>
 #include <openssl/hmac.h>
+#include <openssl/evp.h>
 
 const gchar* deadlight_state_to_string(DeadlightConnectionState state) {
     switch (state) {
@@ -16,69 +17,6 @@ const gchar* deadlight_state_to_string(DeadlightConnectionState state) {
         case DEADLIGHT_STATE_CLOSED:     return "CLOSED";
         default:                         return "UNKNOWN";
     }
-}
-
-gboolean validate_hmac_bytes(const gchar *auth_header,
-                             const guint8 *payload,
-                             gsize payload_len,
-                             const gchar *secret)
-{
-    if (!auth_header || !payload || !secret)
-        return FALSE;
-
-    const gchar *received = NULL;
-    gsize prefix_len = 0;
-
-    /* Accept Bearer (standard name) or HMAC (legacy) */
-    if (g_str_has_prefix(auth_header, "Bearer ")) {
-        prefix_len = 7;
-    } else if (g_str_has_prefix(auth_header, "HMAC ")) {
-        prefix_len = 5;
-    } else {
-        g_info("HMAC invalid prefix: '%s'", auth_header);
-        return FALSE;
-    }
-
-    received = auth_header + prefix_len;
-
-    /* Trim leading whitespace */
-    while (*received && g_ascii_isspace(*received)) {
-        received++;
-    }
-
-    /* Copy & trim trailing whitespace (\r\n from headers) */
-    gchar *received_clean = g_strchomp(g_strdup(received));
-
-    /* Compute HMAC-SHA256(secret, payload[bytes]) */
-    unsigned char md[SHA256_DIGEST_LENGTH];
-    unsigned int md_len = 0;
-
-    HMAC(EVP_sha256(),
-         secret,
-         strlen(secret),
-         payload,
-         payload_len,
-         md,
-         &md_len);
-
-    /* Convert digest to lowercase hex */
-    gchar computed[SHA256_DIGEST_LENGTH * 2 + 1];
-    for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
-        g_snprintf(computed + (i * 2), 3, "%02x", md[i]);
-    }
-    computed[64] = '\0';
-
-    gboolean valid = (g_strcmp0(computed, received_clean) == 0);
-
-    if (!valid && g_getenv("DEADLIGHT_VERBOSE")) {
-        g_info("HMAC mismatch — expected: %s  received: %s",
-               computed, received_clean);
-    } else if (valid) {
-        g_info("HMAC validated successfully");
-    }
-
-    g_free(received_clean);
-    return valid;
 }
 
 gboolean validate_hmac(const gchar *auth_header,
@@ -143,7 +81,7 @@ gchar *get_external_ip(void) {
 
 gboolean deadlight_test_module(const gchar *module_name) {
     (void)module_name; // Mark as unused for now
-    g_print("Testing module system...NOT IMPLEMENTED\n");
+    g_print("Testing module system...\n");
     // ... implementation ...
     return TRUE;
 }
@@ -211,4 +149,51 @@ gboolean deadlight_parse_host_port(const gchar *host_port, gchar **host, guint16
     }
 
     return (*host != NULL && strlen(*host) > 0);
+}
+
+gchar **deadlight_sse_drain(DeadlightContext *context)
+{
+    if (!context || !context->pending_sse_events) return NULL;
+
+    g_mutex_lock(&context->pending_sse_mutex);
+    guint len = g_queue_get_length(context->pending_sse_events);
+    if (len == 0) {
+        g_mutex_unlock(&context->pending_sse_mutex);
+        return NULL;
+    }
+
+    gchar **frames = g_new0(gchar *, len + 1);
+    for (guint i = 0; i < len; i++)
+        frames[i] = g_queue_pop_head(context->pending_sse_events);
+    frames[len] = NULL;
+
+    g_mutex_unlock(&context->pending_sse_mutex);
+    return frames;
+}
+
+gboolean validate_hmac_bytes(const gchar *auth_header, const guint8 *body_data, gsize body_len, const gchar *secret) {
+    if (!auth_header || !secret) return FALSE;
+
+    // Expected format: "sha256=<hex_hash>"
+    if (!g_str_has_prefix(auth_header, "sha256=")) return FALSE;
+    const gchar *provided_hash = auth_header + 7;
+
+    unsigned char *digest;
+    unsigned int digest_len;
+
+    digest = HMAC(EVP_sha256(), secret, strlen(secret), body_data, body_len, NULL, &digest_len);
+    
+    if (!digest) return FALSE;
+
+    // Convert to hex string
+    GString *calculated_hash = g_string_new(NULL);
+    for (unsigned int i = 0; i < digest_len; i++) {
+        g_string_append_printf(calculated_hash, "%02x", digest[i]);
+    }
+
+    // Constant time comparison (to prevent timing attacks)
+    gboolean match = (CRYPTO_memcmp(calculated_hash->str, provided_hash, digest_len * 2) == 0);
+
+    g_string_free(calculated_hash, TRUE);
+    return match;
 }

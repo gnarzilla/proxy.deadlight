@@ -25,9 +25,9 @@ worker_threads      = 4
 # ─────────────────────────────────────────────────────────────
 [ssl]
 enabled             = true
-ca_cert_file        = /home/thatch/.deadlight/ca.crt
-ca_key_file         = /home/thatch/.deadlight/ca.key
-cert_cache_dir      = /tmp/deadlight_certs
+ca_cert_file        = ~/.deadlight/ca.crt
+ca_key_file         = ~/.deadlight/ca.key
+ca_bundle           = /etc/ssl/certs/ca-bundle.crt
 cert_cache_size     = 1000
 cipher_suites       = HIGH:!aNULL:!MD5
 protocols           = TLSv1.2,TLSv1.3

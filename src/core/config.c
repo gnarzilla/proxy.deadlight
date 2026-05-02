@@ -42,9 +42,9 @@ static const struct {
     
     // SSL/TLS settings
     {"ssl", "enabled", "true", "Enable SSL interception"},
-    {"ssl", "ca_cert_file", "~/.deadlight/ca/ca.crt", "CA certificate file"},
-    {"ssl", "ca_key_file", "~/.deadlight/ca/ca.key", "CA private key file"},
-    {"ssl", "cert_cache_dir", "/tmp/deadlight_certs", "Certificate cache directory"},
+    {"ssl", "ca_cert_file", "~/.deadlight/ca.crt", "CA certificate file"},
+    {"ssl", "ca_key_file", "~/.deadlight/ca.key", "CA private key file"},
+    {"ssl", "cert_cache_dir", "~/.cache/deadlight/certs", "Certificate cache directory"},
     {"ssl", "cert_cache_size", "1000", "Maximum cached certificates"},
     {"ssl", "cert_validity_days", "30", "Generated certificate validity period"},
     {"ssl", "cipher_suites", "HIGH:!aNULL:!MD5", "Allowed cipher suites"},
@@ -114,6 +114,18 @@ static const struct {
     {"plugin.auth", "auth_realm", "Deadlight Proxy", "Authentication realm"},
     {"plugin.auth", "require_auth", "false", "Require authentication for all requests"},
     
+    // VPN gateway (optional)
+    {"vpn", "enabled",       "false",      "Enable TUN/TAP VPN gateway"},
+    {"vpn", "tun_device",    "tun0",       "TUN device name"},
+    {"vpn", "subnet",        "10.8.0.0",   "VPN subnet"},
+    {"vpn", "gateway_ip",    "10.8.0.1",   "Gateway IP on TUN interface"},
+    {"vpn", "dns",           "1.1.1.1",    "DNS server pushed to VPN clients"},
+
+    // Rate limiter plugin
+    {"plugin.ratelimiter", "enabled",        "true",           "Enable bandwidth shaping"},
+    {"plugin.ratelimiter", "priority_high",  "smtp,imap,dns",  "High-priority protocols"},
+    {"plugin.ratelimiter", "priority_low",   "http_video,http_images", "Low-priority (defer to save airtime)"},
+
     // Cache settings
     {"cache", "enabled", "true", "Enable response caching"},
     {"cache", "cache_dir", "/tmp/deadlight_cache", "Cache directory"},
@@ -211,55 +223,48 @@ gboolean deadlight_config_validate(DeadlightContext *context, GError **error) {
     
     if (ssl_enabled) {
         gchar *ca_cert, *ca_key;
-        
+ 
         g_mutex_lock(&context->config->cache_mutex);
         ca_cert = g_key_file_get_string(context->config->keyfile, "ssl", "ca_cert_file", NULL);
-        ca_key = g_key_file_get_string(context->config->keyfile, "ssl", "ca_key_file", NULL);
+        ca_key  = g_key_file_get_string(context->config->keyfile, "ssl", "ca_key_file",  NULL);
         g_mutex_unlock(&context->config->cache_mutex);
-        
-        gboolean missing_cert = (ca_cert == NULL || strlen(ca_cert) == 0);
-        gboolean missing_key = (ca_key == NULL || strlen(ca_key) == 0);
-        
-        if (missing_cert || missing_key) {
-            g_set_error(error, DEADLIGHT_ERROR, DEADLIGHT_ERROR_CONFIG,
-                       "SSL enabled but missing %s%s%s",
-                       missing_cert ? "CA certificate file" : "",
-                       (missing_cert && missing_key) ? " and " : "",
-                       missing_key ? "CA key file" : "");
-            g_free(ca_cert);
-            g_free(ca_key);
-            return FALSE;
-        }
-        
-        // Expand ~ in paths
-        gchar *expanded_cert = expand_config_path(ca_cert);
-        gchar *expanded_key = expand_config_path(ca_key);
-        
-        // Check if files exist and are readable
-        if (access(expanded_cert, R_OK) != 0) {
-            g_set_error(error, DEADLIGHT_ERROR, DEADLIGHT_ERROR_CONFIG,
-                       "Cannot read CA cert file: %s", expanded_cert);
-            g_free(expanded_cert);
-            g_free(expanded_key);
-            g_free(ca_cert);
-            g_free(ca_key);
-            return FALSE;
-        }
-        
-        if (access(expanded_key, R_OK) != 0) {
-            g_set_error(error, DEADLIGHT_ERROR, DEADLIGHT_ERROR_CONFIG,
-                       "Cannot read CA key file: %s", expanded_key);
-            g_free(expanded_cert);
-            g_free(expanded_key);
-            g_free(ca_cert);
-            g_free(ca_key);
-            return FALSE;
-        }
-        
-        g_free(expanded_cert);
-        g_free(expanded_key);
+ 
+        /* Expand ~ so access() and the log message see the real path */
+        gchar *expanded_cert = expand_config_path(ca_cert ? ca_cert : "");
+        gchar *expanded_key  = expand_config_path(ca_key  ? ca_key  : "");
         g_free(ca_cert);
         g_free(ca_key);
+ 
+        /* If the files don't exist yet, ssl.c will auto-generate them —
+         * that is not a validation error.  Only fail if they exist but
+         * can't be read, which means a genuine permissions problem. */
+        if (g_file_test(expanded_cert, G_FILE_TEST_EXISTS) &&
+            access(expanded_cert, R_OK) != 0) {
+            g_set_error(error, DEADLIGHT_ERROR, DEADLIGHT_ERROR_CONFIG,
+                        "CA cert file exists but cannot be read: %s",
+                        expanded_cert);
+            g_free(expanded_cert);
+            g_free(expanded_key);
+            return FALSE;
+        }
+ 
+        if (g_file_test(expanded_key, G_FILE_TEST_EXISTS) &&
+            access(expanded_key, R_OK) != 0) {
+            g_set_error(error, DEADLIGHT_ERROR, DEADLIGHT_ERROR_CONFIG,
+                        "CA key file exists but cannot be read: %s",
+                        expanded_key);
+            g_free(expanded_cert);
+            g_free(expanded_key);
+            return FALSE;
+        }
+ 
+        if (!g_file_test(expanded_cert, G_FILE_TEST_EXISTS)) {
+            g_info("SSL: CA cert not found at %s — will auto-generate on init",
+                   expanded_cert);
+        }
+ 
+        g_free(expanded_cert);
+        g_free(expanded_key);
     }
     
     // Validate network pool settings
@@ -300,15 +305,11 @@ gboolean deadlight_config_load(DeadlightContext *context, const gchar *config_fi
         deadlight_config_free(context);
     }
     
-    // Clean up context strings that might be reallocated
-    g_free(context->listen_address);
-    context->listen_address = NULL;
-    g_free(context->pool_eviction_policy);
-    context->pool_eviction_policy = NULL;
-    g_free(context->auth_secret);
-    context->auth_secret = NULL;
-    g_free(context->auth_endpoint);
-    context->auth_endpoint = NULL;
+    // Free context strings that will be repopulated
+    g_clear_pointer(&context->listen_address,      g_free);
+    g_clear_pointer(&context->pool_eviction_policy, g_free);
+    g_clear_pointer(&context->auth_secret,          g_free);
+    g_clear_pointer(&context->auth_endpoint,        g_free);
     
     // Create new config structure
     context->config = g_new0(DeadlightConfig, 1);
@@ -438,7 +439,7 @@ gint deadlight_config_get_int(DeadlightContext *context, const gchar *section,
     // Cache the value
     g_hash_table_insert(context->config->int_cache, cache_key, GINT_TO_POINTER(value));
     g_mutex_unlock(&context->config->cache_mutex);
-    
+
     return value;
 }
 
@@ -472,10 +473,15 @@ gchar *deadlight_config_get_string(DeadlightContext *context, const gchar *secti
         value = g_strdup(default_value);
     }
     
-    // Cache the value
+    // Expand ~ in path values before caching so all callers get usable paths
+    gchar *expanded = expand_config_path(value);
+    g_free(value);
+    value = expanded;
+ 
+    // Cache the expanded value
     g_hash_table_insert(context->config->string_cache, cache_key, g_strdup(value));
     g_mutex_unlock(&context->config->cache_mutex);
-    
+ 
     return value;
 }
 
@@ -827,23 +833,10 @@ void deadlight_config_free(DeadlightContext *context) {
     }
     
     g_mutex_lock(&config->cache_mutex);
-    
-    if (config->string_cache) {
-        g_hash_table_unref(config->string_cache);
-    }
-    
-    if (config->int_cache) {
-        g_hash_table_unref(config->int_cache);
-    }
-    
-    if (config->bool_cache) {
-        g_hash_table_unref(config->bool_cache);
-    }
-    
-    if (config->keyfile) {
-        g_key_file_free(config->keyfile);
-    }
-    
+    g_clear_pointer(&config->string_cache, g_hash_table_unref);
+    g_clear_pointer(&config->int_cache,    g_hash_table_unref);
+    g_clear_pointer(&config->bool_cache,   g_hash_table_unref);
+    g_clear_pointer(&config->keyfile,      g_key_file_free);
     g_mutex_unlock(&config->cache_mutex);
     g_mutex_clear(&config->cache_mutex);
     
