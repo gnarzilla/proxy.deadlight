@@ -11,7 +11,7 @@ A high-performance, multi-protocol proxy server built for **real-world condition
 
 [Quick Start](#quick-start) · [Features](#features) · [API](#rest-api) · [Configuration](#configuration) · [Documentation](docs/) · [Architecture](#architecture) · [Roadmap](#roadmap)
 
-![UI with live connection table](src/assets/media/webui-04-25-26.gif)
+![UI with live connection table](src/assets/media/webui-4-25-26.gif)
 
 > **Security Notice:** This proxy can perform TLS interception.
 > Only deploy on hardware you control. See [Security Considerations](#security-considerations).
@@ -74,6 +74,8 @@ services:
 
 ### Build from Source
 
+![CLI boot](src/assets/media/cli-boot-4-26-26.gif)
+
 <details>
 <summary>Build instructions</summary>
 
@@ -127,7 +129,7 @@ open http://localhost:8081
 | **Web UI** | SSE-powered real-time monitoring at `:8081` |
 | **Resource-Efficient** | 17.6 MB Docker image, minimal RAM |
 
-![Web UI with connection table](src/assets/media/webui_4.26.26.gif)
+![Web UI with connection table](src/assets/media/webui-4-26-26.gif)
 
 ---
 
@@ -403,7 +405,7 @@ See [docs/EXTENDING.md](docs/EXTENDING.md) for details.
 ## Part of the Deadlight Ecosystem
 
 - [blog.deadlight](https://github.com/gnarzilla/blog.deadlight) — Cloudflare Workers blog (<10 KB pages)
-- [meshtastic.deadlight](https://github.com/gnarzilla/meshtastic.deadlight) — Internet-over-LoRa gateway
+- [deadmesh](https://github.com/gnarzilla/deadmesh) — Internet-over-LoRa gateway
 - [edge.deadlight](https://github.com/gnarzilla/edge.deadlight) — Unified edge platform
 
 ## Documentation
@@ -425,4 +427,3 @@ MIT License — see [LICENSE](LICENSE)
 - **Email:** gnarzilla@deadlight.boo
 
 **Contributions welcome** — see [CONTRIBUTING.md](docs/CONTRIBUTING.md)
-```
