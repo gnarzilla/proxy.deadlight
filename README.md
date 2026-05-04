@@ -16,6 +16,16 @@ A high-performance, multi-protocol proxy server built for **real-world condition
 > **Security Notice:** This proxy can perform TLS interception.
 > Only deploy on hardware you control. See [Security Considerations](#security-considerations).
 
+<table>
+  <tr>
+    <td><img src="src/assets/media/Screenshot_20260503_201011_Termux.jpg" width="260"></td>
+    <td><img src="src/assets/media/Screenshot_20260503_203338_Termux.jpg" width="260"></td>
+    <td><img src="src/assets/media/Screenshot_20260503_211029_Termux.jpg" width="260"></td>
+    <td><img src="src/assets/media/Android_proxy_webui_20260503_Chrome.jpg" width="260"></td>
+    
+  </tr>
+</table>  
+
 ---
 
 ## Quick Start
@@ -110,19 +120,6 @@ curl http://localhost:8080/api/health
 # Web UI
 open http://localhost:8081
 ```
-
-<details>
-  <summary>Android via Termux</summary>
-<table>
-  <tr>
-    <td><img src="src/assets/media/Screenshot_20260503_201011_Termux.jpg" width="260"></td>
-    <td><img src="src/assets/media/Screenshot_20260503_203338_Termux.jpg" width="260"></td>
-    <td><img src="src/assets/media/Screenshot_20260503_211029_Termux.jpg" width="260"></td>
-    <td><img src="src/assets/media/Android_proxy_webui_20260503_Chrome.jpg" width="260"></td>
-    
-  </tr>
-</table>  
-</details>
 
 ---
 
