@@ -117,7 +117,7 @@ open http://localhost:8081
   <tr>
     <td><img src="src/assets/media/Screenshot_20260503_201011_Termux.jpg" width="260"></td>
     <td><img src="src/assets/media/Screenshot_20260503_203338_Termux.jp" width="260"></td>
-    <td><img src="src/assets/media/Screenshot_20260503_211029_Termux.jp" width="260"></td>
+    <td><img src="src/assets/media/Screenshot_20260503_203338_Termux.jpg" width="260"></td>
     <td><img src="src/assets/media/Android_proxy_webui_20260503_Chrome.jpg" width="260"></td>
     
   </tr>
