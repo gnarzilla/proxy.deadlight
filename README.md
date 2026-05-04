@@ -293,6 +293,31 @@ sudo security add-trusted-cert -d -r trustRoot \
 
 </details>
 
+<details>
+<summary>Generate new CA Certificate</summary>
+Generate CA certificate (for HTTPS interception):
+
+Create the cert directory first, then generate a local CA:
+
+```bash
+mkdir -p ~/.deadlight
+
+openssl genrsa -out ~/.deadlight/ca.key 4096
+openssl req -new -x509 -days 3650 \
+  -key ~/.deadlight/ca.key \
+  -out ~/.deadlight/ca.crt \
+  -subj "/CN=deadmesh CA/O=deadlight/C=US"
+
+chmod 600 ~/.deadlight/ca.key
+chmod 644 ~/.deadlight/ca.crt
+Install it system-wide so curl and other tools trust it:
+
+sudo cp ~/.deadlight/ca.crt /usr/local/share/ca-certificates/deadmesh.crt
+sudo update-ca-certificates
+```
+
+</details>
+
 ### REST API Security
 
 - API binds to `0.0.0.0` by default—restrict with `api_bind = 127.0.0.1`
