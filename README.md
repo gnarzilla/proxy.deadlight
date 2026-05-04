@@ -70,7 +70,7 @@ services:
 
 </details>
 
-**Platforms:** `linux/amd64`, `linux/arm64` (Raspberry Pi, ARM servers, Apple Silicon)
+**Platforms:** `linux/amd64`, `linux/arm64` (Raspberry Pi, ARM servers, Apple Silicon), `Android via Termux`
 
 ### Build from Source
 
