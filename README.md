@@ -111,6 +111,16 @@ curl http://localhost:8080/api/health
 open http://localhost:8081
 ```
 
+<details>
+  <summary>Android via Termux</summary>
+  
+  ![Termux Build](src/assets/media/Screenshot_20260503_201011_Termux.jpg)
+  ![Android CLI run](src/assets/media/Screenshot_20260503_203338_Termux.jpg)
+  ![Android CLI proxy output](https://github.com/gnarzilla/proxy.deadlight/blob/8a09117fa518f6a3378e597ef3bcded7adaafe3d/src/assets/media/Screenshot_20260503_211029_Termux.jpg)
+  ![Android Web Dashboard in Chrome](https://github.com/gnarzilla/proxy.deadlight/blob/8a09117fa518f6a3378e597ef3bcded7adaafe3d/src/assets/media/Android_proxy_webui_20260503_Chrome.jpg)
+  
+</details>
+
 ---
 
 ## Features
