@@ -1,23 +1,6 @@
 /*
- * src/protocols/api.c — deadmesh
+ * src/protocols/api.c — deadlight-proxy
  *
- * Merged from proxy.deadlight's api.c improvements:
- *   - SSE_STREAM_MAGIC sentinel for safe protocol_data cast in cleanup
- *   - api_send_error() helper replaces scattered g_strdup_printf error JSON
- *   - api_build_metrics_json() extracted; api_build_dashboard_json() calls it
- *   - api_handle_connections_endpoint() with proper connection-table locking
- *   - Connection table locking in protocol-count loops
- *   - http_get_raw() extracted; reused by fetch_from_workers + discover_federated_instance
- *   - Memory leak fix in api_federation_send (temp vars for g_strdup_printf results)
- *   - api_detect off-by-one fix (len >= 26 for /.well-known/deadlight)
- *   - Deduplicated deadlight_request_parse_headers call in api_handle
- *   - conn->current_request cleanup consolidated at end of api_handle
- *
- * Retained from deadmesh (mesh-specific):
- *   - SSEStreamState with socket_conn ref + g_timeout_add_seconds timer ID
- *   - deadlight_sse_drain() mesh event draining in sse_send_update
- *   - TCP keepalive setup on SSE socket
- *   - Pre-write HUP/ERR liveness check in sse_send_update
  */
 
 #include "api.h"
@@ -263,7 +246,7 @@ static DeadlightHandlerResult api_handle_wellknown_deadlight(DeadlightConnection
         "\"instance\":\"%s\","
         "\"federation_endpoint\":\"https://%s/api/federation/receive\","
         "\"protocols\":[\"https\",\"smtp\"],"
-        "\"version\":\"1.0.0\","
+        "\"version\":\"DEADLIGHT_VERSION_STRING\","
         "\"public_key\":null"
         "}",
         our_domain, our_domain);
@@ -387,7 +370,7 @@ static gchar *http_get_raw(const gchar *host,
     g_string_append_printf(request, "GET %s HTTP/1.1\r\n", path);
     g_string_append_printf(request, "Host: %s\r\n", host);
     g_string_append(request, "Connection: close\r\n");
-    g_string_append(request, "User-Agent: deadmesh/" DEADLIGHT_VERSION_STRING "\r\n");
+    g_string_append(request, "User-Agent: deadlight-proxy/" DEADLIGHT_VERSION_STRING "\r\n");
     g_string_append(request, "\r\n");
 
     GOutputStream *out = g_io_stream_get_output_stream(G_IO_STREAM(conn));
@@ -518,7 +501,7 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
             conn->id, conn->client_buffer->len, preview);
     g_free(preview);
 
-    /* Parse HTTP request — single call (deadmesh had it duplicated) */
+    /* Parse HTTP request — single call */
     DeadlightRequest *request = deadlight_request_new(conn);
     gchar *request_str = g_strndup((gchar *)conn->client_buffer->data,
                                     conn->client_buffer->len);
@@ -591,7 +574,7 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
     if (g_str_equal(uri, "/api/health")) {
         gchar *body = g_strdup_printf(
             "{\"status\":\"ok\",\"version\":\"%s\","
-            "\"timestamp\":%ld,\"proxy\":\"deadmesh\"}",
+            "\"timestamp\":%ld,\"proxy\":\"deadlight\"}",
             DEADLIGHT_VERSION_STRING, time(NULL));
         result = api_send_json_response(conn, 200, "OK", body, error);
         g_free(body);
@@ -1268,7 +1251,7 @@ static DeadlightHandlerResult api_federation_send(DeadlightConnection *conn,
                 g_free(from_field);
 
                 json_builder_set_member_name(builder, "subject");
-                json_builder_add_string_value(builder, "Federated Post via deadmesh");
+                json_builder_add_string_value(builder, "Federated Post via deadlight");
 
                 json_builder_set_member_name(builder, "body");
                 json_builder_add_string_value(builder, content);

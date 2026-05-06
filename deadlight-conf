@@ -47,7 +47,6 @@ passthrough         =
 # ─────────────────────────────────────────────────────────────
 # Protocol handlers
 # Read by deadlight_protocol_register_all()
-# Disable protocols you don't need to reduce attack surface
 # ─────────────────────────────────────────────────────────────
 [protocols]
 http_enabled                = true
@@ -63,7 +62,6 @@ protocol_detection_timeout  = 5
 
 # ─────────────────────────────────────────────────────────────
 # Network / connection pool
-# Generous defaults — tighten for production
 # ─────────────────────────────────────────────────────────────
 [network]
 upstream_timeout                        = 30
@@ -88,7 +86,6 @@ connection_pool_reuse_ssl               = true
 
 # ─────────────────────────────────────────────────────────────
 # Plugin system
-# Read by deadlight_plugin_manager_init()
 # plugin_dir is relative to the binary unless an absolute path is given
 # ─────────────────────────────────────────────────────────────
 [plugins]
@@ -172,7 +169,7 @@ blocked_domains         =
 max_request_size        = 10MB
 max_header_size         = 8KB
 # set this to enable /api/outbound/email auth
-auth_secret             =
+auth_secret             = gross-window-birthday-shit
 
 # ─────────────────────────────────────────────────────────────
 # VPN gateway (experimental)

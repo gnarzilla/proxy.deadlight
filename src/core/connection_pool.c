@@ -7,6 +7,8 @@
 #include <glib.h>
 #include <gio/gio.h>
 #include <string.h>
+#include <sys/socket.h>   /* MSG_PEEK / MSG_DONTWAIT */
+#include <errno.h>
 #include "deadlight.h"
 
 //==============================================================
@@ -54,6 +56,7 @@ struct _ConnectionPool {
 static gboolean cleanup_idle_connections(gpointer user_data);
 static void pooled_connection_free(PooledConnection *pc);
 static gboolean connection_is_healthy(GIOStream *stream, ConnectionType type);
+static gboolean connection_has_no_pending_fin(GSocket *socket);
 static gchar* make_pool_key(const gchar *host, guint16 port, ConnectionType type);
 static void evict_to_limit(ConnectionPool *pool);
 void connection_pool_discard(ConnectionPool *pool, GIOStream *stream);
@@ -121,6 +124,44 @@ static GSocket* get_underlying_socket(GIOStream *stream, ConnectionType type) {
     }
 
     return socket;
+}
+
+/**
+ * Probe a pooled connection for a server-initiated TCP FIN.
+ *
+ * connection_is_healthy() passes even when the server has half-closed the
+ * connection, because the socket is technically still "connected" and
+ * poll() / g_socket_condition_check() only reports G_IO_HUP after a read
+ * attempt.  A non-blocking MSG_PEEK distinguishes three states cleanly:
+ *
+ *   recv() > 0  → data waiting in kernel buffer (treat as alive)
+ *   recv() == 0 → peer sent FIN; connection is dead on arrival
+ *   recv() < 0, errno == EAGAIN/EWOULDBLOCK → nothing pending, alive
+ *   recv() < 0, other errno → real socket error, treat as dead
+ *
+ * This is the canonical fix for the "stale connection on first use" bug
+ * (Section 7.2): the 60-second health-check interval is too wide to catch
+ * connections killed by the upstream between checks.
+ */
+static gboolean connection_has_no_pending_fin(GSocket *socket) {
+    int fd = g_socket_get_fd(socket);
+    if (fd < 0) return FALSE;
+
+    char buf[1];
+    ssize_t n = recv(fd, buf, 1, MSG_PEEK | MSG_DONTWAIT);
+
+    if (n == 0) {
+        /* Server sent FIN — connection is half-closed */
+        return FALSE;
+    }
+    if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+        /* Real socket error */
+        return FALSE;
+    }
+
+    /* n > 0: unexpected data on an idle connection — treat as alive;
+     * n < 0 with EAGAIN: nothing pending, connection is idle and healthy */
+    return TRUE;
 }
 
 /**
@@ -346,7 +387,20 @@ void connection_pool_free(ConnectionPool *pool) {
 }
 
 /**
- * Get connection from pool
+ * Get connection from pool.
+ *
+ * Performs two-stage validation on every candidate before handing it out:
+ *
+ *   Stage 1 — connection_is_healthy(): socket-level checks (connected flag,
+ *              poll for ERR/HUP, TLS session validity).  Fast, no syscall
+ *              beyond poll().
+ *
+ *   Stage 2 — connection_has_no_pending_fin(): non-blocking MSG_PEEK to catch
+ *              server-initiated TCP FINs that poll() misses.  This is the fix
+ *              for Section 7.2: a server can half-close an idle keep-alive
+ *              connection between our 60-second health-check ticks, and the
+ *              socket still looks "healthy" until the first read returns 0.
+ *              MSG_PEEK reveals the FIN before we hand the stream to a handler.
  */
 GIOStream* connection_pool_get(ConnectionPool *pool, 
                                const gchar *host, 
@@ -373,19 +427,35 @@ GIOStream* connection_pool_get(ConnectionPool *pool,
         return NULL;
     }
     
-    // Pop from queue and validate
+    // Pop from queue and validate — both stages must pass
     PooledConnection *pc = NULL;
     while (!g_queue_is_empty(queue)) {
         pc = g_queue_pop_head(queue);
-        
-        if (connection_is_healthy(pc->stream, pc->type)) {
-            break;
+
+        // Stage 1: socket-level health (connected, no ERR/HUP, TLS session valid)
+        if (!connection_is_healthy(pc->stream, pc->type)) {
+            g_debug("Pool: Removing dead %s connection to %s:%d (stage-1 health)",
+                    pc->type == CONN_TYPE_CLIENT_TLS ? "TLS" : "plain",
+                    pc->host, pc->port);
+            goto discard;
         }
-        
-        // Connection is dead
-        g_debug("Pool: Removing dead %s connection to %s:%d",
-                pc->type == CONN_TYPE_CLIENT_TLS ? "TLS" : "plain",
-                pc->host, pc->port);
+
+        // Stage 2: MSG_PEEK for server-initiated FIN that poll() misses.
+        // This is the direct fix for Section 7.2 — catches connections the
+        // upstream silently closed between our 60-second health-check ticks.
+        {
+            GSocket *sock = get_underlying_socket(pc->stream, pc->type);
+            if (sock && !connection_has_no_pending_fin(sock)) {
+                g_debug("Pool: Removing %s connection to %s:%d with pending FIN (stage-2 peek)",
+                        pc->type == CONN_TYPE_CLIENT_TLS ? "TLS" : "plain",
+                        pc->host, pc->port);
+                goto discard;
+            }
+        }
+
+        break; // Both stages passed — this connection is genuinely alive
+
+    discard:
         pooled_connection_free(pc);
         pool->connections_closed++;
         pool->health_check_failures++;

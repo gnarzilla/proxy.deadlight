@@ -62,9 +62,9 @@ static gsize http_detect(const guint8 *data, gsize len) {
 static DeadlightHandlerResult http_handle(DeadlightConnection *conn, GError **error) {
     if (conn->client_buffer->len > 8 && strncmp((char*)conn->client_buffer->data, "CONNECT ", 8) == 0) {
         conn->protocol = DEADLIGHT_PROTOCOL_CONNECT;
-        return handle_connect(conn, error); // handle_connect also returns DeadlightHandlerResult
+        return handle_connect(conn, error);
     }
-    return handle_plain_http(conn, error); // handle_plain_http also returns DeadlightHandlerResult
+    return handle_plain_http(conn, error);
 }
 
 static void http_cleanup(DeadlightConnection *conn) {
@@ -112,9 +112,6 @@ static DeadlightHandlerResult handle_plain_http(DeadlightConnection *conn, GErro
     // Check for local requests BEFORE setting target / connecting.
     // Hard rules: loopback + the proxy's own listen address.
     // Soft rule: any hostname the operator added to [proxy] local_hostnames
-    // in deadmesh.conf (comma-separated). Personal machine names like
-    // emilyssidepc, mulley-mooneye, or Tailscale *.ts.net addresses belong
-    // there, not hardcoded in source.
     gboolean is_local = (g_strcmp0(host, "localhost") == 0 ||
                          g_strcmp0(host, "127.0.0.1") == 0 ||
                          g_strcmp0(host, "::1") == 0 ||
@@ -185,24 +182,88 @@ static DeadlightHandlerResult handle_plain_http(DeadlightConnection *conn, GErro
 
     g_info("Connection %lu: Forwarding HTTP to %s:%d", conn->id, conn->target_host, conn->target_port);
     g_free(host);  // Safe now — we've used it
-
-    // Connect upstream
+// Connect upstream — may return a pooled (potentially stale) connection.
     if (!deadlight_network_connect_upstream(conn, error)) {
         return HANDLER_ERROR;
     }
 
-    // Send initial request data upstream
-    GOutputStream *upstream_output = g_io_stream_get_output_stream(G_IO_STREAM(conn->upstream_connection));
-    if (!g_output_stream_write_all(upstream_output, conn->client_buffer->data, conn->client_buffer->len, NULL, NULL, error)) {
-        return HANDLER_ERROR;
+    // Send initial request upstream.
+    GOutputStream *upstream_output = g_io_stream_get_output_stream(
+        G_IO_STREAM(conn->upstream_connection));
+    if (!g_output_stream_write_all(upstream_output,
+                                   conn->client_buffer->data,
+                                   conn->client_buffer->len,
+                                   NULL, NULL, error)) {
+        // Write failed immediately — pooled connection was dead.
+        // Discard it and retry once with a fresh connection.
+        g_info("Connection %lu: Write to upstream failed (stale pool connection?), retrying fresh.",
+               conn->id);
+        g_clear_error(error);
+
+        // Discard the dead stream from the pool before releasing conn's reference.
+        GIOStream *dead = G_IO_STREAM(conn->upstream_connection);
+        connection_pool_discard(conn->context->conn_pool, dead);
+        g_clear_object(&conn->upstream_connection);
+
+        // Open a fresh connection (pool miss guaranteed since we just discarded).
+        if (!deadlight_network_connect_upstream(conn, error)) {
+            return HANDLER_ERROR;
+        }
+
+        upstream_output = g_io_stream_get_output_stream(
+            G_IO_STREAM(conn->upstream_connection));
+        if (!g_output_stream_write_all(upstream_output,
+                                       conn->client_buffer->data,
+                                       conn->client_buffer->len,
+                                       NULL, NULL, error)) {
+            g_warning("Connection %lu: Write failed on fresh connection, giving up.", conn->id);
+            return HANDLER_ERROR;
+        }
     }
-    
+
     g_info("Connection %lu: Initial request sent, starting bidirectional tunnel.", conn->id);
-    
-    if (deadlight_network_tunnel_data(conn, error)) {
-        return HANDLER_SUCCESS_CLEANUP_NOW;
-    } else {
-        return HANDLER_ERROR;
+
+    deadlight_network_tunnel_data(conn, error);
+
+    // Stale-connection guard: if the tunnel closed with zero bytes from upstream,
+    // the pooled connection was alive enough to accept the write but had already
+    // been closed server-side (the classic half-dead race window).
+    // Discard the connection, open a fresh one, and replay the request once.
+    if (conn->bytes_upstream_to_client == 0 && conn->bytes_client_to_upstream > 0) {
+        g_info("Connection %lu: Empty upstream response — stale pool connection detected, retrying.",
+               conn->id);
+
+        // The tunnel already set state to CLOSING; reset for the retry.
+        conn->state = DEADLIGHT_STATE_CONNECTING;
+        conn->bytes_client_to_upstream = 0;
+        conn->bytes_upstream_to_client = 0;
+
+        // Discard the dead upstream connection.
+        // cleanup_connection_internal would normally pool this, but the socket
+        // is dead so we explicitly discard it here before it gets pooled.
+        if (conn->upstream_connection) {
+            GIOStream *dead = G_IO_STREAM(conn->upstream_connection);
+            connection_pool_discard(conn->context->conn_pool, dead);
+            g_clear_object(&conn->upstream_connection);
+        }
+
+        // Fresh connection — guaranteed pool miss.
+        if (!deadlight_network_connect_upstream(conn, error)) {
+            return HANDLER_ERROR;
+        }
+
+        upstream_output = g_io_stream_get_output_stream(
+            G_IO_STREAM(conn->upstream_connection));
+        if (!g_output_stream_write_all(upstream_output,
+                                       conn->client_buffer->data,
+                                       conn->client_buffer->len,
+                                       NULL, NULL, error)) {
+            g_warning("Connection %lu: Retry write failed on fresh connection.", conn->id);
+            return HANDLER_ERROR;
+        }
+
+        g_info("Connection %lu: Retrying tunnel on fresh connection.", conn->id);
+        deadlight_network_tunnel_data(conn, error);
     }
 }
 

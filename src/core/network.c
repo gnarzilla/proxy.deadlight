@@ -504,7 +504,7 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, GError **
         }
     }
     
-    // Original logic: try desired type
+    // try desired type
     ConnectionType desired_type = conn->will_use_ssl ? CONN_TYPE_CLIENT_TLS : CONN_TYPE_PLAIN;
     
     pooled = connection_pool_get(
@@ -1063,7 +1063,7 @@ gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error
         upstream_os = g_io_stream_get_output_stream(G_IO_STREAM(conn->upstream_connection));
     }
 
-    // FIX: Use GIO pollable streams instead of raw g_poll
+    // Use GIO pollable streams instead of raw g_poll
     guint8 buffer[16384];
     gboolean running = TRUE;
 
