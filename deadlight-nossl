@@ -24,10 +24,10 @@ worker_threads      = 4
 # see: deadlight --gen-ca to generate a new CA pair
 # ─────────────────────────────────────────────────────────────
 [ssl]
-enabled             = true
+enabled             = false
 ca_cert_file        = ~/.deadlight/ca.crt
 ca_key_file         = ~/.deadlight/ca.key
-ca_bundle           = /etc/ssl/certs/ca-certificates.crt
+ca_bundle           = /etc/ssl/certs/ca-bundle.crt
 cert_cache_size     = 1000
 cipher_suites       = HIGH:!aNULL:!MD5
 protocols           = TLSv1.2,TLSv1.3
