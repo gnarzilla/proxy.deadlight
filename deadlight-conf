@@ -84,6 +84,9 @@ connection_pool_eviction_policy         = lru
 connection_pool_health_check_interval   = 60
 connection_pool_reuse_ssl               = true
 
+[smtp]
+provider = auto
+
 # ─────────────────────────────────────────────────────────────
 # Plugin system
 # plugin_dir is relative to the binary unless an absolute path is given

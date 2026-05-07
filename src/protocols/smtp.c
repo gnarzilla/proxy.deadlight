@@ -513,7 +513,8 @@ gboolean smtp_send_message(const gchar *from, const gchar *to,
         g_debug("SMTP: Server greeting: %s", g_strstrip(buffer));
         
         // Send EHLO
-        gchar *ehlo_cmd = g_strdup_printf("EHLO deadlight.boo\r\n");
+        const gchar *our_domain = "deadlight.boo";
+        gchar *ehlo_cmd = g_strdup_printf("EHLO %s\r\n", our_domain);
         if (!g_output_stream_write_all(out, ehlo_cmd, strlen(ehlo_cmd), NULL, NULL, NULL)) {
             g_free(ehlo_cmd);
             continue;
@@ -561,6 +562,9 @@ gboolean smtp_send_message(const gchar *from, const gchar *to,
         if (bytes_read <= 0 || buffer[0] != '3') continue;
         
         // Build email with proper headers
+        GDateTime *now = g_date_time_new_now_local();
+        gchar *date_str = g_date_time_format(now, "%a, %d %b %Y %H:%M:%S %z");
+
         GString *message = g_string_new("");
         g_string_printf(message,
             "From: %s\r\n"
@@ -573,9 +577,12 @@ gboolean smtp_send_message(const gchar *from, const gchar *to,
             "%s\r\n"
             ".\r\n",
             from, to, subject,
-            g_date_time_format(g_date_time_new_now_local(), "%a, %d %b %Y %H:%M:%S %z"),
+            date_str,
             g_get_real_time(), from,
             body);
+
+        g_free(date_str);
+        g_date_time_unref(now);
         
         if (!g_output_stream_write_all(out, message->str, message->len, NULL, NULL, NULL)) {
             g_string_free(message, TRUE);

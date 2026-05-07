@@ -72,7 +72,12 @@ static void federation_discovery_free(FederationDiscovery *discovery);
 
 /* Email */
 static gboolean email_send_via_mailchannels(DeadlightConnection *conn, const gchar *from, const gchar *to, const gchar *subject, const gchar *body, GError **error);
-
+static gboolean email_send_message_backend(DeadlightConnection *conn,
+                                           const gchar *from,
+                                           const gchar *to,
+                                           const gchar *subject,
+                                           const gchar *body,
+                                           GError **error);
 /* Response helpers */
 static DeadlightHandlerResult api_send_json_response(DeadlightConnection *conn, gint status_code, const gchar *status_text, const gchar *json_body, GError **error);
 static DeadlightHandlerResult api_send_error(DeadlightConnection *conn, gint code, const gchar *status, GError *cause, const gchar *fallback, GError **error);
@@ -316,7 +321,7 @@ static DeadlightHandlerResult api_send_json_response(DeadlightConnection *conn,
         "Content-Length: %zu\r\n"
         "Access-Control-Allow-Origin: https://deadlight.boo\r\n"
         "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n"
-        "Access-Control-Allow-Headers: Content-Type, X-API-Key, Authorization\r\n"
+        "Access-Control-Allow-Headers: Content-Type, X-API-Key, Authorization, X-Signature\r\n"
         "Content-Encoding: identity\r\n"
         "Cache-Control: no-cache\r\n"
         "Connection: close\r\n"
@@ -556,7 +561,7 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
             "HTTP/1.1 200 OK\r\n"
             "Access-Control-Allow-Origin: https://deadlight.boo\r\n"
             "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n"
-            "Access-Control-Allow-Headers: Content-Type, X-API-Key, Authorization\r\n"
+            "Access-Control-Allow-Headers: Content-Type, X-API-Key, Authorization, X-Signature\r\n"
             "Content-Length: 0\r\n"
             "\r\n";
         GOutputStream *os = g_io_stream_get_output_stream(
@@ -893,7 +898,7 @@ static DeadlightHandlerResult api_handle_email_endpoint(DeadlightConnection *con
     const gchar *body    = json_object_get_string_member(obj, "body");
 
     GError *send_error = NULL;
-    gboolean sent = email_send_via_mailchannels(conn, from, to, subject, body, &send_error);
+    gboolean sent = email_send_message_backend(conn, from, to, subject, body, &send_error);
 
     DeadlightHandlerResult result;
     if (sent) {
@@ -960,31 +965,30 @@ static DeadlightHandlerResult api_handle_outbound_email(DeadlightConnection *con
     }
 
     const gchar *auth_header =
-        deadlight_request_get_header(request, "Authorization");
+        deadlight_request_get_header(request, "x-signature");
 
-    if (g_getenv("DEADLIGHT_DEBUG_HMAC")) {
-        g_info("HMAC debug — auth: %s, body: %u bytes, secret length: %zu",
-               auth_header ? auth_header : "NULL",
-               request->body ? request->body->len : 0,
-               strlen(conn->context->auth_secret));
-    }
-
-    if (!auth_header ||
-        !validate_hmac_bytes(auth_header,
-                             request->body->data,
-                             request->body->len,
-                             conn->context->auth_secret)) {
-        g_warning("HMAC validation failed — header: %s",
-                  auth_header ? auth_header : "missing");
+    if (!auth_header) {
+        g_warning("HMAC validation failed — X-Signature header missing");
         json_object_unref(obj);
         return api_send_json_response(conn, 401, "Unauthorized",
-                                      "{\"error\":\"Invalid credentials\"}", error);
+                                    "{\"error\":\"Invalid credentials\"}", error);
+    }
+
+    if (!validate_hmac_bytes(auth_header,
+                            request->body->data,
+                            request->body->len,
+                            conn->context->auth_secret)) {
+        g_warning("HMAC validation failed — signature mismatch (header present, %u body bytes)",
+                request->body->len);
+        json_object_unref(obj);
+        return api_send_json_response(conn, 401, "Unauthorized",
+                                    "{\"error\":\"Invalid credentials\"}", error);
     }
 
     g_info("HMAC validated — sending email to %s", to);
 
     GError *send_error = NULL;
-    gboolean sent = email_send_via_mailchannels(conn, from, to, subject, body, &send_error);
+    gboolean sent = email_send_message_backend(conn, from, to, subject, body, &send_error);
 
     DeadlightHandlerResult result;
     if (sent) {
@@ -992,7 +996,7 @@ static DeadlightHandlerResult api_handle_outbound_email(DeadlightConnection *con
         result = api_send_json_response(conn, 202, "Accepted",
             "{\"status\":\"sent\",\"provider\":\"mailchannels\"}", error);
     } else {
-        g_warning("API: MailChannels failed: %s",
+        g_warning("API: Send email failed: %s",
                   send_error ? send_error->message : "unknown");
         result = api_send_error(conn, 502, "Bad Gateway", send_error,
                                 "Email provider failed", error);
@@ -1240,8 +1244,6 @@ static DeadlightHandlerResult api_federation_send(DeadlightConnection *conn,
                 const gchar *our_domain = deadlight_config_get_string(
                     conn->context, "federation", "domain", "proxy.deadlight.boo");
 
-                /* Fix: assign g_strdup_printf results to named vars so they
-                 * can be freed — previously leaked (json_builder copies) */
                 JsonBuilder *builder = json_builder_new();
                 json_builder_begin_object(builder);
 
@@ -1690,6 +1692,43 @@ cleanup:
     g_free(mc_conn);
 
     return success;
+}
+
+static gboolean email_send_message_backend(DeadlightConnection *conn,
+                                            const gchar *from,
+                                            const gchar *to,
+                                            const gchar *subject,
+                                            const gchar *body,
+                                            GError **error) {
+    const gchar *provider = deadlight_config_get_string(
+        conn->context, "smtp", "provider", "auto");
+
+    const gchar *mc_key = deadlight_config_get_string(
+        conn->context, "smtp", "mailchannels_api_key", NULL);
+
+    /*
+     * provider options:
+     *   auto         = MailChannels if configured, otherwise direct MX
+     *   mailchannels = force MailChannels
+     *   direct_mx    = force direct SMTP MX delivery
+     */
+
+    if (g_str_equal(provider, "mailchannels")) {
+        return email_send_via_mailchannels(conn, from, to, subject, body, error);
+    }
+
+    if (g_str_equal(provider, "direct_mx")) {
+        g_info("Email: Sending via direct MX SMTP to %s", to);
+        return smtp_send_message(from, to, subject, body, error);
+    }
+
+    /* auto mode */
+    if (mc_key && *mc_key) {
+        return email_send_via_mailchannels(conn, from, to, subject, body, error);
+    }
+
+    g_info("Email: No MailChannels key configured; falling back to direct MX SMTP");
+    return smtp_send_message(from, to, subject, body, error);
 }
 
 /* =========================================================================

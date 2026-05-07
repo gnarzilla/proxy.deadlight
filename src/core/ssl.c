@@ -63,14 +63,6 @@ static void cert_cache_entry_free(gpointer data) {
  * ========================================================================= */
 
 /*
- * resolve_default_ca_cert_file / resolve_default_ca_key_file
- *
- * Returns a g_strdup'd path to the default CA cert/key location.
- * Priority:
- *   1. $DEADLIGHT_CA_CERT / $DEADLIGHT_CA_KEY env vars (override for CI/containers)
- *   2. $HOME/.deadlight/ca.crt|ca.key   (standard user install, works on Termux)
- *   3. /etc/deadlight/ca.crt|ca.key     (system install, traditional Linux)
- *
  * The returned path is always non-NULL; the file may or may not exist yet
  * (it gets created by deadlight_ssl_create_ca_certificate if missing).
  */
@@ -95,7 +87,7 @@ static gchar *resolve_default_ca_key_file(void) {
  * Priority:
  *   1. $DEADLIGHT_CERT_CACHE env var
  *   2. $XDG_CACHE_HOME/deadlight/certs   (respects XDG on desktop Linux)
- *   3. $HOME/.cache/deadlight/certs       (works on Termux, macOS)
+ *   3. $HOME/.cache/deadlight/certs       (works on macOS, Termux)
  *   4. /tmp/deadlight_certs               (last resort, traditional Linux)
  */
 static gchar *resolve_default_cert_cache_dir(void) {
@@ -125,8 +117,8 @@ static gchar *resolve_default_cert_cache_dir(void) {
  */
 static gchar *find_system_trust_store(void) {
     /* Build Termux prefix-relative paths dynamically so they work regardless
-     * of whether Termux is installed to the standard location. */
-    const gchar *prefix = g_getenv("PREFIX");   /* set by Termux shell */
+     * of whether it is installed to the standard location. */
+    const gchar *prefix = g_getenv("PREFIX");  
 
     gchar *termux_tls   = prefix ? g_build_filename(prefix, "etc", "tls",  "cert.pem",                  NULL) : NULL;
     gchar *termux_ssl1  = prefix ? g_build_filename(prefix, "etc", "ssl",  "cert.pem",                  NULL) : NULL;
@@ -136,10 +128,10 @@ static gchar *find_system_trust_store(void) {
         termux_tls,
         termux_ssl1,
         termux_ssl2,
-        "/etc/ssl/certs/ca-certificates.crt",   /* Debian/Ubuntu — move this first */
+        "/etc/ssl/certs/ca-certificates.crt",   
         "/etc/pki/tls/certs/ca-bundle.crt",     /* Fedora/RHEL */
         "/etc/ssl/ca-bundle.pem",
-        "/etc/ssl/certs/ca-bundle.crt",         /* this one is broken on your system */
+        "/etc/ssl/certs/ca-bundle.crt",    
         "/opt/homebrew/etc/ca-certificates/cert.pem",
         "/usr/local/etc/ca-certificates/cert.pem",
         NULL
@@ -177,13 +169,6 @@ gboolean deadlight_ssl_init(DeadlightContext *context, GError **error) {
     context->ssl = g_new0(DeadlightSSLManager, 1);
     g_mutex_init(&context->ssl->cert_mutex);
 
-    /* ── System trust store ──────────────────────────────────────────────
-     * We probe multiple locations rather than hardcoding one path, so this
-     * works on Termux, Alpine, Fedora, macOS, etc.  If we find nothing we
-     * warn loudly but continue — upstream TLS verification will fail later
-     * rather than killing init, which is the right trade-off for a proxy
-     * that the user may be configuring before certs are installed.
-     * ─────────────────────────────────────────────────────────────────── */
     g_info("Loading system CA certificates for upstream validation...");
 
         const gchar *configured = deadlight_config_get_string(context, "ssl", "ca_bundle", NULL);
@@ -206,13 +191,11 @@ gboolean deadlight_ssl_init(DeadlightContext *context, GError **error) {
             g_free(trust_store_path);
         } else {
             g_warning("No system CA bundle found — upstream TLS verification will "
-                    "fail. Install ca-certificates (or on Termux: "
-                    "'pkg install ca-certificates') and set ssl.ca_bundle in "
+                    "fail. Install ca-certificates and set ssl.ca_bundle in "
                     "your config.");
         }
     /* ── CA cert / key paths ─────────────────────────────────────────────
      * Config takes priority; if not set we fall back to $HOME/.deadlight/
-     * which exists on Termux, desktop Linux, and macOS without needing root.
      * ─────────────────────────────────────────────────────────────────── */
     gchar *default_cert = resolve_default_ca_cert_file();
     gchar *default_key  = resolve_default_ca_key_file();

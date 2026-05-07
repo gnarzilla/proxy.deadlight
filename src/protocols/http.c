@@ -169,7 +169,6 @@ static DeadlightHandlerResult handle_plain_http(DeadlightConnection *conn, GErro
     conn->target_host = g_strdup(host);
     conn->target_port = port;
 
-    // Proxy loop prevention
     if (conn->target_port == conn->context->listen_port &&
         (is_loopback_address(conn->target_host) ||
         (conn->context->listen_address && 
@@ -181,8 +180,8 @@ static DeadlightHandlerResult handle_plain_http(DeadlightConnection *conn, GErro
     }
 
     g_info("Connection %lu: Forwarding HTTP to %s:%d", conn->id, conn->target_host, conn->target_port);
-    g_free(host);  // Safe now — we've used it
-// Connect upstream — may return a pooled (potentially stale) connection.
+    g_free(host); 
+    // Connect upstream — may return a pooled (potentially stale) connection.
     if (!deadlight_network_connect_upstream(conn, error)) {
         return HANDLER_ERROR;
     }
@@ -265,6 +264,7 @@ static DeadlightHandlerResult handle_plain_http(DeadlightConnection *conn, GErro
         g_info("Connection %lu: Retrying tunnel on fresh connection.", conn->id);
         deadlight_network_tunnel_data(conn, error);
     }
+    return HANDLER_ERROR;
 }
 
 static DeadlightHandlerResult handle_connect(DeadlightConnection *conn, GError **error) {
