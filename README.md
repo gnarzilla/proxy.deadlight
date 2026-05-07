@@ -154,7 +154,7 @@ curl http://localhost:8080/api/health
 # Send email
 curl -X POST http://localhost:8080/api/email/send \
   -H "Content-Type: application/json" \
-  -d '{"to":"user@example.com","subject":"Test","body":"Hello"}'
+  -d '{"to":"user@example.com", "from":"user@deadlight.boo","subject":"Test","body":"Hello"}'
 
 # View metrics
 curl http://localhost:8080/api/metrics | jq
