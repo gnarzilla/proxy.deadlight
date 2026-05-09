@@ -578,7 +578,7 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
     /* ── Route table ───────────────────────────────────────────────────── */
     if (g_str_equal(uri, "/api/health")) {
         gchar *body = g_strdup_printf(
-            "{\"status\":\"ok\",\"version\":\"%s\","
+            "{\"status\":\"ok\",\"DEADLIGHT_VERSION_STRING\":\"%s\","
             "\"timestamp\":%ld,\"proxy\":\"deadlight\"}",
             DEADLIGHT_VERSION_STRING, time(NULL));
         result = api_send_json_response(conn, 200, "OK", body, error);

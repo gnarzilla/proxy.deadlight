@@ -25,8 +25,8 @@ worker_threads      = 4
 # ─────────────────────────────────────────────────────────────
 [ssl]
 enabled             = true
-ca_cert_file        = ~/.deadlight/ca.crt
-ca_key_file         = ~/.deadlight/ca.key
+ca_cert_file        = /home/thatch/.deadlight/ca.crt
+ca_key_file         = /home/thatch/.deadlight/ca.key
 ca_bundle           = /etc/ssl/certs/ca-certificates.crt
 cert_cache_size     = 1000
 cipher_suites       = HIGH:!aNULL:!MD5
@@ -94,7 +94,7 @@ provider = auto
 [plugins]
 enabled             = true
 plugin_dir          = bin/plugins
-autoload            = adblocker,logger,stats
+autoload            = adblocker
 builtin_enabled     = true
 
 # ─────────────────────────────────────────────────────────────
@@ -179,4 +179,4 @@ auth_secret             = gross-window-birthday-shit
 # Read by deadlight_vpn_init()
 # ─────────────────────────────────────────────────────────────
 [vpn]
-enabled             = false
+enabled             = true

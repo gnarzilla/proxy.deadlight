@@ -27,7 +27,7 @@ worker_threads      = 4
 enabled             = false
 ca_cert_file        = ~/.deadlight/ca.crt
 ca_key_file         = ~/.deadlight/ca.key
-ca_bundle           = /etc/ssl/certs/ca-bundle.crt
+ca_bundle           = /etc/ssl/certs/ca-certificates.crt
 cert_cache_size     = 1000
 cipher_suites       = HIGH:!aNULL:!MD5
 protocols           = TLSv1.2,TLSv1.3
@@ -40,7 +40,7 @@ protocols           = TLSv1.2,TLSv1.3
 # SCT / aggressive cert validation, crash telemetry
 # ─────────────────────────────────────────────────────────────
 [intercept]
-enabled             = true
+enabled             = false
 log_passthrough     = true
 passthrough         = 
 

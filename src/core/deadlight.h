@@ -13,7 +13,7 @@ extern "C" {
 #endif
 #if !GLIB_CHECK_VERSION(2, 62, 0)
 // g_tls_connection_get_base_io_stream was added in GLib 2.62
-// For older versions, we need a workaround
+//  workaround for older versions
 static inline GIOStream* g_tls_connection_get_base_io_stream(GTlsConnection *conn) {
     GIOStream *base_io_stream = NULL;
     g_object_get(conn, "base-io-stream", &base_io_stream, NULL);
@@ -22,10 +22,10 @@ static inline GIOStream* g_tls_connection_get_base_io_stream(GTlsConnection *con
 #endif
 
 //===[ MACROS AND DEFINES ]===
-#define DEADLIGHT_VERSION_MAJOR 1
-#define DEADLIGHT_VERSION_MINOR 0
-#define DEADLIGHT_VERSION_PATCH 0
-#define DEADLIGHT_VERSION_STRING "1.0.0"
+#ifndef DEADLIGHT_VERSION
+#  define DEADLIGHT_VERSION "dev"
+#endif
+#define DEADLIGHT_VERSION_STRING DEADLIGHT_VERSION
 
 #define DEADLIGHT_DEFAULT_PORT 8080
 #define DEADLIGHT_DEFAULT_CONFIG_FILE "/etc/deadlight/deadlight.conf"
