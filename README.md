@@ -21,7 +21,6 @@ A high-performance, multi-protocol proxy server built for **real-world condition
     <td><img src="src/assets/media/Screenshot_20260503_201011_Termux.jpg" width="260"></td>
     <td><img src="src/assets/media/Screenshot_20260503_203338_Termux.jpg" width="260"></td>
     <td><img src="src/assets/media/Screenshot_20260503_211029_Termux.jpg" width="260"></td>
-    <td><img src="src/assets/media/Android_proxy_webui_20260503_Chrome.jpg"width="260">/</td>
     <td><img src="src/assets/media/webui-mobile.jpg" width=260"</td>
     
   </tr>
