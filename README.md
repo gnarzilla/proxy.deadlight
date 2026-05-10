@@ -197,7 +197,7 @@ curl -X POST http://localhost:8080/api/federation/send \
          ├─ POST /api/federation/send     │
          │  {"target": "bob.deadlight"}   │
          │                                │
-         └──> SMTP (via MailChannels) ────┤
+         └──> SMTP.                 ────┤
                                           │
                     ┌─────────────────────┘
                     │
