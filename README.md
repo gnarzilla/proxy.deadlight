@@ -58,6 +58,12 @@ docker run -d \
   gnarzilla/proxy-deadlight:latest
 ```
 
+# Run with memory limits to prove efficiency
+docker run -d --name deadlight-proxy \
+  --memory="64m" --cpus="0.5" \
+  -p 8080:8080 -p 8081:8081 \
+  gnarzilla/proxy-deadlight:latest
+
 <details>
 <summary>Docker Compose</summary>
 
