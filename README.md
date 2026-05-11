@@ -21,7 +21,7 @@ A high-performance, multi-protocol proxy server built for **real-world condition
     <td><img src="src/assets/media/Screenshot_20260503_201011_Termux.jpg" width="260"></td>
     <td><img src="src/assets/media/Screenshot_20260503_203338_Termux.jpg" width="260"></td>
     <td><img src="src/assets/media/Screenshot_20260503_211029_Termux.jpg" width="260"></td>
-    <td><img src="src/assets/media/Android_proxy_webui_20260503_Chrome.jpg" width="260"></td>
+    <td><img src="src/assets/media/webui-mobile.jpg" width="260"</td>
     
   </tr>
 </table>  
@@ -56,7 +56,15 @@ docker run -d \
   -p 8080:8080 \
   -p 8081:8081 \
   gnarzilla/proxy-deadlight:latest
+
+# Run with memory limits to prove efficiency
+docker run -d --name deadlight-proxy \
+  --memory="64m" --cpus="0.5" \
+  -p 8080:8080 -p 8081:8081 \
+  gnarzilla/proxy-deadlight:latest
 ```
+
+
 
 <details>
 <summary>Docker Compose</summary>
@@ -197,7 +205,7 @@ curl -X POST http://localhost:8080/api/federation/send \
          ├─ POST /api/federation/send     │
          │  {"target": "bob.deadlight"}   │
          │                                │
-         └──> SMTP (via MailChannels) ────┤
+         └──> SMTP.                 ────┤
                                           │
                     ┌─────────────────────┘
                     │
