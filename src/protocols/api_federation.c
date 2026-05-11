@@ -1,10 +1,12 @@
 #include "api.h"
 #include <json-glib/json-glib.h>
 
+DeadlightHandlerResult api_send_json_response(DeadlightConnection *conn, gint status_code, const gchar *status_text, const gchar *json_body, GError **error);
+
 // Well-known endpoint handler
 DeadlightHandlerResult api_handle_wellknown_deadlight(DeadlightConnection *conn, GError **error) {
     const gchar *our_domain = deadlight_config_get_string(conn->context, "federation", 
-                                                          "domain", "proxy.deadlight.boo");
+                                                          "domain", "deadlight.boo");
     
     gchar *json_response = g_strdup_printf(
         "{"

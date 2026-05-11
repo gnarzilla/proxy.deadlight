@@ -79,7 +79,7 @@ static gboolean email_send_message_backend(DeadlightConnection *conn,
                                            const gchar *body,
                                            GError **error);
 /* Response helpers */
-static DeadlightHandlerResult api_send_json_response(DeadlightConnection *conn, gint status_code, const gchar *status_text, const gchar *json_body, GError **error);
+DeadlightHandlerResult api_send_json_response(DeadlightConnection *conn, gint status_code, const gchar *status_text, const gchar *json_body, GError **error);
 static DeadlightHandlerResult api_send_error(DeadlightConnection *conn, gint code, const gchar *status, GError *cause, const gchar *fallback, GError **error);
 static DeadlightHandlerResult api_send_404(DeadlightConnection *conn, GError **error);
 
@@ -307,7 +307,7 @@ static DeadlightHandlerResult api_send_error(DeadlightConnection *conn,
     return result;
 }
 
-static DeadlightHandlerResult api_send_json_response(DeadlightConnection *conn,
+DeadlightHandlerResult api_send_json_response(DeadlightConnection *conn,
                                                       gint status_code,
                                                       const gchar *status_text,
                                                       const gchar *json_body,
@@ -578,7 +578,7 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
     /* ── Route table ───────────────────────────────────────────────────── */
     if (g_str_equal(uri, "/api/health")) {
         gchar *body = g_strdup_printf(
-            "{\"status\":\"ok\",\"DEADLIGHT_VERSION_STRING\":\"%s\","
+            "{\"status\":\"ok\",\"version\":\"%s\","
             "\"timestamp\":%ld,\"proxy\":\"deadlight\"}",
             DEADLIGHT_VERSION_STRING, time(NULL));
         result = api_send_json_response(conn, 200, "OK", body, error);
