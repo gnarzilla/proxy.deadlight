@@ -32,7 +32,7 @@ Running on Samsung phone
 
 Samsung tablet with curl tests in Termux
 
-<img src="src/assets/media/Screenshot_20260514_111354_Termux.jpg" width="780" alt="Android App on Tablet">
+<img src="src/assets/media/Screenshot_20260514_111354_Termux.jpg" width="520" alt="Android App on Tablet">
 
 </details>
 
