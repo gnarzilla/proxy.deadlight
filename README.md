@@ -460,8 +460,8 @@ See [docs/EXTENDING.md](docs/EXTENDING.md) for details.
 - [x] Connection pool with TLS session reuse
 - [x] Blog caching with offline fallback
 - [x] Server-Sent Events for real-time dashboard
-- [ ] API rate limiting tested & vetted
-- [ ] Deeper TLS session management for pooled connections
+- [x] API rate limiting tested & vetted
+- [x] Deeper TLS session management for pooled connections
 
 ### Medium-term (late 2026)
 - [ ] Dynamic plugin loading (no rebuild required)
