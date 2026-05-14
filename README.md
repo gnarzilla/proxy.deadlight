@@ -18,7 +18,7 @@ A lightweight, multi-protocol proxy server built for **real-world conditions**: 
 <details>
 <summary>Now available as Android APK</summary>
 
-App running on Samsung tablet with curl tests in Termux
+Samsung tablet with curl tests in Termux
 
 ![Android App on Tablet](src/assets/media/Screenshot_20260514_111354_Termux.jpg)
 
