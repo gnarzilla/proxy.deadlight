@@ -2,7 +2,7 @@
 [![GitHub Release](https://img.shields.io/github/v/release/gnarzilla/deadlight-proxy)](https://github.com/gnarzilla/deadlight-proxy/releases/latest)
 [![Docker Pulls](https://img.shields.io/docker/pulls/gnarzilla/proxy-deadlight)](https://hub.docker.com/r/gnarzilla/proxy-deadlight)
 [![Docker Image Size](https://img.shields.io/docker/image-size/gnarzilla/proxy-deadlight/latest)](https://hub.docker.com/r/gnarzilla/proxy-deadlight)
-[![GitHub License](https://img.shields.io/github/license/gnarzilla/deadlight-proxy)](LICENSE)
+[![GitHub License](https://img.shields.io/github/license/gnarzilla/deadlight-proxy)](LICENSE) <br>
 [Quick Start](#quick-start) · [Features](#features) · [API](#rest-api) · [Configuration](#configuration) · [Documentation](docs/) · [Architecture](#architecture) · [Roadmap](#roadmap)
 
 A lightweight, multi-protocol proxy server built for **real-world conditions**: intermittent connectivity, resource constraints, and hostile networks. Written in C with GLib, featuring automatic protocol detection, HTTP/S, SOCKS4/5, WebSocket, SMTP, IMAP/S, FTP, TLS interception, VPN gateway mode, REST API and embedded web UI.
