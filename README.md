@@ -40,17 +40,14 @@ Running on Samsung phone
 <details>
   <summary>Or Compile in Termux</summary>
 
-  ![Android App on Tablet](src/assets/media/Screenshot_20260514_111354_Termux.jpg)
-
----
-
-  <table>
-    <tr>
-      <td><img src="src/assets/media/deadlight-app-start.jpg" width="260"</td>
-      <td><img src="src/assets/media/deadlight-app-running3.jpg" width="260"</td>
-      <td><img src="src/assets/media/deadlight-app-shutdown.png" width="260"</td>
-    </tr>
-  </table>
+<table>
+  <tr>
+    <td><img src="src/assets/media/Screenshot_20260503_201011_Termux.jpg" width="260"></td>
+    <td><img src="src/assets/media/Screenshot_20260503_203338_Termux.jpg" width="260"></td>
+    <td><img src="src/assets/media/Screenshot_20260503_211029_Termux.jpg" width="260"></td>
+    <td><img src="src/assets/media/webui-mobile.jpg" width="260"</td>
+  </tr>
+</table>
 
 </details>
 
