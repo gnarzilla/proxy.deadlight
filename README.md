@@ -21,6 +21,8 @@ A lightweight, multi-protocol proxy server built for **real-world conditions**: 
 
 ![Android App on Tablet](src/assets/media/Screenshot_20260514_111354_Termux.jpg)
 
+---
+
 <table>
   <tr>
     <td><img src="src/assets/media/deadlight-app-start.jpg" width="260"</td>
