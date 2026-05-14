@@ -11,10 +11,14 @@ A lightweight, multi-protocol proxy server built for **real-world conditions**: 
 
 [Quick Start](#quick-start) · [Features](#features) · [API](#rest-api) · [Configuration](#configuration) · [Documentation](docs/) · [Architecture](#architecture) · [Roadmap](#roadmap)
 
-![UI with live connection table](src/assets/media/webui-4-25-26.gif)
+![Android App on Tablet](src/assets/media/Screenshot_20260514_111354_Termux.jpg)
 
 > **Security Notice:** This proxy can perform TLS interception.
 > Only deploy on hardware you control. See [Security Considerations](#security-considerations).
+
+![UI with live connection table](src/assets/media/webui-4-25-26.gif)
+
+---
 
 <table>
   <tr>
@@ -23,8 +27,6 @@ A lightweight, multi-protocol proxy server built for **real-world conditions**: 
     <td><img src="src/assets/media/deadlight-app-shutdown.png" width="260"</td>
   </tr>
 </table>
-
----
 
 ## Quick Start
 
