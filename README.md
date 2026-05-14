@@ -4,10 +4,10 @@ A lightweight, multi-protocol proxy server built for **real-world conditions**: 
 
 **Multi-protocol in one binary** · **17.6 MB Docker image** · **Works on ARM64** · **REST API** · **Edge-native design**
 
-[![GitHub Release](https://img.shields.io/github/v/release/gnarzilla/proxy.deadlight)](https://github.com/gnarzilla/proxy.deadlight/releases/latest)
+[![GitHub Release](https://img.shields.io/github/v/release/gnarzilla/deadlight-proxy)](https://github.com/gnarzilla/deadlight-proxy/releases/latest)
 [![Docker Pulls](https://img.shields.io/docker/pulls/gnarzilla/proxy-deadlight)](https://hub.docker.com/r/gnarzilla/proxy-deadlight)
 [![Docker Image Size](https://img.shields.io/docker/image-size/gnarzilla/proxy-deadlight/latest)](https://hub.docker.com/r/gnarzilla/proxy-deadlight)
-[![GitHub License](https://img.shields.io/github/license/gnarzilla/proxy.deadlight)](LICENSE)
+[![GitHub License](https://img.shields.io/github/license/gnarzilla/deadlight-proxy)](LICENSE)
 
 ![UI with live connection table](src/assets/media/webui-4-25-26.gif)
 
@@ -68,12 +68,12 @@ Grab the latest release for your platform:
 
 ```bash
 # Linux amd64
-curl -LO https://github.com/gnarzilla/proxy.deadlight/releases/latest/download/deadlight-linux-amd64
+curl -LO https://github.com/gnarzilla/deadlight-proxy/releases/latest/download/deadlight-linux-amd64
 chmod +x deadlight-linux-amd64
 ./deadlight-linux-amd64 -v
 
 # Linux arm64 (Raspberry Pi, ARM servers)
-curl -LO https://github.com/gnarzilla/proxy.deadlight/releases/latest/download/deadlight-linux-arm64
+curl -LO https://github.com/gnarzilla/deadlight-proxy/releases/latest/download/deadlight-linux-arm64
 chmod +x deadlight-linux-arm64
 ./deadlight-linux-arm64 -v
 ```
@@ -138,8 +138,8 @@ sudo apt-get install build-essential pkg-config libglib2.0-dev \
   libssl-dev libjson-glib-dev libmicrohttpd-dev
 
 # Build
-git clone https://github.com/gnarzilla/proxy.deadlight.git
-cd proxy.deadlight
+git clone https://github.com/gnarzilla/deadlight-proxy.git
+cd deadlight-proxy
 make clean && make UI=1
 
 # Run
@@ -497,7 +497,7 @@ MIT License — see [LICENSE](LICENSE)
 
 ## Support
 
-- **Issues:** [GitHub Issues](https://github.com/gnarzilla/proxy.deadlight/issues)
+- **Issues:** [GitHub Issues](https://github.com/gnarzilla/deadlight-proxy/issues)
 - **Donate:** [ko-fi.com/gnarzilla](https://ko-fi.com/gnarzilla)
 - **Email:** gnarzilla@deadlight.boo
 
