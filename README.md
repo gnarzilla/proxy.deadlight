@@ -10,8 +10,7 @@ A lightweight, multi-protocol proxy server built for **real-world conditions**: 
 
 **Multi-protocol in one binary** · **17.6 MB Docker image** · **Works on ARM64** · **REST API** · **Edge-native design**
 
-![UI with live connection table](src/assets/media/webui-4-25-26.gif width="780")
-
+<img src="src/assets/media/webui-4-25-26.gif" width="780" alt="UI with live connection table">
 > **Security Notice:** This proxy can perform TLS interception.
 > Only deploy on hardware you control. See [Security Considerations](#security-considerations).
 
