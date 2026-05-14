@@ -1,6 +1,6 @@
 # Deadlight Proxy
 
-A high-performance, multi-protocol proxy server built for **real-world conditions**: intermittent connectivity, resource constraints, and hostile networks. Written in C with GLib, featuring automatic protocol detection, TLS interception, VPN gateway mode, REST API, and lightweight web UI.
+A lightweight, multi-protocol proxy server built for **real-world conditions**: intermittent connectivity, resource constraints, and hostile networks. Written in C with GLib, featuring automatic protocol detection, HTTP/S, SOCKS4/5, WebSocket, SMTP, IMAP/S, FTP, TLS interception, VPN gateway mode, REST API and lightweight web UI.
 
 **Multi-protocol in one binary** · **17.6 MB Docker image** · **Works on ARM64** · **REST API** · **Edge-native design**
 
