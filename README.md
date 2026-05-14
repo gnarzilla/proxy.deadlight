@@ -16,8 +16,6 @@ A lightweight, multi-protocol proxy server built for **real-world conditions**: 
 > **Security Notice:** This proxy can perform TLS interception.
 > Only deploy on hardware you control. See [Security Considerations](#security-considerations).
 
----
-
 <details>
 <summary>Now available as Android APK</summary>
 
@@ -35,7 +33,10 @@ A lightweight, multi-protocol proxy server built for **real-world conditions**: 
 
 <details>
   <summary>Or Compile in Termux</summary>
+  
   ![Android App on Tablet](src/assets/media/Screenshot_20260514_111354_Termux.jpg)
+
+---
 
   <table>
     <tr>
