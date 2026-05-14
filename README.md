@@ -40,6 +40,15 @@ Running on Samsung phone
 <details>
   <summary>Or Compile in Termux</summary>
 
+```bash
+proot-distro install debian
+proot-distro login debian
+
+git clone git@github.com/gnarzilla/deadlight-proxy.git
+cd deadlight-proxy
+
+make clean && make UI=1
+```
 <table>
   <tr>
     <td><img src="src/assets/media/Screenshot_20260503_201011_Termux.jpg" width="260"></td>
