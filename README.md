@@ -9,16 +9,19 @@ A lightweight, multi-protocol proxy server built for **real-world conditions**: 
 [![Docker Image Size](https://img.shields.io/docker/image-size/gnarzilla/proxy-deadlight/latest)](https://hub.docker.com/r/gnarzilla/proxy-deadlight)
 [![GitHub License](https://img.shields.io/github/license/gnarzilla/proxy.deadlight)](LICENSE)
 
-[Quick Start](#quick-start) · [Features](#features) · [API](#rest-api) · [Configuration](#configuration) · [Documentation](docs/) · [Architecture](#architecture) · [Roadmap](#roadmap)
+![UI with live connection table](src/assets/media/webui-4-25-26.gif)
 
-![Android App on Tablet](src/assets/media/Screenshot_20260514_111354_Termux.jpg)
+[Quick Start](#quick-start) · [Features](#features) · [API](#rest-api) · [Configuration](#configuration) · [Documentation](docs/) · [Architecture](#architecture) · [Roadmap](#roadmap)
 
 > **Security Notice:** This proxy can perform TLS interception.
 > Only deploy on hardware you control. See [Security Considerations](#security-considerations).
 
-![UI with live connection table](src/assets/media/webui-4-25-26.gif)
-
 ---
+
+<details>
+<summary>Now available as Android APK</summary>
+
+![Android App on Tablet](src/assets/media/Screenshot_20260514_111354_Termux.jpg)
 
 <table>
   <tr>
@@ -27,6 +30,8 @@ A lightweight, multi-protocol proxy server built for **real-world conditions**: 
     <td><img src="src/assets/media/deadlight-app-shutdown.png" width="260"</td>
   </tr>
 </table>
+
+</details>
 
 ## Quick Start
 
