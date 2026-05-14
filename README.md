@@ -18,12 +18,6 @@ A lightweight, multi-protocol proxy server built for **real-world conditions**: 
 <details>
 <summary>Now available as Android APK</summary>
 
-Samsung tablet with curl tests in Termux
-
-<img src="src/assets/media/Screenshot_20260514_111354_Termux.jpg" width="780" alt="Android App on Tablet">
-
----
-
 Running on Samsung phone
 
 <table>
@@ -33,6 +27,12 @@ Running on Samsung phone
     <td><img src="src/assets/media/deadlight-app-shutdown.png" width="260"</td>
   </tr>
 </table>
+
+---
+
+Samsung tablet with curl tests in Termux
+
+<img src="src/assets/media/Screenshot_20260514_111354_Termux.jpg" width="780" alt="Android App on Tablet">
 
 </details>
 
