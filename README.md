@@ -33,6 +33,20 @@ A lightweight, multi-protocol proxy server built for **real-world conditions**: 
 
 </details>
 
+<details>
+  <summary>Or Compile in Termux</summary>
+  ![Android App on Tablet](src/assets/media/Screenshot_20260514_111354_Termux.jpg)
+
+  <table>
+    <tr>
+      <td><img src="src/assets/media/deadlight-app-start.jpg" width="260"</td>
+      <td><img src="src/assets/media/deadlight-app-running3.jpg" width="260"</td>
+      <td><img src="src/assets/media/deadlight-app-shutdown.png" width="260"</td>
+    </tr>
+  </table>
+
+</details>
+
 ## Quick Start
 
 ### Download Binary (Fastest)
@@ -120,15 +134,6 @@ make clean && make UI=1
 ```
 
 </details>
-
-<table>
-  <tr>
-    <td><img src="src/assets/media/Screenshot_20260503_201011_Termux.jpg" width="260"></td>
-    <td><img src="src/assets/media/Screenshot_20260503_203338_Termux.jpg" width="260"></td>
-    <td><img src="src/assets/media/Screenshot_20260503_211029_Termux.jpg" width="260"></td>
-    <td><img src="src/assets/media/webui-mobile.jpg" width="260"</td>
-  </tr>
-</table>
 
 ### Verify It's Working
 
