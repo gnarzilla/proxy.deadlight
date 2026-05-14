@@ -122,7 +122,7 @@ services:
 
 ### Build from Source
 
-![CLI boot](src/assets/media/cli-boot-4-26-26.gif)
+<img src="src/assets/media/cli-boot-4-26-26.gif" width="780" alt="CLI boot">
 
 <details>
 <summary>Build instructions</summary>
