@@ -20,8 +20,6 @@ A lightweight, multi-protocol proxy server built for **real-world conditions**: 
 <details>
 <summary>Android App</summary>
 
-[Download Android App](https://ko-fi.com/s/bc2cb7c2ee)
-
 Running on Samsung phone
 
 <table>
@@ -37,6 +35,8 @@ Running on Samsung phone
 Samsung tablet with curl tests in Termux
 
 <img src="src/assets/media/Screenshot_20260514_111354_Termux.jpg" width="520" alt="Android App on Tablet">
+
+[Download](https://ko-fi.com/s/bc2cb7c2ee)
 
 </details>
 
