@@ -18,6 +18,8 @@ A lightweight, multi-protocol proxy server built for **real-world conditions**: 
 <details>
 <summary>Now available as Android APK</summary>
 
+[Download Android App](https://ko-fi.com/s/bc2cb7c2ee)
+
 Running on Samsung phone
 
 <table>
