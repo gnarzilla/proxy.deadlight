@@ -15,7 +15,7 @@ A lightweight, multi-protocol proxy server built for **real-world conditions**: 
 > **Security Notice:** This proxy can perform TLS interception.
 > Only deploy on hardware you control. See [Security Considerations](#security-considerations).
 
-<img src="https://github.com/gnarzilla/deadlight-proxy/blob/cb7004ef7c69a444a0abde48d72d3a2a58b02708/src/assets/app/deadlight-playstore.png" alt="deadlight-playstore" width="32">  - [Android App Now Available for Download](https://ko-fi.com/s/bc2cb7c2ee)
+<img src="https://github.com/gnarzilla/deadlight-proxy/blob/cb7004ef7c69a444a0abde48d72d3a2a58b02708/src/assets/app/deadlight-playstore.png" alt="deadlight-playstore" width="32">   [Android App Now Available for Download](https://ko-fi.com/s/bc2cb7c2ee)
 
 <details>
 <summary>Android App</summary>
