@@ -24,9 +24,9 @@ Running on Samsung phone
 
 <table>
   <tr>
-    <td><img src="src/assets/media/deadlight-app-start.jpg" width="260"</td>
-    <td><img src="src/assets/media/deadlight-app-running3.jpg" width="260"</td>
-    <td><img src="src/assets/media/deadlight-app-shutdown.png" width="260"</td>
+    <td><img src="src/assets/media/deadlight-app-start.jpg" width="260"></td>
+    <td><img src="src/assets/media/deadlight-app-running3.jpg" width="260"></td>
+    <td><img src="src/assets/media/deadlight-app-shutdown.png" width="260"></td>
   </tr>
 </table>
 
