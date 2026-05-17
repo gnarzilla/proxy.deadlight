@@ -6,6 +6,18 @@
 [![Docker Image Size](https://img.shields.io/docker/image-size/gnarzilla/proxy-deadlight/latest)](https://hub.docker.com/r/gnarzilla/proxy-deadlight)
 [![GitHub License](https://img.shields.io/github/license/gnarzilla/deadlight-proxy)](LICENSE)
 
+<p align="center">
+  <a href="https://ko-fi.com/s/bc2cb7c2ee" target="_blank">
+    <img src="https://raw.githubusercontent.com/gnarzilla/blog.deadlight/main/src/assets/apple-touch-icon/App-Store-Logo-transp.png"
+         width="88"
+         alt="Download Deadlight Proxy">
+  </a>
+</p>
+
+<h3 align="center">
+  Android APK Available Now
+</h3>
+
 A lightweight, multi-protocol proxy server built for **real-world conditions**: intermittent connectivity, resource constraints, and hostile networks. Written in C with GLib, featuring automatic protocol detection, HTTP/S, SOCKS4/5, WebSocket, SMTP, IMAP/S, FTP, TLS interception, VPN gateway mode, REST API and embedded web UI.
 
 **Multi-protocol in one binary** · **17.6 MB Docker image** · **Works on ARM64** · **REST API** · **Edge-native design**
