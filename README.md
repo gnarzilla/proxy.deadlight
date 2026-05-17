@@ -36,17 +36,11 @@ A lightweight, multi-protocol proxy server built for **real-world conditions**: 
 
 <img src="https://raw.githubusercontent.com/gnarzilla/deadlight-proxy/main/src/assets/media/deadlight-app-shutdown.png"
      width="260"
-     style="border-radius:16px; box-shadow:0 4px 18px rgba(0,0,0,.18);">
+     alt="Deadlight Proxy stopped">
 
-Running on Samsung phone
+<p><em>Shutdown state</em></p>
 
-<table>
-  <tr>
-    <td><img src="src/assets/media/deadlight-app-start.jpg" width="260"></td>
-    <td><img src="src/assets/media/deadlight-app-running3.jpg" width="260"></td>
-    <td><img src="src/assets/media/deadlight-app-shutdown.png" width="260"></td>
-  </tr>
-</table>
+</div>
 
 ---
 
