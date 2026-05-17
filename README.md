@@ -20,6 +20,24 @@ A lightweight, multi-protocol proxy server built for **real-world conditions**: 
 <details>
 <summary>Android App</summary>
 
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/gnarzilla/deadlight-proxy/main/src/assets/media/deadlight-app-start.jpg"
+     width="260"
+     alt="Deadlight Proxy startup screen">
+
+<p><em>Startup screen</em></p>
+
+<img src="https://raw.githubusercontent.com/gnarzilla/deadlight-proxy/main/src/assets/media/deadlight-app-running3.jpg"
+     width="260"
+     alt="Deadlight Proxy running">
+
+<p><em>Live proxy monitoring</em></p>
+
+<img src="https://raw.githubusercontent.com/gnarzilla/deadlight-proxy/main/src/assets/media/deadlight-app-shutdown.png"
+     width="260"
+     style="border-radius:16px; box-shadow:0 4px 18px rgba(0,0,0,.18);">
+
 Running on Samsung phone
 
 <table>
