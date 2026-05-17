@@ -6,6 +6,16 @@
 [![Docker Image Size](https://img.shields.io/docker/image-size/gnarzilla/proxy-deadlight/latest)](https://hub.docker.com/r/gnarzilla/proxy-deadlight)
 [![GitHub License](https://img.shields.io/github/license/gnarzilla/deadlight-proxy)](LICENSE)
 
+
+A lightweight, multi-protocol proxy server built for **real-world conditions**: intermittent connectivity, resource constraints, and hostile networks. Written in C with GLib, featuring automatic protocol detection, HTTP/S, SOCKS4/5, WebSocket, SMTP, IMAP/S, FTP, TLS interception, VPN gateway mode, REST API and embedded web UI.
+
+**Multi-protocol in one binary** · **17.6 MB Docker image** · **Works on ARM64** · **REST API** · **Edge-native design**
+
+<img src="src/assets/media/webui-4-25-26.gif" width="780" alt="UI with live connection table">
+
+> **Security Notice:** This proxy can perform TLS interception.
+> Only deploy on hardware you control. See [Security Considerations](#security-considerations).
+
 <p align="center">
   <a href="https://ko-fi.com/s/bc2cb7c2ee" target="_blank">
     <img src="https://raw.githubusercontent.com/gnarzilla/blog.deadlight/main/src/assets/apple-touch-icon/App-Store-Logo-transp.png"
@@ -17,17 +27,6 @@
 <h3 align="center">
   Android APK Available Now
 </h3>
-
-A lightweight, multi-protocol proxy server built for **real-world conditions**: intermittent connectivity, resource constraints, and hostile networks. Written in C with GLib, featuring automatic protocol detection, HTTP/S, SOCKS4/5, WebSocket, SMTP, IMAP/S, FTP, TLS interception, VPN gateway mode, REST API and embedded web UI.
-
-**Multi-protocol in one binary** · **17.6 MB Docker image** · **Works on ARM64** · **REST API** · **Edge-native design**
-
-<img src="src/assets/media/webui-4-25-26.gif" width="780" alt="UI with live connection table">
-
-> **Security Notice:** This proxy can perform TLS interception.
-> Only deploy on hardware you control. See [Security Considerations](#security-considerations).
-
-<img src="https://github.com/gnarzilla/deadlight-proxy/blob/cb7004ef7c69a444a0abde48d72d3a2a58b02708/src/assets/app/deadlight-playstore.png" alt="deadlight-playstore" width="32">   [Android App Now Available for Download](https://ko-fi.com/s/bc2cb7c2ee)
 
 <details>
 <summary>Android App</summary>
@@ -64,6 +63,7 @@ Samsung tablet with curl tests in Termux
 
 </details>
 
+
 <details>
   <summary>Or Compile in Termux</summary>
 
@@ -86,6 +86,7 @@ make clean && make UI=1
 </table>
 
 </details>
+
 
 ## Quick Start
 
